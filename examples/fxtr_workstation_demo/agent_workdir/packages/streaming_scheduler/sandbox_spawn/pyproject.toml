@@ -1,0 +1,46 @@
+# Sandbox-spawn environment for the streaming_scheduler service — a
+# *virtual* uv project (`package = false`), same shape as
+# `simple_scheduler/sandbox_spawn/` (see that file for the full
+# rationale + the comment-flip convention).
+[project]
+name = "streaming-scheduler-sandbox"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "streaming-scheduler",
+    "streaming-tasks",
+    "simple-tasks",
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable]",
+]
+
+[project.entry-points."fxtr.service"]
+service = "streaming_scheduler:run"
+
+[tool.uv]
+# Virtual root — install the deps (incl. the parent package), don't build
+# this dir itself.
+package = false
+# Constrain the resolver to WASI/wasm32 (the eryx runtime target) so only
+# pure-python wheels are selected.
+environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]
+required-environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]
+
+[tool.uv.sources]
+streaming-scheduler = { path = "..", editable = true }
+streaming-tasks = { path = "../../streaming_tasks", editable = true }
+simple-tasks = { path = "../../simple_tasks", editable = true }
+fxtr-sandbox-rpc-adapter = { path = "../../../../../../projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../../../projects/fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr2-portable = { path = "../../../../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr2-portable = ["hatchling"]

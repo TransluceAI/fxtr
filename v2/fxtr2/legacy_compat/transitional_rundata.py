@@ -10,15 +10,17 @@ the v1 task system, and will eventually be replaced by v2-native types.
 from __future__ import annotations
 
 import dataclasses
+import typing
 import uuid
 from typing import Any, Self
 
 import cbrrr
 from frozendict import frozendict
-from fxtr2.data import entity_serdes, system_entities
-from fxtr2.data.entity_serdes import Child, ChildRef, DataclassEntity, EntityRef
-from fxtr2.legacy_compat.data import LegacyCompat, TransitionalUpgradedEntity, UpgradeCache
 
+from fxtr2.conversion.converters.mashumaro_entities import Child, ChildRef, DataclassEntity
+from fxtr2.data import system_entities
+from fxtr2.data.entity_ref_scope import EntityRef
+from fxtr2.legacy_compat.data import LegacyCompat, TransitionalUpgradedEntity, UpgradeCache
 from fxtr.impl_plans import plan_dep_util
 from fxtr.object_model import core as v1_core
 from fxtr.providers import externals_provider as v1_externals_provider
@@ -62,7 +64,8 @@ class TaskWithPredecessors[T: v1_core.EntityBase](
                             predecessors[ref] = await upgrade_cache.lookup_upgraded(ref, cls)
                         except KeyError as exc:
                             raise RuntimeError(
-                                f"Predecessor task {ref} not found in cache! Make sure to upgrade all predecessor tasks in dependency order."
+                                f"Predecessor task {ref} not found in cache! Make sure to upgrade"
+                                " all predecessor tasks in dependency order."
                             ) from exc
                 case v1_core.WorkflowStepResultHandle(
                     workflow_ref=ref
@@ -81,7 +84,13 @@ class TaskWithPredecessors[T: v1_core.EntityBase](
 
 # need this type alias as a workaround for a mashumaro issue with looking up the module for an
 # imported type alias
-type V1_Plan[T: v1_core.FxtrCallTarget] = v1_core.Plan[T]
+if typing.TYPE_CHECKING:
+    type V1_Plan[T: v1_core.FxtrCallTarget] = v1_core.Plan[T]
+else:
+    # can be any type at runtime, doesn't matter, but it needs to be generic and mashumaro needs to
+    # be able to retrieve it
+    class V1_Plan[T: v1_core.FxtrCallTarget](typing.Protocol):
+        pass
 
 
 @dataclasses.dataclass(frozen=True)
@@ -123,9 +132,10 @@ class ImplProvenanceSet(
                 new_key = await upgrade_cache.lookup_upgraded(plan, LegacyCompat)
             except KeyError as exc:
                 raise RuntimeError(
-                    f"Plan {plan} not found in cache! Plans should be cached when the task is upgraded; did you upgrade the task that this provenance set is for?"
+                    f"Plan {plan} not found in cache! Plans should be cached when the task is"
+                    " upgraded; did you upgrade the task that this provenance set is for?"
                 ) from exc
-            new_value = entity_serdes.store_entity(LegacyCompat(provenance))
+            new_value = LegacyCompat(provenance).store()
             new_provenances[new_key] = new_value
         wrapped = LegacyCompat(legacy_provenance_set)
         result = cls(provenances=frozendict(new_provenances), legacy_provenance_set=wrapped)
@@ -169,7 +179,8 @@ class RunWithPredecessors[T: v1_core.EntityBase](
             task = await upgrade_cache.lookup_upgraded(legacy_run.task, TaskWithPredecessors)
         except KeyError as exc:
             raise RuntimeError(
-                f"Task {legacy_run.task} not found in cache! Tasks must be cached before a run can be upgraded."
+                f"Task {legacy_run.task} not found in cache! Tasks must be cached before a run can"
+                " be upgraded."
             ) from exc
 
         try:
@@ -178,14 +189,16 @@ class RunWithPredecessors[T: v1_core.EntityBase](
             )
         except KeyError as exc:
             raise RuntimeError(
-                f"Provenance {legacy_run.provenance} not found in cache! Provenances must be cached before a run can be upgraded."
+                f"Provenance {legacy_run.provenance} not found in cache! Provenances must be cached"
+                " before a run can be upgraded."
             ) from exc
 
         try:
             run_data = await upgrade_cache.lookup_upgraded(legacy_run.run_data, LegacyCompat)
         except KeyError as exc:
             raise RuntimeError(
-                f"Run data {legacy_run.run_data} not found in cache! Run data must be cached before a run can be upgraded."
+                f"Run data {legacy_run.run_data} not found in cache! Run data must be cached before"
+                " a run can be upgraded."
             ) from exc
 
         run_info = LegacyCompat(legacy_run.run_info)
@@ -203,7 +216,8 @@ class RunWithPredecessors[T: v1_core.EntityBase](
                     )
                     if not isinstance(prev_provenance, v1_externals_provider.RunProvenance):
                         raise ValueError(
-                            f"Provenance record {prev_provenance} has an invalid provenance for task {task_value.legacy_task.legacy_cid}: {prev_provenance}"
+                            f"Provenance record {prev_provenance} has an invalid provenance for"
+                            f" task {task_value.legacy_task.legacy_cid}: {prev_provenance}"
                         )
                     try:
                         prev_run = await upgrade_cache.lookup_upgraded(
@@ -211,7 +225,8 @@ class RunWithPredecessors[T: v1_core.EntityBase](
                         )
                     except KeyError as exc:
                         raise RuntimeError(
-                            f"Previous run {prev_provenance.run_cid} not found in cache! Runs must be upgraded in dependency order."
+                            f"Previous run {prev_provenance.run_cid} not found in cache! Runs must"
+                            " be upgraded in dependency order."
                         ) from exc
                     previous_runs.add(prev_run)
                 case v1_core.WorkflowStepResultHandle() | v1_core.WorkflowResultHandle():

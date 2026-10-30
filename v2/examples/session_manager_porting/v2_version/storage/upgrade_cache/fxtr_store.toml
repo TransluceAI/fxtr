@@ -1,2 +1,0 @@
-name = "upgrade_cache"
-description = "Caches v1-to-v2 entity translations (Task -> TaskWithPredecessors, etc.)."

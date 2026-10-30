@@ -1,34 +1,50 @@
 # Entity Serialization/Deserialization Design
 
-This document describes the high-level design of entity serialization and deserialization in fxtr2, focusing on the relationship between `Entity`, `EntityRef`, and `DataclassEntity`.
+This document describes the high-level design of entity serialization and deserialization in fxtr2, focusing on the relationship between `Entity`, `EntityRef`, `FxtrScope`, the entity load handler registry, and `DataclassEntity`.
 
 ## Core Concepts
 
 ### Entity
 
-`Entity` is the abstract base class for all serializable objects in the fxtr graph. It defines the contract for serialization:
+`Entity` is the abstract base class for all serializable objects in the fxtr graph. It defines a minimal serialization contract:
 
 ```python
 class Entity(abc.ABC):
     @abc.abstractmethod
-    def _to_fxtr_cbor(self) -> FxtrCbor: ...
+    def _fxtr_store_impl(self) -> EntityRef[Self]: ...
 
-    @classmethod
-    @abc.abstractmethod
-    def _from_fxtr_cbor(cls, cbor: FxtrCbor, annotated_type: Any | None) -> Self: ...
-
-    @classmethod
-    @abc.abstractmethod
-    def _fxtr_type_id(cls) -> FxtrID: ...
-
-    def _fxtr_immutable(self) -> bool: ...
+    @typing.final
+    def store(self, scope: FxtrScope | None = None) -> EntityRef[Self]: ...
 ```
 
 Key requirements:
-- Every entity has a **type ID** (`_fxtr_type_id`) that uniquely identifies its class
-- Serialized form must have exactly one `$fxtr.ctx` marker at the root
-- Serialized form must include `$fxtr.type` for type discrimination
-- Equal entities must serialize identically
+- `_fxtr_store_impl` must serialize the entity to CBOR, store it via `scope.store_cbor()`, and return an `EntityRef` declaring a default type that can be used to load it again.
+- Storing and then loading the returned `EntityRef` must not produce deserialization errors (though the loaded Python object need not be identical to the original).
+- The serialized form must have exactly one `$fxtr.ctx` marker at the root and a `$fxtr.type` field.
+- Equal entities must serialize identically.
+
+### Entity Load Handler Registry
+
+Deserialization is handled by a global registry of `EntityLoadHandler` objects, not by the entity class itself. Handlers are registered per type annotation (class, type alias, or NewType) and are looked up via `TypeAnnotationHandlerRegistry` which supports:
+- MRO-based dispatch (handlers for base classes apply to subclasses)
+- Union resolution (each branch resolved independently)
+- Type alias unwrapping with generic parameter substitution
+- `OverrideFxtrHandlers[T]` for explicit override of default dispatch
+
+```python
+class EntityLoadHandler[T: Entity](Protocol):
+    async def supports_entity_type(
+        self, type_id: FxtrID, target_type: EntityTypeAnnotation[T]
+    ) -> bool: ...
+
+    async def from_lowlevel_entity_data(
+        self, cbor: FxtrCbor, target_type: EntityTypeAnnotation[T]
+    ) -> DeserializedEntity[T]: ...
+```
+
+`supports_entity_type` checks whether a handler can deserialize a given `$fxtr.type` ID into the target annotation. A handler can support multiple type IDs (e.g., `UnknownEntity` supports all type IDs).
+
+`from_lowlevel_entity_data` performs the actual deserialization. It runs in the active scope and may load child entities via `EntityRef.load()`. It returns a `DeserializedEntity` which includes the value and a `cacheable` flag.
 
 ### DataclassEntity
 
@@ -47,18 +63,38 @@ Features:
 - Automatic handling of `EntityRef` fields with proper link strength
 - Frozen by default (immutable, hashable)
 
+`DataclassEntity` has a corresponding `DataclassEntityLoadHandler` registered in the entity load registry. The handler uses `BasicDecoder(target_type)` to properly substitute generic type parameters during deserialization.
+
 ### EntityRef[T]
 
 `EntityRef[T]` is a lazy reference to an entity of type `T`. It holds:
-- `ref: FxtrID` - the content-addressed ID of the referenced entity
-- `converter: Callable[[FxtrCbor], T]` - function to deserialize the entity
+- `entity_id: FxtrID` - the content-addressed ID of the referenced entity
+- `target_type: EntityTypeAnnotation[T]` - the target type to deserialize to (can be a union type, generic alias, etc.)
 
 ```python
 ref: EntityRef[MyEntity] = entity.store()
 loaded: MyEntity = await ref.load()
 ```
 
-The converter is built by `build_converter_for(T)` and knows how to deserialize CBOR data into type `T`.
+`EntityRef` itself does not contain any caching logic. All load/cache operations delegate to `FxtrScope`.
+
+### Scope-Local Entity Caching
+
+When an entity handler declares a deserialized value as cacheable (immutable), the scope caches it to avoid redundant deserialization:
+
+- **`_ref_loaded_value_cache`**: Each `FxtrScope` maintains its own cache mapping `(entity_id, target_type)` → `RefLoadCacheEntry` (entity value + side-effect log).
+- **Cache lifetime**: Cache entries are tied to the scope's lifetime. When a scope exits, its cache is destroyed. Cache entries are copied from parent scopes on `lift()` or `copy_from_scope()`.
+- **`_refs_loaded_since_abandon`**: A fast-path set tracking refs loaded since the last `abandon()` call. If a ref is in this set, the cached value can be returned immediately without replaying side effects.
+
+### Side-Effect Tracking and Replay
+
+When loading an entity, any recursive loads (child entities loaded via `EntityRef.load()` during deserialization) are tracked as "side effects" via the scope's `_load_tracer` context variable. The side-effect log records both cacheable and uncacheable recursive loads.
+
+When using a cached entity, these side effects are replayed to ensure the scope properly tracks all referenced entities:
+- The entity's own CBOR is loaded from the arena (ensuring the arena tracks it)
+- For each side-effect load, `_load_for_side_effects` is called recursively
+
+**Fast-path optimization**: If a ref is in `_refs_loaded_since_abandon`, all its side effects have already been applied in this scope, so replay is skipped entirely.
 
 ## Serialization Flow (Store)
 
@@ -66,21 +102,29 @@ The converter is built by `build_converter_for(T)` and knows how to deserialize 
 Entity instance
     │
     ▼
-entity._to_fxtr_cbor()  →  FxtrCbor dict
-    │                       (includes $fxtr.ctx, $fxtr.type)
-    ▼
-arena.store(cbor)  →  FxtrID (content hash)
+scope.store(entity)
     │
-    ▼
-EntityRef[T](fxtr_id, converter)
+    ├─► Sets self as active scope
+    │
+    └─► entity._fxtr_store_impl()
+            │
+            ├─► Serialize to CBOR (e.g., mashumaro to_dict with RecursiveStore context)
+            │
+            ├─► scope.store_cbor(cbor)
+            │       │
+            │       ├─► Lift all child IDs referenced in CBOR
+            │       │
+            │       └─► arena.store(cbor) → FxtrID (content hash)
+            │
+            └─► EntityRef[T](fxtr_id, default_target_type)
 ```
 
-For `DataclassEntity`:
-1. `entity.store()` calls `_store_into(arena)`
-2. `_to_fxtr_cbor()` uses mashumaro's `to_dict()`
-3. Nested `EntityRef` fields are serialized as `RawStrongFxtrID` or `RawWeakFxtrID`
-4. The arena stores the CBOR and returns a content-addressed ID
-5. A converter is built from `__orig_class__` (if available) or `type(entity)`
+For `DataclassEntity._fxtr_store_impl`:
+1. Sets up `RecursiveStore` context for inline entity serialization
+2. Uses mashumaro's `BasicEncoder(type(self))` to serialize
+3. Calls `scope.store_cbor(cbor)` to store the CBOR
+4. Calls `_infer_default_type_params(type(self))` to determine the default load type
+5. Returns `EntityRef(fxtr_id, default_target_type)`
 
 ## Deserialization Flow (Load)
 
@@ -88,115 +132,126 @@ For `DataclassEntity`:
 EntityRef[T]
     │
     ▼
-ref.load()  →  arena.load(fxtr_id)  →  FxtrCbor dict
+scope.load(ref)
     │
-    ▼
-ref.converter(cbor)
+    ├─► Check scope cache for (entity_id, target_type)
+    │   └─► If found: replay side effects, return cached value
     │
-    ▼
-build_converter_for(T) dispatches to:
+    ├─► Lift ref from parent scopes (picks up parent cache entries too)
+    │   └─► If cache hit after lift: replay side effects, return cached value
     │
-    ├─► Union type? → Check $fxtr.type, dispatch to correct variant
-    │
-    ├─► Entity type? → base._from_fxtr_cbor(cbor, annotated_type)
-    │
-    └─► Other? → mashumaro BasicDecoder fallback
+    └─► No cache hit:
+            │
+            ▼
+        arena.load(entity_id) → FxtrCbor dict
+            │
+            ▼
+        Look up handler(s) in registry for target_type
+            │
+            ├─► Union type? → Check supports_entity_type for each variant
+            │   └─► Exactly one handler must match
+            │
+            ├─► Check if concrete subtype already cached
+            │
+            └─► handler.from_lowlevel_entity_data(cbor, resolved_target_type)
+                    │
+                    ├─► Runs in active scope with _load_tracer tracking
+                    │
+                    └─► DeserializedEntity(value, cacheable)
+                            │
+                            ▼
+                        If cacheable: cache in scope, add to fast-path set
 ```
 
-For `DataclassEntity._from_fxtr_cbor(cbor, annotated_type)`:
-1. If `annotated_type` is provided (e.g., `WrapperWithRef[TypeA]`):
-   - Use `_build_mashumaro_converter(annotated_type)`
-   - This creates a `BasicDecoder` that properly substitutes type parameters
-2. Otherwise: fall back to `cls.from_dict(cbor)`
+For `DataclassEntityLoadHandler.from_lowlevel_entity_data`:
+1. Phase 1 (collecting): Deserialize with mashumaro to find inline entity refs (`Child[T]`, `LinkedEntity[T]`)
+2. If inline refs found: load all collected refs, then Phase 2 (rebuilding): re-deserialize with loaded entities substituted
+3. Check if result is hashable to determine cacheability
 
 ## Type Parameter Preservation
 
 The key challenge: when deserializing `WrapperWithRef[TypeA]` with a field `ref: EntityRef[T]`, how does the nested `EntityRef` know that `T = TypeA`?
 
-### The Problem
+### At Load Time
 
-Mashumaro doesn't automatically substitute type parameters in nested generic fields. When it sees `EntityRef[T]` where `T` is a TypeVar bounded by `Entity`, it passes the bound (`Entity`) as the type argument, not the actual instantiated type.
-
-### The Solution
-
-1. **At store time**: Capture the annotated type via `__orig_class__` or explicit `as_type` parameter
-2. **At converter build time**: `build_converter_for(WrapperWithRef[TypeA])` creates a converter that passes the full annotated type to `_from_fxtr_cbor`
-3. **At load time**: `DataclassEntity._from_fxtr_cbor` uses `_build_mashumaro_converter(annotated_type)` which creates a `BasicDecoder(WrapperWithRef[TypeA])`. This decoder properly substitutes `T → TypeA` for all nested fields.
-
-### Two Paths for Type Information
-
+The caller specifies the full type annotation when creating the `EntityRef`:
+```python
+ref = EntityRef(some_id, WrapperWithRef[TypeA])
+loaded = await ref.load()
 ```
-Path 1: __orig_class__ (automatic)
-─────────────────────────────────────
-wrapper = WrapperWithRef[TypeA](...)  # Python sets __orig_class__
-ref = wrapper.store()                  # Reads __orig_class__ for converter
 
-Path 2: Explicit as_type
-─────────────────────────────────────
-wrapper = WrapperWithRef(...)
-ref = store_entity(wrapper, as_type=WrapperWithRef[TypeA])
-```
+The mashumaro-based `DataclassEntityLoadHandler` uses `BasicDecoder(WrapperWithRef[TypeA])` which properly substitutes `T → TypeA` for all nested fields.
+
+### At Store Time
+
+The entity's `_fxtr_store_impl` must return an `EntityRef` with a type that can successfully deserialize the entity. The entity does _not_ receive the caller's type annotation at store time — it must determine a suitable default type from its own runtime state.
+
+`DataclassEntity` uses `_infer_default_type_params(type(self))`:
+- For each type parameter, uses its bound as the default argument
+- `T: Entity` → `UnknownEntity`
+- `T: SomeConcreteType` → `SomeConcreteType`
+- No bound → `typing.Any`
+
+This means storing a `WrapperWithRef[TypeA](...)` and then loading it back _without_ specifying the type annotation will produce a `WrapperWithRef[UnknownEntity]` — the child entity's data is preserved but loaded as `UnknownEntity`. To get back a `WrapperWithRef[TypeA]`, the caller must specify the type when loading.
+
+Subclasses can override `_fxtr_store_impl` to use runtime type introspection for more specific default types (e.g., inspecting `__orig_class__` or other runtime state). However, `__orig_class__` inspection is not part of the core API and is not explicitly supported.
+
+NOTE: The `Entity` → `UnknownEntity` conversion happens at _store_ time, and ensures that stored entities can be re-loaded. If a user attempts to create `EntityRef(some_id, WrapperWithRef)` with no type parameters manually, the automatic inference of UnknownEntity does not trigger. Subclasses can opt-in to automatic `UnknownEntity` substitution by using the type alias `LoadAsUnknownByDefault` in their trait bound (see the `WrapperWithRefAndFallback` test for an example).
+
+### Roundtrip Guarantee
+
+The system guarantees that for any correctly-implemented entity `e`:
+1. `ref = e.store()` succeeds
+2. `loaded = await ref.load()` succeeds (no deserialization errors)
+3. `ref2 = loaded.store()` produces `ref2.entity_id == ref.entity_id` (same content hash)
+
+However, `loaded` may not be Python-equal to `e` (e.g., generic parameters may be lost). The guarantee is at the serialized CBOR level, not the Python object level.
 
 ## Union Type Handling
 
-`build_converter_for` handles unions by building a dispatch table from type IDs:
+Union types are handled by the registry's union support. When loading an `EntityRef` with a union target type:
+
+1. The registry resolves the union into per-branch handlers
+2. `$fxtr.type` is extracted from the CBOR
+3. `supports_entity_type` is called on each branch's handler
+4. Exactly one handler must match (zero = error, multiple = error)
+5. The matching handler deserializes the entity
 
 ```python
-converter = build_converter_for(TypeA | TypeB | TypeC)
+union_ref = EntityRef(some_id, TypeA | TypeB)
+loaded = await union_ref.load()  # Dispatches based on $fxtr.type
 ```
 
-At deserialization:
-1. Extract `$fxtr.type` from the CBOR dict
-2. Look up the corresponding (annotated_type, base_class) pair
-3. Call `base_class._from_fxtr_cbor(cbor, annotated_type)`
-
-This works for both `DataclassEntity` subclasses and custom `Entity` implementations.
+If multiple handlers match the same type ID, use `OverrideFxtrHandlers` to define a custom handler that breaks ties:
+```python
+type MyUnion = OverrideFxtrHandlers[TypeA | TypeB]
+register_entity_load_handler(MyUnion, CustomUnionHandler())
+```
 
 ## Link Strength
 
 Entity references can be **strong** or **weak**:
 
-- **Strong links** (`StrongLinkedEntityRef`, `RawStrongFxtrID`): The referenced entity is considered a child and will be included when copying/persisting
-- **Weak links** (default): The reference is informational; the target may or may not exist
+- **Strong links** (`RawStrongFxtrID`, CBOR tag 33002): Ownership/containment. The referenced entity is considered a child.
+- **Weak links** (`RawWeakFxtrID`, CBOR tag 33001): Informational reference. Not considered a child.
 
-Controlled via type annotations:
+Both link types keep the referenced entity alive. The distinction is for semantic purposes (e.g., visualization, provenance).
+
+Controlled via type annotations on `DataclassEntity` fields:
 ```python
-child: StrongLinkedEntityRef[ChildEntity]  # Strong link
-related: EntityRef[OtherEntity]            # Weak link (default)
+child: ChildRef[ChildEntity]         # Strong link, lazy
+related: EntityRef[OtherEntity]      # Weak link (default), lazy
+inline_child: Child[ChildEntity]     # Strong link, auto-loaded
+inline_related: LinkedEntity[Other]  # Weak link, auto-loaded
+raw_child: ChildFxtrID               # Strong link, raw FxtrID
+raw_related: FxtrID                  # Weak link (default), raw FxtrID
 ```
-
-## Custom Entity Implementation
-
-For entities that can't use `DataclassEntity` (e.g., need custom serialization):
-
-```python
-class CustomEntity(Entity):
-    _TYPE_ID = FxtrID.builtin("custom")
-
-    def _to_fxtr_cbor(self) -> FxtrCbor:
-        return {
-            "$fxtr.ctx": get_active_context_marker(),
-            "$fxtr.type": RawWeakFxtrID(inner_id=self._TYPE_ID),
-            "field": self.field,
-        }
-
-    @classmethod
-    def _from_fxtr_cbor(cls, cbor: FxtrCbor, annotated_type: Any | None) -> Self:
-        # Can use annotated_type to get type parameters if generic
-        return cls(field=cbor["field"])
-
-    @classmethod
-    def _fxtr_type_id(cls) -> FxtrID:
-        return cls._TYPE_ID
-```
-
-Custom entities can be freely mixed with `DataclassEntity` in unions - the `$fxtr.type` discriminator ensures correct dispatch.
 
 ## Inline Entities (Auto-Loaded)
 
 Inline entities (`Child[T]` and `LinkedEntity[T]`) are automatically loaded during deserialization, rather than being left as lazy `EntityRef` values.
 
-### Type Aliases
+### Type Reference Table
 
 | Type | Link Strength | Loading | Description |
 |------|---------------|---------|-------------|
@@ -205,51 +260,23 @@ Inline entities (`Child[T]` and `LinkedEntity[T]`) are automatically loaded duri
 | `LinkedEntity[T]` | weak | auto | Field type is `T`, auto-loaded |
 | `Child[T]` | strong | auto | Strong field type is `T`, auto-loaded |
 
-### Usage
-
-```python
-@dataclass(frozen=True)
-class Parent(DataclassEntity, fxtr_type=...):
-    name: str
-    child: Child[Leaf]           # Auto-loaded, strong link
-    related: LinkedEntity[Leaf]  # Auto-loaded, weak link
-    lazy: ChildRef[Leaf]         # Lazy, strong link, must call .load()
-
-# Store - children are automatically stored
-parent = Parent(
-    name="test",
-    child=Leaf(value=1),
-    related=Leaf(value=2),
-    lazy=Leaf(value=3).store(),
-)
-ref = parent.store()
-
-# Load - child and related are automatically loaded
-loaded = await ref.load()
-assert loaded.child.value == 1      # Already loaded!
-assert loaded.related.value == 2    # Already loaded!
-lazy_loaded = await loaded.lazy.load()  # Must explicitly load
-```
-
 ### Two-Phase Deserialization
 
 When a `DataclassEntity` has inline entity fields, deserialization uses a two-phase process:
 
 **Phase 1 - Collecting (synchronous):**
 1. Set `RECURSIVE_SERDES_STATE` to `RecursiveLoadCollecting`
-2. Run mashumaro's `from_dict()` / `BasicDecoder`
+2. Run mashumaro's `BasicDecoder`
 3. Inline entity fields return `DeferredLoadPlaceholder` sentinels
 4. Collect all `EntityRef` objects that need to be loaded
-5. Reset state
 
-**If nothing collected:** Return the object synchronously.
+**If nothing collected:** Return the object directly.
 
 **Phase 2 - Loading + Rebuilding (asynchronous):**
-1. Load all collected EntityRefs in parallel using `anyio.create_task_group()`
+1. Load all collected EntityRefs sequentially
 2. Set `RECURSIVE_SERDES_STATE` to `RecursiveLoadRebuilding`
-3. Re-run mashumaro's `from_dict()` / `BasicDecoder`
+3. Re-run mashumaro's `BasicDecoder`
 4. Inline entity fields return the pre-loaded entities
-5. Reset state and return the final object
 
 ### Handling Placeholders in `__post_init__`
 
@@ -262,35 +289,67 @@ class ValidatedParent(DataclassEntity, fxtr_type=...):
 
     def __post_init__(self):
         super().__post_init__()
-        # Skip validation during collecting phase
         if isinstance(self.child, DeferredLoadPlaceholder):
             return
-        # Actual validation when child is loaded
         if self.child.value < 0:
             raise ValueError("Child value must be non-negative")
 ```
 
-### Async `_from_fxtr_cbor`
+## Custom Entity Implementation
 
-For custom entities (not using DataclassEntity) that need to load children, `_from_fxtr_cbor` can return `Self | Awaitable[Self]`:
+For entities that can't use `DataclassEntity`, there are two paths:
+
+### New-Style: Implement `Entity._fxtr_store_impl` + Register Handler
 
 ```python
-class ParentEntity(Entity):
-    @classmethod
-    async def _from_fxtr_cbor(cls, cbor: FxtrCbor, annotated_type: Any | None) -> Self:
-        # Load child from active scope
-        child_id = cbor["child"].inner_id
-        child_ref = EntityRef[ChildEntity](child_id, build_converter_for(ChildEntity))
-        child = await child_ref.load()  # Uses ACTIVE_SCOPE
-        return cls(name=cbor["name"], child=child)
+class CustomEntity(Entity):
+    _TYPE_ID = FxtrID.builtin("custom")
+
+    def __init__(self, field: str):
+        self.field = field
+
+    def _fxtr_store_impl(self) -> EntityRef[Self]:
+        scope = get_active_scope()
+        cbor = {
+            "$fxtr.ctx": get_active_context_marker(),
+            "$fxtr.type": RawWeakFxtrID(inner_id=self._TYPE_ID),
+            "field": self.field,
+        }
+        return EntityRef(scope.store_cbor(cbor), CustomEntity)
+
+class CustomEntityLoadHandler(EntityLoadHandler[CustomEntity]):
+    async def supports_entity_type(self, type_id, target_type) -> bool:
+        return type_id == CustomEntity._TYPE_ID
+
+    async def from_lowlevel_entity_data(self, cbor, target_type):
+        entity = CustomEntity(field=cbor["field"])
+        return DeserializedEntity(value=entity, cacheable=True)
+
+register_entity_load_handler(CustomEntity, CustomEntityLoadHandler())
 ```
 
-Callers (converters, `EntityRef.load`) check with `inspect.isawaitable()` and await if needed.
+### Legacy-Style: Subclass `SelfLoadingLegacyEntity`
 
-### Scope Management
+For backward compatibility with old entities that implement `_to_fxtr_cbor` / `_from_fxtr_cbor`:
 
-During serialization/deserialization, `ACTIVE_SCOPE` is guaranteed to be set correctly:
-- `entity.store(scope)` overrides `ACTIVE_SCOPE` before calling `_to_fxtr_cbor`
-- `ref.load(scope)` passes scope to converter, which overrides `ACTIVE_SCOPE` before calling `_from_fxtr_cbor`
+```python
+from fxtr2.conversion.converters.legacy_entity_abc import SelfLoadingLegacyEntity
 
-This allows custom entities to use `store_entity()` and `EntityRef.load()` without explicitly passing scope parameters.
+class OldStyleEntity(SelfLoadingLegacyEntity):
+    def _to_fxtr_cbor(self, scope) -> FxtrCbor: ...
+    @classmethod
+    def _from_fxtr_cbor(cls, cbor, annotated_type, scope) -> Self: ...
+    @classmethod
+    def _fxtr_type_id(cls) -> FxtrID: ...
+    def _fxtr_immutable(self) -> bool: ...
+```
+
+`SelfLoadingLegacyEntity` adapts the old ABC to the new system automatically.
+
+## Scope Management
+
+All serialization and deserialization operates within the active scope:
+- `Entity._fxtr_store_impl()` is called with `self` as the active scope during `scope.store(entity)`.
+- `EntityLoadHandler.from_lowlevel_entity_data()` is called with the loading scope as the active scope during `scope.load(ref)`.
+
+Custom entities should use `get_active_scope()` for scope operations rather than receiving an explicit scope parameter.

@@ -1,0 +1,27 @@
+/**
+ * Hover preview card styles.
+ *
+ * Applied to the base-ui PreviewCard.Popup element rendered by
+ * @fxtr-workstation/core's useEntityHoverCard. Keep everything
+ * token-driven so consumers inherit the design system palette.
+ */
+
+.fw-hover-popup {
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-card);
+	box-shadow: 0 2px 8px rgba(15, 20, 40, 0.12);
+	padding: var(--sp-4);
+	max-width: 360px;
+	min-width: 180px;
+	color: var(--text-primary);
+	font-family: var(--font-prose);
+	font-size: var(--text-body-sm);
+	line-height: var(--lh-compact);
+	z-index: 1000;
+}
+
+.fw-hover-popup-loading {
+	color: var(--text-muted);
+	font-size: var(--text-caption);
+}

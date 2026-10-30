@@ -3,26 +3,125 @@
 An "arena" represents a lease on a set of entities - a promise that certain data will remain
 accessible. Arenas are the primary way user code interacts with fxtr storage.
 
+All arena operations are authorized by a ``Lease[B]`` passed to each method. Every arena carries
+a ``token`` property identifying its lifetime; the brand ``B`` is a phantom type parameter that
+lets the typechecker distinguish between leases of different lifetimes. See
+``plans/phase3/stage8b_leased_memory_store/overview.md`` for the lease-backed design.
+
+Calling convention: each lease argument appears immediately after the thing it authorizes.
+Single-target methods put the arena's own lease first (after ``self``). Cross-arena methods pair
+the source arena with its own lease (``..., source, src_lease, ...``). Leases are consumed on
+each call — callers pass ``lease.clone()`` if they need to retain their own copy.
+
 Key abstractions:
-- ReadableArena: Can load entities and track what's accessible
-- CopyTargetArena: Can also copy entities from other arenas
-- ReadWriteArena: Can also store new entities synchronously
+- ReadableArena[B]: Can load entities and track what's accessible
+- CopyTargetArena[B]: Can also copy entities from other arenas
+- ReadWriteArena[B]: Can also store new entities synchronously and lazily attach from foreign arenas
 - PersistentPinningBackend: Persistent storage with named pins for retrieval
-- StreamSink: Experimental streaming output interface
-- ObservableStore: Store that supports querying state and backreferences
+- DeepFetchable[B]: Store that supports deep-fetching an entity (and its transitive deps) into
+  an arena sharing the caller's lifetime brand
 """
 
 from __future__ import annotations
 
 import abc
 import dataclasses
-from typing import Any, Collection, Literal, override
+import enum
+from typing import Collection, override
 
-from fxtr2.data import entity_core
 from fxtr2.data.entity_core import FxtrCbor, FxtrID
+from fxtr2.leases.lease_bridges import LocalBridge
+from fxtr2.leases.lease_types import Grant, Lease, LifetimeBrand, LifetimeToken
 
 
-class ReadableArena(abc.ABC):
+class DepKind(enum.Enum):
+    """Kind of dependency relationship between entities."""
+
+    STRONG_REF = "strong_ref"
+    WEAK_REF = "weak_ref"
+    CTX_NODE = "ctx_node"
+    BACKSTEP = "backstep"
+    UNWRAPS_TO = "unwraps_to"
+
+
+@dataclasses.dataclass(frozen=True)
+class FxtrEntityFlatData:
+    """Flat representation of an entity's data and dependencies.
+
+    For d/n nodes: entity_bytes is the raw CBOR bytes.
+    For derived nodes (c/p/u/./!): entity_bytes is None.
+    deps is the full dependency list, same format as the removed
+    fetch_data_and_deps_from_arena.
+    """
+
+    entity_id: FxtrID
+    entity_bytes: bytes | None
+    deps: list[tuple[FxtrID, DepKind]]
+
+
+class LeaseGrantMismatchError(RuntimeError):
+    """Raised when a lease's grant does not match an arena's expected grant."""
+
+
+def validate_lease_grant[B: LifetimeBrand](expected: Grant[B], lease: Lease[B]) -> None:
+    """Check that ``lease.grant == expected``, raising ``LeaseGrantMismatchError`` otherwise.
+
+    Does not consume the lease or check liveness; callers who also require the lease to still be
+    active should call ``lease.ensure_active()`` in addition.
+    """
+    if lease.grant != expected:
+        raise LeaseGrantMismatchError(
+            f"Lease grant {lease.grant!r} does not match expected grant {expected!r}"
+        )
+
+
+class FlatEntitySource[B: LifetimeBrand](abc.ABC):
+    """Minimal interface for reading flat entity data.
+
+    This is the narrow contract needed by entity import/copy operations.
+    It provides entity lookup and flat data loading without requiring
+    the full provenance navigation that ReadableArena includes.
+
+    ReadableArena extends this, so any full arena also satisfies this
+    interface. TransferEntitySource implements only this interface.
+    """
+
+    @property
+    @abc.abstractmethod
+    def token(self) -> LifetimeToken[B]:
+        """The lifetime token that gates this source's operations."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def is_tracked(self, lease: Lease[B], node_id: FxtrID) -> bool:
+        """Check if a node is available in this source."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def load_flat(self, lease: Lease[B], node_id: FxtrID) -> FxtrEntityFlatData:
+        """Load flat entity data (raw bytes + dependency list).
+
+        Has the same loading obligations as ReadableArena.load_flat; see that for details.
+        """
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    def copy_to_new_arena(
+        self, lease: Lease[B], node_ids: Collection[FxtrID]
+    ) -> FlatEntitySource[B]:
+        """Create a new source that keeps the given nodes accessible.
+
+        The returned source shares the same lifetime token (and brand) as this one — this is
+        purely a cheap python-side duplication of tracking state, not a new lifetime. No lease
+        is returned; callers keep using clones of their existing lease to access the new source.
+        """
+        raise NotImplementedError
+
+    def close(self):
+        """Release resources held by this source."""
+
+
+class ReadableArena[B: LifetimeBrand](FlatEntitySource[B]):
     """An arena of entities that can be read from.
 
     Arenas manage the mapping between FxtrIDs and their data. Whenever you receive a FxtrID from
@@ -35,7 +134,7 @@ class ReadableArena(abc.ABC):
     """
 
     @abc.abstractmethod
-    def is_tracked(self, node_id: FxtrID) -> bool:
+    def is_tracked(self, lease: Lease[B], node_id: FxtrID) -> bool:
         """Check if a node is tracked in this arena.
 
         A node is tracked if it is currently owned by this arena, such that this arena will keep
@@ -47,7 +146,7 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    async def load(self, node_id: FxtrID) -> FxtrCbor:
+    async def load(self, lease: Lease[B], node_id: FxtrID) -> FxtrCbor:
         """Load an entity from the fxtr graph.
 
         This method loads an entity from the current arena and returns it as a raw entity. The
@@ -71,7 +170,7 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def unwrap_provenance(self, node_id: FxtrID) -> FxtrID | None:
+    def unwrap_provenance(self, lease: Lease[B], node_id: FxtrID) -> FxtrID | None:
         """Unwrap a provenance node.
 
         This method unwraps a provenance node and returns the data node ID it is attached to, if
@@ -89,7 +188,7 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def c_node_to_context_data(self, c_node_id: FxtrID) -> FxtrID:
+    def c_node_to_context_data(self, lease: Lease[B], c_node_id: FxtrID) -> FxtrID:
         """Unstructure a context provenance node.
 
         This method destructs a context provenance node and returns the data node ID it was built
@@ -104,7 +203,7 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def p_node_to_pathroot(self, p_node_id: FxtrID) -> FxtrID:
+    def p_node_to_pathroot(self, lease: Lease[B], p_node_id: FxtrID) -> FxtrID:
         """Unstructure a path provenance node.
 
         This method unstructures a path provenance node and returns the pathroot node ID it was built
@@ -119,7 +218,7 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def step_back_p_ctx(self, p_node_id: FxtrID) -> FxtrID | None:
+    def step_back_p_ctx(self, lease: Lease[B], p_node_id: FxtrID) -> FxtrID | None:
         """Step back along a path provenance context node.
 
         This method steps back from the ID of the "$fxtr.ctx" entry of a p-node to the ID of the
@@ -140,7 +239,23 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def abandon(self, node_id: FxtrID):
+    async def load_flat(self, lease: Lease[B], node_id: FxtrID) -> FxtrEntityFlatData:
+        """Load flat entity data without deserializing CBOR.
+
+        All returned IDs in the result.deps will be tracked in the arena as a side effect, maintaining
+        the invariant that all IDs returned by an arena method are always loadable in that arena.
+        Returns raw bytes (for d/n) and the full dependency list.
+
+        Args:
+            node_id: The canonical identifier for the entity to load.
+
+        Returns:
+            FxtrEntityFlatData containing raw bytes and dependencies.
+        """
+        raise NotImplementedError("Not implemented yet")
+
+    @abc.abstractmethod
+    def abandon(self, lease: Lease[B], node_id: FxtrID):
         """Abandon an entity from the arena.
 
         This method abandons an entity from the arena. The entity will no longer be tracked and
@@ -157,18 +272,20 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def copy_to_new_arena(self, node_ids: Collection[FxtrID]) -> ReadableArena:
+    def copy_to_new_arena(self, lease: Lease[B], node_ids: Collection[FxtrID]) -> ReadableArena[B]:
         """Copy the given nodes to a new arena.
 
         This method creates a new arena that contains a subset of nodes that are tracked in this
-        one. The new arena will guarantee that the given nodes remain accessible until the new arena
-        is closed, even if the original arena is closed or nodes in it are abandoned.
+        one. The returned arena shares the same lifetime token (and brand) as this one — this is
+        purely a cheap python-side duplication of tracking state, not a new lifetime. Callers
+        continue to use clones of their existing lease to access the new arena; no lease is
+        returned.
 
         Args:
             node_ids: The IDs of the nodes to copy. Must be tracked in this arena.
 
         Returns:
-            A new arena that tracks the given nodes.
+            A new arena tracking the given nodes under the same lifetime token as this arena.
         """
         raise NotImplementedError("Not implemented yet")
 
@@ -184,11 +301,13 @@ class ReadableArena(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
 
-class CopyTargetArena(ReadableArena):
+class CopyTargetArena[B: LifetimeBrand](ReadableArena[B]):
     """An arena that can be used as a target for copying entities to."""
 
     @abc.abstractmethod
-    async def copy_from_arena(self, entity_id: FxtrID, source: ReadableArena):
+    async def copy_from_arena[
+        B2: LifetimeBrand
+    ](self, lease: Lease[B], source: ReadableArena[B2], src_lease: Lease[B2], entity_id: FxtrID,):
         """Copy an entity from another arena into this arena.
 
         This method recursively copies the entity and all of its transitive dependencies from the
@@ -205,7 +324,7 @@ class CopyTargetArena(ReadableArena):
         raise NotImplementedError("Not implemented yet")
 
 
-class ReadWriteArena(CopyTargetArena):
+class ReadWriteArena[B: LifetimeBrand](CopyTargetArena[B]):
     """An arena of entities that can be read from and written to.
 
     Arenas manage the mapping between FxtrIDs and their data. Whenever you receive a FxtrID from
@@ -218,7 +337,7 @@ class ReadWriteArena(CopyTargetArena):
     """
 
     @abc.abstractmethod
-    def store(self, entity: FxtrCbor) -> FxtrID:
+    def store(self, lease: Lease[B], entity: FxtrCbor) -> FxtrID:
         """Store an entity in the fxtr graph.
 
         This method stores an entity into the current context and returns the canonical identifier
@@ -250,7 +369,7 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def track_builtin(self, node_id: FxtrID) -> FxtrID:
+    def track_builtin(self, lease: Lease[B], node_id: FxtrID) -> FxtrID:
         """Track a "." or "!" node.
 
         This method makes sure that the given builtin node is tracked by the arena.
@@ -264,7 +383,7 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def create_c_node(self, context_data: FxtrCbor) -> FxtrID:
+    def create_c_node(self, lease: Lease[B], context_data: FxtrCbor) -> FxtrID:
         """Create a context provenance node from its context data
 
         This method lifts data for a context node into a context provenance node (cXXXXXX). The data
@@ -282,7 +401,7 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def create_p_node(self, pathroot_data: FxtrCbor) -> FxtrID:
+    def create_p_node(self, lease: Lease[B], pathroot_data: FxtrCbor) -> FxtrID:
         """Create a path provenance node from its pathroot data.
 
         This method lifts the data for a pathroot node into a path provenance node (pXXXXXX)
@@ -299,7 +418,7 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    def create_u_node(self, wrapped_id: FxtrID) -> FxtrID:
+    def create_u_node(self, lease: Lease[B], wrapped_id: FxtrID) -> FxtrID:
         """Create an untracked provenance node from a data node.
 
         This method lifts a data node (dXXXXXX) into an untracked provenance node (uXXXXXX). The
@@ -318,6 +437,46 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
+    def lazily_attach_from_arena[
+        B_Y: LifetimeBrand
+    ](
+        self,
+        lease: Lease[B],
+        node_ids: FxtrID | Collection[FxtrID],
+        source: ReadableArena[B_Y],
+        bridge: LocalBridge,
+    ) -> None:
+        """Lazily attach one or more entities from a source arena.
+
+        Registers ``source`` and ``bridge`` for the supplied IDs so that subsequent loads
+        of those nodes can fetch data from ``source``. The bridge — a ``LocalBridge``
+        from :mod:`fxtr2.leases.lease_bridges` — produces a fresh ``Lease[B_Y]`` per
+        load: ``IndependentLocalBridge`` clones its stored at-rest lease;
+        ``DependentLocalBridge`` runs its converter on cloned input leases plus a
+        per-call ``base = Lease[B]`` produced by the implementation. Whichever variant
+        is used, every at-rest lease in ``bridge`` is taken on first attach for a
+        ``(self.token, source.token)`` pair; subsequent attaches for the same pair
+        discard the new bridge and reuse the stored record.
+
+        Accepts a single ``FxtrID`` (legacy single-attach) or a ``Collection[FxtrID]``.
+        When a collection is supplied, the implementation does *one*
+        ``source.copy_to_new_arena`` fork covering every ID, instead of one fork per ID
+        — a meaningful saving when ``source`` is e.g. a ``CapIRArena`` whose
+        ``copy_to_new_arena`` is a wire round-trip.
+
+        See :mod:`fxtr2.leases.lease_bridges` for the four-variant bridge taxonomy and
+        :doc:`lifetime_conversion_mechanics` for guidance on which variant to choose
+        for a given ``(self.token, source.token)`` relationship.
+
+        Args:
+            lease: A lease for this arena's token.
+            node_ids: The entity (or entities) to attach.
+            source: The source arena that will be used to load the entities' data lazily.
+            bridge: A :class:`LocalBridge` that mints a fresh ``Lease[B_Y]`` per load.
+        """
+        raise NotImplementedError("Not implemented yet")
+
+    @abc.abstractmethod
     @override
     def close(self):
         """Close the arena.
@@ -332,11 +491,17 @@ class ReadWriteArena(CopyTargetArena):
         raise NotImplementedError("Not implemented yet")
 
 
-class PersistentPinningBackend(abc.ABC):
+class PersistentPinningBackend[B: LifetimeBrand](abc.ABC):
     """A persistent storage backend that allows pinning entities by string key.
 
     This backend allows entities to be published to a string key, making them available
     persistently and accessible outside their source arena.
+
+    Parameterized by a lifetime brand ``B`` (exposed via ``token``). Retrieval methods return
+    arenas branded the same way; callers obtain a ``Lease[B]`` for those arenas via a concrete
+    helper (for example ``backend.get_lease()``), not by passing a lease into every backend
+    method. The backend's owner manages the token externally (typically via an
+    ``UnconditionalLocalLifetime`` held by a session / namespace object).
 
     To simplify implementation of backends, a persistent pinning backend does NOT need to allow
     direct storage of entities via an arena. Instead, most users should create the entities in a
@@ -345,9 +510,23 @@ class PersistentPinningBackend(abc.ABC):
     ReadWriteArenas do.)
     """
 
+    @property
     @abc.abstractmethod
-    async def pin_entity_from_arena(
-        self, key: str, entity_id: FxtrID, source: ReadableArena, *, overwrite: bool = False
+    def token(self) -> LifetimeToken[B]:
+        """The lifetime token that gates this backend's operations."""
+        raise NotImplementedError
+
+    @abc.abstractmethod
+    async def pin_entity_from_arena[
+        B2: LifetimeBrand
+    ](
+        self,
+        key: str,
+        entity_id: FxtrID,
+        source: ReadableArena[B2],
+        src_lease: Lease[B2],
+        *,
+        overwrite: bool = False,
     ):
         """Pin an entity from an arena into this backend.
 
@@ -358,6 +537,7 @@ class PersistentPinningBackend(abc.ABC):
             key: The name to pin the entity under.
             entity_id: The ID of the entity to pin.
             source: The arena containing the entity.
+            src_lease: A lease for ``source``'s token, consumed by the call.
             overwrite: If False (the default), raises an error if a pin with the given key
                 already exists. If True, replaces the existing pin with the new entity.
 
@@ -379,23 +559,24 @@ class PersistentPinningBackend(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    async def retrieve_pinned(self, key: str) -> tuple[entity_core.FxtrID, ReadableArena]:
+    async def retrieve_pinned(self, key: str) -> tuple[FxtrID, ReadableArena[B]]:
         """Get a published entity by key.
 
-        This method returns the ID entity published at the given key, along with an arena that can
-        be used to load the entity.
+        This method returns the ID of the entity published at the given key, along with an arena
+        that can be used to load the entity. The returned arena shares this backend's lifetime
+        brand; callers obtain a ``Lease[B]`` for it via a concrete helper such as
+        ``backend.get_lease()``.
 
         Args:
             key: The key to use for the persistent ID.
 
         Returns:
-            The entity ID of the pinned entity, and an arena that can be used to load the entity.
-            The entity will be tracked in the returned arena.
+            A tuple of (entity_id, arena). The entity will be tracked in the returned arena.
         """
         raise NotImplementedError("Not implemented yet")
 
     @abc.abstractmethod
-    async def list_pins(self, prefix: str = "") -> dict[str, entity_core.FxtrID]:
+    async def list_pins(self, prefix: str = "") -> dict[str, FxtrID]:
         """List pins in the backend matching the given prefix.
 
         This method returns all pins whose keys start with the given prefix. It does NOT produce
@@ -412,113 +593,23 @@ class PersistentPinningBackend(abc.ABC):
         raise NotImplementedError("Not implemented yet")
 
 
-class StreamSink(abc.ABC):
-    """Internal representation of the output side of a stream.
+class DeepFetchable[B: LifetimeBrand](abc.ABC):
+    """Protocol for *external* deep-fetch sources registered via
+    ``FxtrScope.register_deep_fetch_source``.
 
-    Stream sinks can be implemented by various backends to support receiving streamed items from
-    the user. They take an explicit input arena that they should copy values from when they are
-    emitted.
+    On success, ``try_lookup`` returns a ``ReadableArena[B]``; callers use it with leases from
+    ``backend.get_lease()`` (or the session) as usual.
+
+    The global ``MemoryStore`` is *not* a ``DeepFetchable`` — it can serve many tokens and uses
+    ``try_lookup_with_lease(lease, node_id)`` to select the caller's brand.
     """
 
     @abc.abstractmethod
-    def emit(self, *items: entity_core.FxtrCbor, from_arena: ReadableArena | None = None) -> None:
-        """Emit items to the stream.
+    async def try_lookup(self, node_id: FxtrID) -> ReadableArena[B] | None:
+        """Try to look up an entity in this deep-fetch source.
 
-        Args:
-            items: The items to emit.
-            from_arena: The arena to copy values from. Required if the items contain entities.
-        """
-        raise NotImplementedError("Subclasses should override")
-
-    @abc.abstractmethod
-    def finish_with_result(self, result: entity_core.FxtrID, from_arena: ReadableArena) -> None:
-        """Close the stream with a final result.
-
-        After a stream is closed, it is no longer valid to emit any more items to the stream.
-        Additionally, all substreams of this stream must be finished first before this stream can
-        be finished.
-
-        Args:
-            result: The ID of the final result to use as the result of the stream, replacing all previous
-                streamed outputs. Usually an entity or set of entities that combine the results
-                that were previously streamed.
-            from_arena: The arena where the result is stored.
-        """
-        raise NotImplementedError("Subclasses should override")
-
-    @abc.abstractmethod
-    def make_substream_sink(
-        self, stream_key: entity_core.FxtrID | None = None, from_arena: ReadableArena | None = None
-    ) -> StreamSink:
-        """Create a substream sink inside this stream sink.
-
-        Streams can contain other streams in addition to regular CBOR items. These streams are
-        treated as children of the parent stream, and when the child stream finishes, it is treated
-        similarly to emitting the final result of the child stream.
-
-        Substreams must be finished before the parent stream can be finished.
-
-        Args:
-            stream_key: An optional ID to associate this substream with.
-            from_arena: The arena to copy values from. Required if the stream key contains entities.
-
-        Returns:
-            A new substream.
-        """
-        raise NotImplementedError("Subclasses should override")
-
-    @abc.abstractmethod
-    def is_finished(self) -> bool:
-        """Check if the stream is finished."""
-        raise NotImplementedError("Subclasses should override")
-
-
-@dataclasses.dataclass(frozen=True)
-class EntityBackref:
-    """Another entity that refers to this entity."""
-
-    referrer: FxtrID
-    kind: Literal["strong_ref", "weak_ref", "unwrap", "context_data"]
-
-
-@dataclasses.dataclass(frozen=True)
-class OtherBackref:
-    """A non-entity source that refers to this entity."""
-
-    kind: str
-    data: Any
-
-
-class ObservableStore(abc.ABC):
-    """A store whose state can be queried."""
-
-    @abc.abstractmethod
-    async def try_lookup(self, node_id: FxtrID) -> ReadableArena | None:
-        """Try to look up an entity in the store.
-
-        If this entity is in the store, this method returns an arena that can be used to load the
-        entity. If not, this method returns None.
-
-        Args:
-            node_id: The ID of the entity to look up.
-
-        Returns:
-            An arena that can be used to load the entity, or None if the entity is not in the store.
-        """
-        raise NotImplementedError("Not implemented yet")
-
-    @abc.abstractmethod
-    async def backrefs(self, node_id: FxtrID) -> list[EntityBackref | OtherBackref]:
-        """Get backrefs to a particular entity.
-
-        Returns a list of other items known to the store that refer to, depend on, or contain the
-        given entity.
-
-        Args:
-            node_id: The ID of the entity to get backrefs for.
-
-        Returns:
-            A list of other items known to the store that refer to, depend on, or contain the
-            given entity.
+        If the entity is available from this source, returns an arena tracking it; otherwise
+        None. Callers use the returned arena with ``Lease[B]`` from a concrete
+        ``get_lease()``-style hook on the same backend that produced the source.
         """
         raise NotImplementedError("Not implemented yet")

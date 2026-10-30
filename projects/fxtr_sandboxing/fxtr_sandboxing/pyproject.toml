@@ -1,0 +1,74 @@
+[project]
+name = "fxtr_sandboxing"
+version = "0.1.0"
+description = "Spike: sandboxed Python execution via Eryx with content-addressed task bundles"
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.12.1",
+    "fxtr2",
+    "fxtr-nix-runner",
+    "fxtr-sandbox-types[fxtr2]",
+    "fxtr-pyodide-runner",
+    "pyeryx",
+    "packaging>=25.0",
+    "httpx>=0.28",
+    "aiohttp>=3.9",
+    "h11>=0.14",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "deadline(seconds): override the per-test SIGALRM timeout (e.g. nix builds offloaded to a remote builder can exceed the 30s default)",
+    "nix_runtime: needs a configured nix backend; skips when unconfigured (set FXTR_TESTS_REQUIRE_RUNTIME=1 to fail instead)",
+]
+
+[tool.pyright]
+include = [
+    "src/fxtr_sandboxing",
+    "../fxtr_sandbox_types/src/fxtr_sandbox_types",
+]
+exclude = [
+    "src/fxtr_sandboxing/_runner.py",
+]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fxtr_sandboxing"]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../../v2", editable = true }
+fxtr-nix-runner = { path = "../../fxtr_nix_runner", editable = true }
+fxtr-sandbox-types = { path = "../fxtr_sandbox_types", editable = true }
+fxtr-pyodide-runner = { path = "../fxtr_pyodide_runner", editable = true }
+fxtr-sandbox-rpc-adapter = { path = "../fxtr_sandbox_rpc_adapter", editable = true }
+fxtr-workdir-harness = { path = "../../../nix/fxtr_workdir_harness", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-anyio>=0.0.0",
+    "pytest-rerunfailures>=15.0",
+    "pyright>=1.1.0",
+    # The adapter normally runs inside the sandbox, but having it
+    # importable on the host lets us unit-test guest-side modules
+    # (e.g. fxtr_sandbox_rpc_adapter._provenance) directly. The
+    # [fxtr2] extra pins the full fxtr2 flavor — same one the host
+    # already uses — so no conflict with the runtime deps above.
+    "fxtr-sandbox-rpc-adapter[fxtr2]",
+    # Builds throwaway workdir repos for the NixWasmServiceDefn spawn
+    # tests (git-ref code path). Stdlib-only leaf package — no extra
+    # transitive deps.
+    "fxtr-workdir-harness",
+]

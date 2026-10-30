@@ -5,7 +5,7 @@ repos:
     rev: v4.4.0
     hooks:
       - id: check-added-large-files
-        exclude: "website/public/.*|package-lock.json|poetry\\.lock|uv.lock"
+        exclude: "website/public/.*|package-lock.json|pnpm-lock.yaml|poetry\\.lock|uv.lock"
       - id: check-case-conflict
       - id: check-merge-conflict
       - id: check-json
@@ -21,27 +21,173 @@ repos:
     rev: 24.10.0
     hooks:
       - id: black
+        language_version: python3.12
+        # Black resolves config once per invocation; run on all files it would
+        # pick up the repo-root pyproject.toml. That root config was v1's, which
+        # set line-length=100 -- but v1 moved to projects/fxtr_v1 (step 13), so
+        # there's no longer a root pyproject and black fell back to its default
+        # 88. Every package's [tool.black] uses 100, so pin it explicitly here.
+        # (Same root-config-resolution issue the per-package isort hooks below
+        # already work around.)
+        #
+        # TODO: split this into per-package black hooks (like the isort hooks
+        # below) so each invocation resolves its own [tool.black] (line-length +
+        # target-version) instead of this global override. That needs a
+        # [tool.black] added to the packages that currently lack one (e.g.
+        # fxtr_workstation, fxtr_workstation_mcp, fxtr_sandboxing/*,
+        # fxtr_report_builder) -- and is a good moment to close the parallel gap
+        # where the isort hooks for fxtr_workstation/fxtr_sandboxing run with
+        # default config because those packages lack [tool.isort].
+        args: ["--line-length=100"]
 
+  # Run isort separately per sub-package so each invocation resolves config
+  # from its own pyproject.toml. Running once on all files causes isort to
+  # resolve config from the repo root, ignoring sub-package configs.
   - repo: https://github.com/pycqa/isort
     rev: 5.12.0
     hooks:
       - id: isort
-        name: isort (python)
+        name: isort (fxtr_v1)
+        language_version: python3.12
+        files: ^projects/fxtr_v1/
+      - id: isort
+        name: isort (v2)
+        language_version: python3.12
+        files: ^v2/
+      - id: isort
+        name: isort (thingwatcher)
+        language_version: python3.12
+        files: ^spikes/thingwatcher/
+      - id: isort
+        name: isort (clydra)
+        language_version: python3.12
+        files: ^spikes/clydra/
+      - id: isort
+        name: isort (fxtr_workstation)
+        language_version: python3.12
+        files: ^projects/fxtr_workstation/
+        # fxtr_workstation (and the sandboxing sub-pkgs below) lack [tool.isort];
+        # pre-migration they inherited profile=black/line-length=100 from v1's
+        # root pyproject, which step 13 removed -> isort fell back to its defaults
+        # for exactly these two hooks. Pin them to match black (same fix as the
+        # black hook above; the TODO there covers giving these packages their own
+        # config).
+        args: ["--profile", "black", "--line-length", "100"]
+      - id: isort
+        name: isort (fxtr_sandboxing)
+        language_version: python3.12
+        files: ^projects/fxtr_sandboxing/
+        args: ["--profile", "black", "--line-length", "100"]
+      - id: isort
+        name: isort (fxtr_nix_runner)
+        language_version: python3.12
+        files: ^projects/fxtr_nix_runner/
+        args: ["--profile", "black", "--line-length", "100"]
 
   - repo: https://github.com/PyCQA/autoflake
     rev: v2.3.1
     hooks:
       - id: autoflake
         args:
-          - --remove-all-unused-imports
           - --in-place
+        language_version: python3.12
 
   - repo: local
     hooks:
       - id: uv-lock
         name: uv-lock
         description: "Automatically run 'uv lock'"
-        entry: uv lock
+        entry: uv lock --directory v2
         language: system
         pass_filenames: false
         minimum_pre_commit_version: "2.9.2"
+      - id: pnpm-lock-ts
+        name: pnpm lockfile check (ts)
+        # Reinstalls node_modules to match the committed lockfile (--frozen
+        # never *relocks*; it errors if package.json and the lockfile disagree).
+        # Ordered before biome-ts/tsc-ts so they always run against fresh deps.
+        # The trigger is the union of the lockfile/root package.json AND every
+        # workspace TS dir (same set as biome-ts/tsc-ts below): jj pre runs in a
+        # colocated worktree whose node_modules is gitignored and drifts from the
+        # synced change, so a TS-only commit there would otherwise typecheck
+        # against stale/absent deps. CI=1 keeps the "reinstall from scratch?"
+        # prompt from blocking in pre-commit's non-TTY.
+        entry: bash -c 'CI=1 pnpm --dir . install --frozen-lockfile'
+        language: system
+        files: ^(package\.json$|pnpm-lock\.yaml$|v2/ts/|spikes/old_typescript/|projects/fxtr_workstation/frontend_lib/|examples/fxtr_workstation_demo/frontend/|examples/fxtr_experiment_demo/frontend/|examples/fxtr_http_demo/web/|projects/fxtr_experiment/frontend/)
+        pass_filenames: false
+      # biome/tsc both run workspace-wide commands (the `lint`/`check` scripts
+      # in the root package.json cover every TS package; tsc --build walks the
+      # root tsconfig.json references). The files filter only controls when the
+      # hook *triggers*, so it must match every TS package location in the pnpm
+      # workspace (see pnpm-workspace.yaml) -- not just v2/ts/ -- otherwise
+      # edits elsewhere (e.g. frontend_lib/) skip the checks entirely.
+      - id: biome-ts
+        name: biome (ts)
+        entry: pnpm --dir . run lint
+        language: system
+        files: ^(v2/ts/|spikes/old_typescript/|projects/fxtr_workstation/frontend_lib/|examples/fxtr_workstation_demo/frontend/|examples/fxtr_experiment_demo/frontend/|examples/fxtr_http_demo/web/|projects/fxtr_experiment/frontend/)
+        types_or: [ts, tsx]
+        pass_filenames: false
+      - id: tsc-ts
+        name: tsc (ts)
+        entry: pnpm --dir . run check
+        language: system
+        files: ^(v2/ts/|spikes/old_typescript/|projects/fxtr_workstation/frontend_lib/|examples/fxtr_workstation_demo/frontend/|examples/fxtr_experiment_demo/frontend/|examples/fxtr_http_demo/web/|projects/fxtr_experiment/frontend/)
+        types_or: [ts, tsx]
+        pass_filenames: false
+      # report-builder CLI: a self-contained package OUTSIDE the pnpm workspace
+      # (built pure-pnpm-in-nix via lib.fxtr.reportBuilderCli), so the
+      # workspace-wide hooks above don't cover it. `--ignore-workspace` makes
+      # pnpm use the CLI's own pnpm-lock.yaml instead of walking up to the root
+      # workspace. Checks the standalone lock is in sync + typechecks the CLI.
+      - id: pnpm-report-cli
+        name: report-builder cli (lock + tsc)
+        entry: bash -c 'cd projects/fxtr_report_builder/ts/packages/cli && CI=1 pnpm install --frozen-lockfile --ignore-workspace && pnpm run check'
+        language: system
+        files: ^projects/fxtr_report_builder/ts/
+        pass_filenames: false
+      - id: pyright-v2
+        name: pyright (v2)
+        entry: uv run --directory v2 pyright
+        language: system
+        files: ^v2/
+        pass_filenames: false
+      - id: pyright-fxtr_workstation
+        name: pyright (projects/fxtr_workstation)
+        entry: uv run --directory projects/fxtr_workstation pyright
+        language: system
+        files: ^projects/fxtr_workstation/
+        pass_filenames: false
+      - id: pyright-fxtr_sandboxing
+        name: pyright (projects/fxtr_sandboxing)
+        # The package root (with its [tool.pyright] config + .venv) is the
+        # de-nested sub-package projects/fxtr_sandboxing/fxtr_sandboxing, not the
+        # projects/fxtr_sandboxing container (which has no pyproject -> uv would
+        # fall back to the stale root venv and pyright would scan examples/ etc.
+        # against the wrong env). step 09 de-nested one level deeper than the
+        # extras/->projects/ prefix rewrite accounted for.
+        entry: uv run --directory projects/fxtr_sandboxing/fxtr_sandboxing pyright
+        language: system
+        files: ^projects/fxtr_sandboxing/
+        pass_filenames: false
+      - id: pyright-fxtr_nix_runner
+        name: pyright (projects/fxtr_nix_runner)
+        entry: uv run --directory projects/fxtr_nix_runner pyright
+        language: system
+        files: ^projects/fxtr_nix_runner/
+        pass_filenames: false
+      - id: pyright-fxtr_workstation_mcp
+        name: pyright (projects/fxtr_workstation_agent_plugin/fxtr_workstation_mcp)
+        # The package root (pyproject + [tool.pyright] + .venv) is the nested
+        # fxtr_workstation_mcp, not the fxtr_workstation_agent_plugin container.
+        entry: uv run --directory projects/fxtr_workstation_agent_plugin/fxtr_workstation_mcp pyright
+        language: system
+        files: ^projects/fxtr_workstation_agent_plugin/
+        pass_filenames: false
+      - id: pyright-fxtr_experiment
+        name: pyright (projects/fxtr_experiment)
+        entry: uv run --directory projects/fxtr_experiment pyright
+        language: system
+        files: ^projects/fxtr_experiment/
+        pass_filenames: false

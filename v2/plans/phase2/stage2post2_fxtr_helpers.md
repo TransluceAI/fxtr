@@ -325,7 +325,7 @@ __all__ = [
 ### Phase 5: Documentation
 
 - [x] 16. Update `thingwatcher/fxtr/LOCAL_CODE_OVERVIEW.md`
-- [x] 17. Update `extras/thingwatcher/CODE_OVERVIEW.md`
+- [x] 17. Update `spikes/thingwatcher/CODE_OVERVIEW.md`
 
 ## Example Usage
 

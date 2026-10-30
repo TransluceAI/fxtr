@@ -13,20 +13,25 @@ serialization order, so we must process IDs in the exact order they appear in th
 
 from __future__ import annotations
 
-import enum
-from typing import Any, Awaitable, Callable
+from collections import deque
+from typing import TYPE_CHECKING, Any, Awaitable, Callable, TypedDict
 
 import cbor2
 
 from fxtr2.data import entity_core
-from fxtr2.data.abstract_arena import ReadableArena
+from fxtr2.data.abstract_arena import DepKind, FxtrEntityFlatData
 from fxtr2.data.entity_core import (
     FxtrCbor,
     FxtrID,
     RawFxtrEntityMarkerID,
+    RawFxtrEntityMissingMarkerSentinel,
     RawStrongFxtrID,
     RawWeakFxtrID,
 )
+
+if TYPE_CHECKING:
+    from fxtr2.data.abstract_arena import ReadableArena
+    from fxtr2.leases.lease_types import Lease
 
 
 def visit_ids(
@@ -42,6 +47,12 @@ def visit_ids(
     match root:
         case RawWeakFxtrID() | RawStrongFxtrID() | RawFxtrEntityMarkerID():
             callback(root)
+        case RawFxtrEntityMissingMarkerSentinel():
+            # Sentinel default values are transient placeholders for an
+            # entity's $fxtr.ctx that haven't been replaced yet. They
+            # carry no IDs and are rejected by the byte-level encoder
+            # if they survive past the storage path. Skip here.
+            pass
         case list():
             for item in root:
                 visit_ids(item, callback)
@@ -71,6 +82,10 @@ def visit_and_project_ids(
         case RawWeakFxtrID() | RawStrongFxtrID() | RawFxtrEntityMarkerID():
             proj = callback(root)
             return type(root)(proj)
+        case RawFxtrEntityMissingMarkerSentinel():
+            # See visit_ids: sentinels are transient leaves with no IDs
+            # to project. Pass through untouched.
+            return root
         case list():
             return [visit_and_project_ids(item, callback) for item in root]
         case dict():
@@ -192,115 +207,107 @@ async def async_visit_and_project_ids_in_canonical_cbor_order(
     return cbor2.loads(as_bytes, tag_hook=proj_decode_hook)
 
 
-class DepKind(enum.Enum):
-    """Kind of dependency relationship between entities."""
-
-    STRONG_REF = "strong_ref"
-    WEAK_REF = "weak_ref"
-    CTX_NODE = "ctx_node"
-    BACKSTEP = "backstep"
-    UNWRAPS_TO = "unwraps_to"
+# ----------------------------------------------------------------------
+# Precomp closure walk
+# ----------------------------------------------------------------------
 
 
-async def fetch_data_and_deps_from_arena(
-    fxtr_id: FxtrID, source: ReadableArena
-) -> tuple[bytes | None, list[tuple[FxtrID, DepKind]]]:
-    """Fetch data and dependencies from an external arena.
+class PrecompEntry(TypedDict, total=False):
+    """One entry in a precomp closure map.
 
-    Args:
-        fxtr_id: The FxtrID of the entity to fetch data and dependencies from.
-        source: The arena to fetch the entity from.
-
-    Returns:
-        (cbor_bytes, deps) where:
-        - cbor_bytes: Serialized CBOR data for d/n nodes, or None for derived nodes
-        - deps: List of (FxtrID, DepKind) tuples. Deduplicated so each (id, kind) pair
-          appears at most once, even if the entity contains multiple references to
-          the same child with the same link type.
+    Each key holds the ``id_string()`` of the relationship's target.
+    Keys are omitted when inapplicable to the node's tag (e.g. ``ctx_node``
+    is only set for ``c`` and ``p`` nodes), and ``unwraps_to`` is omitted
+    when the node has no known unwrap target.
     """
-    tag = fxtr_id.get_tag()
-    deps: list[tuple[FxtrID, DepKind]] = []
-    seen: set[tuple[FxtrID, DepKind]] = set()
 
-    def add_dep(dep_id: FxtrID, kind: DepKind) -> None:
-        """Add a dependency if not already seen (deduplicates by (id, kind) pair)."""
-        key = (dep_id, kind)
-        if key not in seen:
-            seen.add(key)
-            deps.append(key)
+    unwraps_to: str
+    ctx_node: str
+    backstep: str
 
-    match tag:
-        case "." | "!":
-            # Builtin nodes have no data and no deps
-            return None, []
 
-        case "d":
-            # Data node: load, serialize, extract child refs
-            data = await source.load(fxtr_id)
-            cbor_bytes = entity_core.fxtr_cbor_dumps_with_marker_check(data)
+PrecompMap = dict[str, PrecompEntry]
+"""Transitively-closed precomp closure: ``id_string`` → ``PrecompEntry``."""
 
-            def collect_deps(
-                typed_id: RawWeakFxtrID | RawStrongFxtrID | RawFxtrEntityMarkerID,
-            ):
-                if isinstance(typed_id, RawStrongFxtrID):
-                    add_dep(typed_id.inner_id, DepKind.STRONG_REF)
-                else:
-                    add_dep(typed_id.inner_id, DepKind.WEAK_REF)
 
-            visit_ids(data, collect_deps)
-            return cbor_bytes, deps
+def derive_precomp_entry_from_deps(flat: "FxtrEntityFlatData") -> PrecompEntry:
+    """Project ``flat.deps`` into the corresponding ``PrecompEntry``.
 
-        case "n":
-            # Normal provenance node: like d-node + UNWRAPS_TO
-            data = await source.load(fxtr_id)
-            cbor_bytes = entity_core.fxtr_cbor_dumps_with_marker_check(data)
+    Maps the dep kinds that carry precomp relationships:
 
-            def collect_deps(
-                typed_id: RawWeakFxtrID | RawStrongFxtrID | RawFxtrEntityMarkerID,
-            ):
-                if isinstance(typed_id, RawStrongFxtrID):
-                    add_dep(typed_id.inner_id, DepKind.STRONG_REF)
-                else:
-                    add_dep(typed_id.inner_id, DepKind.WEAK_REF)
+    - ``DepKind.UNWRAPS_TO`` → ``unwraps_to``
+    - ``DepKind.CTX_NODE``   → ``ctx_node``
+    - ``DepKind.BACKSTEP``   → ``backstep``
 
-            visit_ids(data, collect_deps)
+    Other dep kinds (``STRONG_REF`` / ``WEAK_REF``) are ignored. Returns
+    an empty dict when the entity has no precomp-relevant deps (e.g.
+    plain d-nodes).
+    """
+    entry: PrecompEntry = {}
+    for dep_id, dep_kind in flat.deps:
+        if dep_kind is DepKind.UNWRAPS_TO:
+            entry["unwraps_to"] = dep_id.id_string()
+        elif dep_kind is DepKind.CTX_NODE:
+            entry["ctx_node"] = dep_id.id_string()
+        elif dep_kind is DepKind.BACKSTEP:
+            entry["backstep"] = dep_id.id_string()
+    return entry
 
-            # Add UNWRAPS_TO dep
-            unwraps_to = source.unwrap_provenance(fxtr_id)
-            assert unwraps_to is not None
-            add_dep(unwraps_to, DepKind.UNWRAPS_TO)
-            return cbor_bytes, deps
 
-        case "c":
-            # Context provenance node: CTX_NODE + UNWRAPS_TO
-            ctx_data_id = source.c_node_to_context_data(fxtr_id)
-            add_dep(ctx_data_id, DepKind.CTX_NODE)
+def compute_precomp_closure(
+    arena: "ReadableArena[Any]",
+    lease: "Lease[Any]",
+    seed_ids: list[FxtrID],
+) -> PrecompMap:
+    """Compute transitively-closed precomp map for a set of seed IDs.
 
-            unwraps_to = source.unwrap_provenance(fxtr_id)
-            assert unwraps_to is not None
-            add_dep(unwraps_to, DepKind.UNWRAPS_TO)
-            return None, deps
+    For each seed ID (and any IDs discovered as values in precomp
+    relationships), compute ``unwraps_to``, ``ctx_node``, and
+    ``backstep`` against the supplied arena. The result is a dict
+    mapping ``id_string`` to ``PrecompEntry``, with empty entries and
+    inapplicable relationships omitted.
 
-        case "p":
-            # Path provenance node: CTX_NODE + UNWRAPS_TO + optional BACKSTEP
-            pathroot_id = source.p_node_to_pathroot(fxtr_id)
-            add_dep(pathroot_id, DepKind.CTX_NODE)
+    Sync; the arena's leased precomp methods are sync. The lease is
+    cloned for each arena access so the caller's lease is left
+    untouched.
+    """
+    precomp: PrecompMap = {}
+    frontier: deque[FxtrID] = deque(seed_ids)
+    visited: set[FxtrID] = set()
 
-            unwraps_to = source.unwrap_provenance(fxtr_id)
-            assert unwraps_to is not None
-            add_dep(unwraps_to, DepKind.UNWRAPS_TO)
+    with lease.take() as lease:
+        while frontier:
+            node_id = frontier.popleft()
+            if node_id in visited:
+                continue
+            visited.add(node_id)
 
-            backstep_id = source.step_back_p_ctx(fxtr_id)
-            if backstep_id is not None:
-                add_dep(backstep_id, DepKind.BACKSTEP)
-            return None, deps
+            entry: PrecompEntry = {}
+            tag = node_id.get_tag()
 
-        case "u":
-            # Untracked provenance node: just UNWRAPS_TO
-            unwraps_to = source.unwrap_provenance(fxtr_id)
-            assert unwraps_to is not None
-            add_dep(unwraps_to, DepKind.UNWRAPS_TO)
-            return None, deps
+            # Only provenance nodes (c/p/u/n) can be unwrapped
+            if tag in ("c", "p", "u", "n"):
+                unwraps_to = arena.unwrap_provenance(lease.clone(), node_id)
+                if unwraps_to is not None:
+                    entry["unwraps_to"] = unwraps_to.id_string()
+                    frontier.append(unwraps_to)
 
-        case _:
-            raise ValueError(f"Unknown node tag: {tag}")
+            # c nodes have ctx_node, p nodes have pathroot (both stored as ctx_node)
+            if tag == "c":
+                ctx = arena.c_node_to_context_data(lease.clone(), node_id)
+                entry["ctx_node"] = ctx.id_string()
+                frontier.append(ctx)
+            elif tag == "p":
+                ctx = arena.p_node_to_pathroot(lease.clone(), node_id)
+                entry["ctx_node"] = ctx.id_string()
+                frontier.append(ctx)
+
+                backstep = arena.step_back_p_ctx(lease.clone(), node_id)
+                if backstep is not None:
+                    entry["backstep"] = backstep.id_string()
+                    frontier.append(backstep)
+
+            if entry:
+                precomp[node_id.id_string()] = entry
+
+    return precomp

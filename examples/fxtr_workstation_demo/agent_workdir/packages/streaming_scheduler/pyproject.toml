@@ -1,0 +1,21 @@
+# StreamingScheduler impl — the HOST-IMPORTABLE half of the package
+# (split shape, like `simple_scheduler/`; see packages/README.md).
+# Marker-style: NO dependencies — fxtr2 + the `streaming-tasks` /
+# `simple-tasks` markers are supplied by whichever venv embeds it (the
+# demo's host venv for the impl tests in
+# examples/fxtr_workstation_demo/tests/; the runtime closure in the
+# run_script sandbox; fxtr2-portable in the wasm spawn env).
+#
+# The wasm spawn environment lives in `sandbox_spawn/pyproject.toml`;
+# the flake builds `fxtr.services.streaming_scheduler` from
+# `./sandbox_spawn`. Connect config is ignored (pass None); the
+# returned service implements streaming_tasks.StreamingSchedulerProto.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "streaming-scheduler"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []

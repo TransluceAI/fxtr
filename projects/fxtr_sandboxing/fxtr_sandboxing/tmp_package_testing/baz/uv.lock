@@ -1,0 +1,30 @@
+version = 1
+revision = 3
+requires-python = ">=3.12"
+
+[[package]]
+name = "bar"
+version = "0.1.0"
+source = { editable = "../bar" }
+dependencies = [
+    { name = "foo" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "foo", editable = "../foo" }]
+
+[[package]]
+name = "baz"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "bar" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "bar", editable = "../bar" }]
+
+[[package]]
+name = "foo"
+version = "0.1.0"
+source = { editable = "../foo" }

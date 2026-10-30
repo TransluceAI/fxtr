@@ -1,0 +1,17 @@
+# Marks ``experiment_demo_helper`` as a Python package in the demo's
+# ``packages/`` layout (host-importable via sys.path inserts).
+#
+# The marker (no-deps) half of the demo driver: the wire-stable service
+# type id the scenario-picker renderer dispatches on, plus the driver
+# protocol. The concrete impl + mount helper live in
+# ``examples/fxtr_experiment_demo/experiment_demo_helper_service.py``
+# (host process); wire dispatch is by method name, so the two only need
+# to agree on method shapes. The embedding venv supplies fxtr2.
+[project]
+name = "experiment_demo_helper"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

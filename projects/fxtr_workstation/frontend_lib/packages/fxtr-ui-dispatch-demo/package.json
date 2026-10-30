@@ -1,0 +1,27 @@
+{
+	"name": "@fxtr-ui/dispatch-demo",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "tsx src/server.ts",
+		"build": "vite build"
+	},
+	"dependencies": {
+		"@fxtr-ui/connector-workstation": "workspace:*",
+		"@fxtr-ui/core": "workspace:*",
+		"@fxtr-ui/react": "workspace:*",
+		"@fxtr-ui/react-dispatch": "workspace:*",
+		"@fxtr-ui/state-util": "workspace:*",
+		"jotai": "^2.10.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"@vitejs/plugin-react": "^4.0.0",
+		"tsx": "^4.0.0",
+		"vite": "^6.0.0"
+	}
+}

@@ -1,0 +1,55 @@
+[project]
+name = "fxtr_nix_runner"
+version = "0.1.0"
+description = "Backend that runs fxtr's nix invocations either against host nix or inside a podman builder container."
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.12.1",
+    # Reads/writes the FOD lock file (`fod_lock.toml`); stdlib `tomllib` only
+    # reads, so a writer dep is needed (`_fod_lock.py`, transport tier).
+    "tomlkit>=0.13",
+    # fxtr2 powers the *manager* tier only (rehost.py, manager — repo-store
+    # discovery, the build-time rehost, the read adapters). The transport tier
+    # (_backend / _host / _podman / __init__) stays fxtr2-free: keep fxtr2
+    # imports inside the manager modules so `import fxtr_nix_runner` is light.
+    "fxtr2",
+]
+
+[project.scripts]
+fxtr_nix = "fxtr_nix_runner.__main__:main"
+run-with-masked-nix = "fxtr_nix_runner._mask_nix:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+[tool.pyright]
+include = ["src/fxtr_nix_runner", "tests"]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fxtr_nix_runner"]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../v2", editable = true }
+fxtr-workdir-harness = { path = "../../nix/fxtr_workdir_harness", editable = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-xdist>=3.8.0",
+    "pyright>=1.1.0",
+    "httpx>=0.28.0",
+    # Test-only: builds committed workdir fixtures for the nix E2E. It depends
+    # back on fxtr_nix_runner (locks flakes through the backend) — a dev-only
+    # cycle, fine for editable path installs.
+    "fxtr-workdir-harness",
+]

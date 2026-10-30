@@ -1,0 +1,21 @@
+{
+	"name": "fxtr-report-builder-cli",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"description": "MDX-to-FxtrCbor compiler subprocess driven by fxtr_report_builder (Python).",
+	"main": "dist/main.cjs",
+	"scripts": {
+		"build": "node esbuild.config.mjs",
+		"check": "tsc --noEmit"
+	},
+	"dependencies": {
+		"@mdx-js/mdx": "^3.0.0",
+		"cbor-x": "^1.6.0"
+	},
+	"devDependencies": {
+		"@types/node": "^25.5.0",
+		"esbuild": "^0.24.0",
+		"typescript": "^5.7.0"
+	}
+}

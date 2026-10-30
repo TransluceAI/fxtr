@@ -1,0 +1,6 @@
+{
+  "nodeModulesDir": "none",
+  "imports": {
+    "pyodide": "npm:pyodide@314.0.2"
+  }
+}

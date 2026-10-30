@@ -1,0 +1,12 @@
+# Constant transcript-name + judge-name lists for the Docent
+# collection 2c4ecb4e-6f13-4bfb-9969-00f2043c2f15 (mh-relevant
+# WildChat eval). See src/judge_constants/__init__.py for the
+# constants themselves and their derivation.
+[project]
+name = "judge_constants"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

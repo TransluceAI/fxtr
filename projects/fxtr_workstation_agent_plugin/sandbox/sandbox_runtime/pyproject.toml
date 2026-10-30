@@ -1,0 +1,28 @@
+[project]
+name = "fxtr-ws-mcp-sandbox-runtime"
+version = "0.0.0"
+description = "Bootstrap stub task for the fxtr_workstation_mcp SandboxFactory."
+requires-python = ">=3.12"
+# We never invoke this task's entry point — the MCP server uses
+# `fxtr_ws_mcp_sandbox_bridge.entry:run` via direct_launcher with a
+# volume-mounted package. This task exists only to give `prepare()` a
+# valid pyproject whose dep closure
+# (fxtr-sandbox-rpc-adapter[fxtr2-portable]) we materialize into the
+# long-lived eryx.SandboxFactory's site-packages.
+dependencies = [
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable] @ https://fxtr.transluce.org/unreachable/fxtr_sandbox_rpc_adapter-0.0.0.tar.gz",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.uv.sources]
+fxtr-sandbox-rpc-adapter = { path = "../../../fxtr_sandboxing/fxtr_sandbox_rpc_adapter" }
+
+[project.entry-points."fxtr.service"]
+# Placeholder — never actually called. See module docstring.
+placeholder = "fxtr_ws_mcp_sandbox_runtime:placeholder"

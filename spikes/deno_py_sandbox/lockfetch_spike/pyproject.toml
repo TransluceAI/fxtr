@@ -1,0 +1,15 @@
+# Test workspace for the lockfetch spike: one binary PEP 783 dependency
+# (pydantic-core ships a cp314 pyemscripten_2026_0_wasm32 wheel on PyPI)
+# plus its pure-python transitive dep (typing-extensions).
+[project]
+name = "lockfetch-spike"
+version = "0.1.0"
+requires-python = ">=3.13"
+dependencies = ["pydantic-core==2.47.0", "localpkg"]
+
+[tool.uv.sources]
+localpkg = { path = "localpkg" }
+
+[tool.uv]
+environments = ["sys_platform == 'emscripten' and platform_machine == 'wasm32'"]
+required-environments = ["sys_platform == 'emscripten' and platform_machine == 'wasm32'"]

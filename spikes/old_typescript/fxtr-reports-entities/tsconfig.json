@@ -1,0 +1,10 @@
+{
+	"extends": "../../../tsconfig.base.json",
+	"compilerOptions": {
+		"outDir": "dist",
+		"rootDir": "."
+	},
+	"include": ["src/**/*.ts", "tests/**/*.ts"],
+	"exclude": ["node_modules", "dist"],
+	"references": [{ "path": "../../../v2/ts/packages/fxtr" }]
+}

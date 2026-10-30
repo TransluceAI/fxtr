@@ -4,6 +4,7 @@ import pytest
 
 from fxtr2.data.entity_core import FxtrID, RawFxtrEntityMarkerID, RawWeakFxtrID
 from fxtr2.data.memory_arena import MemoryArena, MemoryStore
+from fxtr2.leases.lease_types import Lease
 
 
 def test_memory_store_fixture(memory_store: MemoryStore):
@@ -12,10 +13,12 @@ def test_memory_store_fixture(memory_store: MemoryStore):
     assert isinstance(memory_store, MemoryStore)
 
 
-def test_memory_arena_fixture(memory_arena: MemoryArena):
-    """Test that the memory_arena fixture provides a working arena."""
-    assert memory_arena is not None
-    assert isinstance(memory_arena, MemoryArena)
+def test_memory_arena_fixture(memory_arena: tuple[MemoryArena, Lease]):
+    """Test that the memory_arena fixture provides a working arena + lease."""
+    arena, lease = memory_arena
+    assert arena is not None
+    assert isinstance(arena, MemoryArena)
+    assert lease is not None
 
 
 def test_ground_context_fixture(ground_context: FxtrID):
@@ -40,13 +43,13 @@ def test_fxtr_id_basics():
 
 
 @pytest.mark.anyio
-async def test_async_store_and_load(memory_arena: MemoryArena):
+async def test_async_store_and_load(_legacy_arena):
     """Test async store and load operations work."""
     ground = FxtrID.from_tag_and_payload(".", b"")
     type_id = FxtrID.builtin("test")
 
     # Track the builtin type
-    memory_arena.track_builtin(type_id)
+    _legacy_arena.track_builtin(type_id)
 
     # Create a simple entity
     entity_data = {
@@ -57,11 +60,11 @@ async def test_async_store_and_load(memory_arena: MemoryArena):
     }
 
     # Store it
-    entity_id = memory_arena.store(entity_data)
+    entity_id = _legacy_arena.store(entity_data)
     assert entity_id is not None
     assert entity_id.get_tag() == "d"  # Ground data node
 
     # Load it back
-    loaded = await memory_arena.load(entity_id)
+    loaded = await _legacy_arena.load(entity_id)
     assert loaded["name"] == "test_entity"
     assert loaded["value"] == 42

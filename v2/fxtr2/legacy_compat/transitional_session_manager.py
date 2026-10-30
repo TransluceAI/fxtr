@@ -11,14 +11,17 @@ import datetime
 import logging
 import typing
 import weakref
-from typing import Any, AsyncGenerator, Callable, Collection, Literal
+from typing import Any, AsyncGenerator, Callable, Collection, Literal, Sequence
 
 import anyio
 import anyio.abc
+import cbrrr
 from frozendict import frozendict
-from fxtr2.data import fxtr_context_api, fxtr_scope
+from tqdm import tqdm
+
+from fxtr2.data import entity_ref_scope, fxtr_context_api
 from fxtr2.data.entity_core import FxtrID
-from fxtr2.data.entity_serdes import EntityRef
+from fxtr2.data.entity_ref_scope import EntityRef
 from fxtr2.legacy_compat.data import LegacyCompat, UpgradeCache
 from fxtr2.legacy_compat.transitional_rundata import (
     ImplProvenanceSet,
@@ -27,7 +30,6 @@ from fxtr2.legacy_compat.transitional_rundata import (
     TaskWithPredecessors,
 )
 from fxtr2.util import anyio_util
-
 from fxtr.api import api_lib, fxtrconfig
 from fxtr.impl_plans import py_impl_plan
 from fxtr.object_model import collection_tracking
@@ -156,7 +158,7 @@ class RunCacheManager:
         for predecessor_run_ref in run.previous_runs:
             # Load the predecessor run to get its task
             predecessor_run = await predecessor_run_ref.load()
-            predecessor_task_id = predecessor_run.task.ref
+            predecessor_task_id = predecessor_run.task.entity_id
 
             # Check that this exact run is in the cache for that task
             cached_run_ref = await self._run_cache_namespace.try_retrieve(
@@ -172,13 +174,13 @@ class RunCacheManager:
             if cached_run_ref != predecessor_run_ref:
                 raise RuntimeError(
                     f"Cannot save run: predecessor run for task {predecessor_task_id.id_string()} "
-                    f"has a different run in cache. Expected run with FxtrID "
-                    f"{predecessor_run_ref.ref}, but found "
-                    f"{cached_run_ref.ref}."
+                    "has a different run in cache. Expected run with FxtrID "
+                    f"{predecessor_run_ref.entity_id}, but found "
+                    f"{cached_run_ref.entity_id}."
                 )
 
         # Pin the run with the task's FxtrID as the key
-        pin_key = self._get_pin_key(run.task.ref)
+        pin_key = self._get_pin_key(run.task.entity_id)
         await self._run_cache_namespace.pin(pin_key, run, overwrite=False)
 
     async def get_run_ref_for_task(
@@ -196,12 +198,12 @@ class RunCacheManager:
         if isinstance(task, FxtrID):
             task_id = task
         elif isinstance(task, EntityRef):
-            task_id = task.ref
+            task_id = task.entity_id
         else:
             # It's a TaskWithPredecessors entity - store it to get the ID
             # (safe for immutable content-addressed entities)
             task_ref = task.store()
-            task_id = task_ref.ref
+            task_id = task_ref.entity_id
 
         # Try to retrieve from the namespace
         pin_key = self._get_pin_key(task_id)
@@ -228,6 +230,150 @@ class RunCacheManager:
         else:
             return await run_ref.load()
 
+    async def get_run_for_task_by_legacy_cid(
+        self, task_cid: cbrrr.CID
+    ) -> RunWithPredecessors[Any] | None:
+        """Get a run by the legacy task CID.
+
+        Looks up the task in the upgrade cache, then finds its run.
+
+        Args:
+            task_cid: The legacy v1 CID of the task.
+
+        Returns:
+            The run for the task, or None if not found.
+        """
+        try:
+            task_ref = await self._upgrade_cache.lookup_upgraded(task_cid, TaskWithPredecessors)
+        except KeyError:
+            return None
+        return await self.get_run_for_task(task_ref)
+
+    async def copy_runs_from(
+        self,
+        other: RunCacheManager,
+        selection: Sequence[RunWithPredecessors[Any] | TaskWithPredecessors[Any]],
+        include_predecessors: bool,
+    ) -> int:
+        """Copy runs from another run cache namespace into this one.
+
+        Args:
+            other: The source RunCacheManager to copy from.
+            selection: The runs (or tasks whose runs should be copied) to copy.
+                TaskWithPredecessors are converted to their runs by lookup in `other`.
+            include_predecessors: If True, also copy all predecessor runs recursively.
+
+        Returns:
+            The number of runs copied (excluding skipped duplicates).
+
+        Raises:
+            RuntimeError: If the UpgradeCaches don't match (different objects).
+            RuntimeError: If a selected task has no run in the source cache.
+            RuntimeError: If a predecessor run is missing from the source (consistency error).
+            RuntimeError: If a run already exists in this cache with a different value (conflict).
+        """
+        # 1. Check UpgradeCache equality (same underlying namespace)
+        if self._upgrade_cache != other._upgrade_cache:
+            raise RuntimeError(
+                "Cannot copy runs between RunCacheManagers with different UpgradeCaches. "
+                "Both managers must use the same upgrade cache namespace."
+            )
+
+        # 2. Convert tasks to runs
+        runs_to_copy: dict[
+            FxtrID, tuple[RunWithPredecessors[Any], EntityRef[RunWithPredecessors[Any]]]
+        ] = {}
+        for item in selection:
+            if isinstance(item, RunWithPredecessors):
+                run = item
+                run_ref = run.store()
+            else:
+                # It's a TaskWithPredecessors - look up its run
+                run = await other.get_run_for_task(item)
+                if run is None:
+                    task_ref = item.store()
+                    raise RuntimeError(
+                        f"Task {task_ref.entity_id.id_string()} has no run in the source cache."
+                    )
+                run_ref = run.store()
+            runs_to_copy[run_ref.entity_id] = (run, run_ref)
+
+        # 3. Expand predecessors if requested
+        if include_predecessors:
+            to_expand = list(runs_to_copy.values())
+            while to_expand:
+                run, run_ref = to_expand.pop()
+                for pred_ref in run.previous_runs:
+                    if pred_ref.entity_id not in runs_to_copy:
+                        pred_run = await pred_ref.load()
+                        runs_to_copy[pred_ref.entity_id] = (pred_run, pred_ref)
+                        to_expand.append((pred_run, pred_ref))
+
+        # 4. Topological sort - predecessors before dependents
+        # Build dependency graph
+        in_degree: dict[FxtrID, int] = {rid: 0 for rid in runs_to_copy}
+        dependents: dict[FxtrID, list[FxtrID]] = {rid: [] for rid in runs_to_copy}
+        for rid, (run, _) in runs_to_copy.items():
+            for pred_ref in run.previous_runs:
+                if pred_ref.entity_id in runs_to_copy:
+                    in_degree[rid] += 1
+                    dependents[pred_ref.entity_id].append(rid)
+
+        # Kahn's algorithm
+        sorted_runs: list[tuple[RunWithPredecessors[Any], EntityRef[RunWithPredecessors[Any]]]] = []
+        ready = [rid for rid, deg in in_degree.items() if deg == 0]
+        while ready:
+            rid = ready.pop()
+            sorted_runs.append(runs_to_copy[rid])
+            for dep_rid in dependents[rid]:
+                in_degree[dep_rid] -= 1
+                if in_degree[dep_rid] == 0:
+                    ready.append(dep_rid)
+
+        if len(sorted_runs) != len(runs_to_copy):
+            raise RuntimeError("Cycle detected in run predecessors - this should not happen")
+
+        # 5. Copy each run in order
+        copied_count = 0
+        for run, run_ref in tqdm(sorted_runs, desc="Copying runs"):
+            # Check if target already has a run for this task
+            existing_ref = await self.get_run_ref_for_task(run.task)
+            if existing_ref is not None:
+                if existing_ref.entity_id != run_ref.entity_id:
+                    raise RuntimeError(
+                        f"Conflict: task {run.task.entity_id.id_string()} already has a different"
+                        f" run in target cache (existing: {existing_ref.entity_id.id_string()},"
+                        f" copying: {run_ref.entity_id.id_string()})"
+                    )
+                continue  # Skip, same run already exists
+
+            # Verify predecessor consistency
+            for pred_ref in run.previous_runs:
+                pred_run = await pred_ref.load()
+                pred_existing = await self.get_run_ref_for_task(pred_run.task)
+                if pred_existing is None:
+                    raise RuntimeError(
+                        "Cannot copy run: predecessor task"
+                        f" {pred_run.task.entity_id.id_string()} not in target cache. Use"
+                        " include_predecessors=True or copy predecessors first."
+                    )
+                if pred_existing.entity_id != pred_ref.entity_id:
+                    raise RuntimeError(
+                        f"Cannot copy run: predecessor task {pred_run.task.entity_id.id_string()} "
+                        "has a different run in target cache."
+                    )
+
+            # Copy the pin from source namespace to target namespace
+            pin_key = self._get_pin_key(run.task.entity_id)
+            await self._run_cache_namespace.pin(
+                pin_key,
+                run_ref,
+                scope=other._run_cache_namespace.scope,  # Copy from source scope
+            )
+            copied_count += 1
+
+        return copied_count
+
     async def check_consistency(self) -> None:
         """Check the consistency of the cache.
 
@@ -239,7 +385,7 @@ class RunCacheManager:
 
         Raises an exception if the cache is inconsistent.
         """
-        async with fxtr_scope.FxtrScope(include=[self._run_cache_namespace.scope]):
+        async with entity_ref_scope.FxtrScope(include=[self._run_cache_namespace.scope]):
             # List all pins in the namespace
             all_pins = await self._run_cache_namespace.list_pins()
 
@@ -257,8 +403,8 @@ class RunCacheManager:
                     ) from e
 
                 # Verify the task's FxtrID matches the pin key
-                task_id_str = run.task.ref.id_string()
-                expected_pin_key = self._get_pin_key(run.task.ref)
+                task_id_str = run.task.entity_id.id_string()
+                expected_pin_key = self._get_pin_key(run.task.entity_id)
                 if expected_pin_key != pin_key:
                     raise RuntimeError(
                         f"Cache inconsistency: pin key {pin_key!r} does not match task FxtrID "
@@ -268,7 +414,7 @@ class RunCacheManager:
                 # Check all predecessor runs are in the cache at the correct location
                 for predecessor_run_ref in run.previous_runs:
                     predecessor_run = await predecessor_run_ref.load()
-                    predecessor_task_id = predecessor_run.task.ref
+                    predecessor_task_id = predecessor_run.task.entity_id
                     predecessor_pin_key = self._get_pin_key(predecessor_task_id)
 
                     # Verify the predecessor is pinned
@@ -283,12 +429,12 @@ class RunCacheManager:
                         predecessor_pin_key, type=RunWithPredecessors
                     )
 
-                    if cached_predecessor_ref.ref != predecessor_run_ref:
+                    if cached_predecessor_ref.entity_id != predecessor_run_ref:
                         raise RuntimeError(
                             f"Cache inconsistency: run at {pin_key!r} references predecessor run "
-                            f"with FxtrID {predecessor_run_ref.ref}, but "
+                            f"with FxtrID {predecessor_run_ref.entity_id}, but "
                             f"the cache has a different run at {predecessor_pin_key!r} with "
-                            f"FxtrID {cached_predecessor_ref.ref}."
+                            f"FxtrID {cached_predecessor_ref.entity_id}."
                         )
 
 
@@ -340,6 +486,10 @@ class TransitionalSessionManager:
             plan_manager=self._plan_manager,
             config=_config,
         )
+
+    @property
+    def upgrade_cache(self) -> UpgradeCache:
+        return self._run_cache_manager._upgrade_cache
 
     @classmethod
     @contextlib.asynccontextmanager
@@ -602,7 +752,7 @@ class TransitionalSessionManager:
         """
         # Store the task to get its EntityRef for tracking
         task_ref = task.store()
-        task_id = task_ref.ref
+        task_id = task_ref.entity_id
 
         # Check if already being invoked
         if task_id in self._currently_invoking:
@@ -617,7 +767,8 @@ class TransitionalSessionManager:
         if cache_behavior == "require_cached":
             if cached_run is None:
                 raise RuntimeError(
-                    f"Task {task_id.id_string()} is not in the cache, but require_cached was specified."
+                    f"Task {task_id.id_string()} is not in the cache, but require_cached was"
+                    " specified."
                 )
             run_data_compat = await cached_run.run_data.load()
             return run_data_compat.value
@@ -625,7 +776,8 @@ class TransitionalSessionManager:
         if cache_behavior == "require_uncached":
             if cached_run is not None:
                 raise RuntimeError(
-                    f"Task {task_id.id_string()} is already in the cache, but require_uncached was specified."
+                    f"Task {task_id.id_string()} is already in the cache, but require_uncached was"
+                    " specified."
                 )
 
         if cache_behavior == "auto" and cached_run is not None:
@@ -703,8 +855,8 @@ class TransitionalSessionManager:
             predecessor_run = await self._run_cache_manager.get_run_for_task(predecessor_task_ref)
             if predecessor_run is None:
                 raise RuntimeError(
-                    f"Predecessor task {predecessor_task_ref.ref.id_string()} has no run in cache. "
-                    "This should not happen if tasks are invoked in dependency order."
+                    f"Predecessor task {predecessor_task_ref.entity_id.id_string()} has no run in"
+                    " cache. This should not happen if tasks are invoked in dependency order."
                 )
 
             # Verify the cached run matches the provenance
@@ -716,7 +868,7 @@ class TransitionalSessionManager:
             if matching_provenance is None:
                 raise RuntimeError(
                     f"Predecessor run mismatch: cached run has CID {cached_run_cid}, "
-                    f"but provenance does not reference any run. "
+                    "but provenance does not reference any run. "
                     "This indicates the cache is inconsistent with the current task execution."
                 )
             elif matching_provenance.run_cid != cached_run_cid:
@@ -793,15 +945,15 @@ class TransitionalSessionManager:
 
         # Check none are already being invoked
         for t, ref in task_to_ref.items():
-            if ref.ref in self._currently_invoking:
+            if ref.entity_id in self._currently_invoking:
                 raise RuntimeError(
-                    f"Task {ref.ref.id_string()} is already being invoked. "
+                    f"Task {ref.entity_id.id_string()} is already being invoked. "
                     "Cannot materialize tasks that are already being invoked."
                 )
 
         # Create completion events for each task
         task_events: dict[FxtrID, anyio.Event] = {
-            ref.ref: anyio.Event() for ref in task_to_ref.values()
+            ref.entity_id: anyio.Event() for ref in task_to_ref.values()
         }
 
         # Map to collect results: task ref -> run ref
@@ -812,7 +964,7 @@ class TransitionalSessionManager:
         async def worker(t: TaskWithPredecessors[Any]) -> None:
             """Worker to invoke a single task."""
             task_ref = task_to_ref[t]
-            task_id = task_ref.ref
+            task_id = task_ref.entity_id
 
             # Check if already cached, and exit immediately if so
             cached_run_ref = await self._run_cache_manager.get_run_ref_for_task(task_id)
@@ -823,7 +975,7 @@ class TransitionalSessionManager:
 
             # For predecessors NOT in our task set, verify they have runs in the cache
             for pred_ref in t.predecessors:
-                pred_id = pred_ref.ref
+                pred_id = pred_ref.entity_id
                 if pred_id not in task_events:
                     # External predecessor - must already be in cache
                     ext_run_ref = await self._run_cache_manager.get_run_ref_for_task(pred_id)
@@ -836,14 +988,14 @@ class TransitionalSessionManager:
             # Mark this task as currently invoking
             if task_id in self._currently_invoking:
                 raise RuntimeError(
-                    f"Task {task_id.id_string()} is already being invoked. "
-                    "Cannot materialize tasks that are already being invoked. (Likely race condition, failed sync check)"
+                    f"Task {task_id.id_string()} is already being invoked. Cannot materialize tasks"
+                    " that are already being invoked. (Likely race condition, failed sync check)"
                 )
             self._currently_invoking.add(task_id)
             try:
                 # Wait for all predecessors in our task set to complete
                 for pred_ref in t.predecessors:
-                    pred_id = pred_ref.ref
+                    pred_id = pred_ref.entity_id
                     if pred_id in task_events:
                         await task_events[pred_id].wait()
 

@@ -1,0 +1,42 @@
+# Host-side package whose `DEMO_NOTE` entity object the agent_workdir flake
+# materializes as the DATA entity `fxtr.entities.demo_data` (via
+# `mkEntityFromPython` over a `mkVenv` of this package). Unlike
+# `hello_service` (which targets the wasm32 eryx guest), this venv runs on
+# the **build host** — `mk_entity_from_python_writer.py` executes it to write
+# the layered store — so it depends on full host `fxtr2` and is NOT pinned to
+# the wasm environment.
+#
+# `[tool.uv.sources]` uses the comment-flip convention (see
+# projects/fxtr_workstation/plans/phase0/part5_nix_workdir/stage3_bundle_and_spawner.md):
+# the relative path is active in the template (so it locks against local
+# working code); `prepare_workdir_repo` comments it out and activates the
+# pinned git source in the workdir copy.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "demo-data"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../../../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+# `fxtr2` itself depends on `fxtr` (v1) (see v2/pyproject.toml). uv only
+# honors the *resolution root's* `[tool.uv.sources]`, so this root must
+# redeclare fxtr's source (and its `hatchling` build dep below) even though
+# v2 already declares them — same reason nix/py_testing redeclares them.
+fxtr = { path = "../../../../../../../projects/fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]

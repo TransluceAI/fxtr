@@ -2,63 +2,54 @@
 
 This directory contains benchmarks for measuring performance of various fxtr2 components.
 
-## sqlite_benchmark.py
+## store_benchmarks/
 
-Compares performance between the old `sqlite_arena` implementation and the new `sqlite_store` (APSW-based) implementation.
+Benchmarks for measuring entity transfer performance between scopes and namespaces.
 
 ### Usage
 
 ```bash
-# Run full benchmark (compares old vs new)
-uv run python examples/benchmarks/sqlite_benchmark.py
+# List available cases (from v2 directory)
+uv run python -m examples.benchmarks.store_benchmarks list
 
-# Run only new implementation (useful for tracking regressions)
-uv run python examples/benchmarks/sqlite_benchmark.py --skip-old
+# Run all benchmarks
+uv run python -m examples.benchmarks.store_benchmarks run
 
-# Customize tree depth (default: 10, creates ~1024 entities)
-uv run python examples/benchmarks/sqlite_benchmark.py --depth 12  # ~4096 entities
+# Filter by keyword (substring match on case name)
+uv run python -m examples.benchmarks.store_benchmarks run -k pin
+uv run python -m examples.benchmarks.store_benchmarks run -k tree
+
+# Customize iterations
+uv run python -m examples.benchmarks.store_benchmarks run -n 3
+
+# Save results to JSON
+uv run python -m examples.benchmarks.store_benchmarks run --json results.json
+
+# Trace cases with viztracer (requires `uv sync --group prof`)
+uv run python -m examples.benchmarks.store_benchmarks trace -k tree_pin
+uv run python -m examples.benchmarks.store_benchmarks trace -k pin -o my_traces/
 ```
 
-### Benchmark Scenarios
+### Benchmark Cases
 
-The benchmark measures three scenarios:
+| Name | Entity shape | Transfer | Pins | Entities |
+|------|-------------|----------|------|----------|
+| `tree_pin` | Depth-10 binary tree, 1KB payload | Memory → SQLite | 1 | 2047 |
+| `tree_retrieve` | Depth-10 binary tree, 1KB payload | SQLite → Memory | 1 | 2047 |
+| `flat_pin` | 500 independent flat entities, 1KB | Memory → SQLite | 500 | 500 |
+| `flat_retrieve` | 500 independent flat entities, 1KB | SQLite → Memory | 500 | 500 |
+| `flat_indexed` | 500 entities with 20 indexable fields, 1KB | Memory → SQLite + 20 indexers | 500 | 500 |
 
-**Scenario A: Memory → SQLite**
-- Creates a binary tree of entities in a MemoryArena
-- Pins the tree to a SQLite namespace (copies all entities to SQLite)
-- Measures total time to persist the tree
+### CLI Reference
 
-**Scenario B: SQLite → Memory**
-- Retrieves the pinned tree from SQLite
-- Loads it into a fresh MemoryStore (no shared backing storage)
-- Measures total time to read the tree from SQLite
+```
+uv run python -m examples.benchmarks.store_benchmarks COMMAND [OPTIONS]
+```
 
-**Scenario C: Cross-Namespace Copy**
-- Copies the tree from one namespace to another in the same SQLite database
-- This shares entity data but creates new namespace metadata
-- Measures total time to set up the second namespace
+| Command | Options | Description |
+|---------|---------|-------------|
+| `run` | `-k PAT`, `-n NUM`, `--json FILE` | Run benchmarks |
+| `trace` | `-k PAT`, `-o DIR` | Trace cases with viztracer (default dir: `./traces/`) |
+| `list` | `-k PAT` | List available cases |
 
-### Entity Structure
-
-Each tree node contains:
-- `value`: integer node ID
-- `left`: optional child reference
-- `right`: optional child reference
-- `data`: 1KB random bytes payload
-
-A depth-10 tree contains ~1024 entities with ~1MB total data.
-
-### Expected Results
-
-The new APSW-based implementation (`sqlite_store`) should be **2-3x faster** than the old SQLAlchemy-based implementation (`sqlite_arena`) due to:
-
-1. Direct APSW access (no SQLAlchemy Core overhead)
-2. Constant SQL strings (better SQLite query caching)
-3. Sync operations in thread pool (no async overhead for blocking I/O)
-4. Connection pooling with read/write separation (better WAL mode concurrency)
-
-### Notes
-
-- The benchmark uses temporary databases that are cleaned up automatically
-- Tree creation time is not included in measurements (only copy operations)
-- Results may vary based on disk speed, CPU, and system load
+All commands accept `-k PATTERN` to filter cases by substring match on name.

@@ -1,0 +1,42 @@
+# The publishing demo's builder venv: backs all three layer-builder steps
+# (postprocess / subreport / report via mkFxtrFnBuilder) AND mkEntityFromPython
+# for the Note/Stats `forType` entities. fxtr2 + demo_types + fxtr_report_builder
+# (the subreport/report steps compile MDX through the env-wired reportBuilderCli).
+#
+# `[tool.uv.sources]` uses the comment-flip convention: relative paths active in
+# the template, pinned git sources activated in the scaffolded workdir copy.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "publishing_builders"
+version = "0.0.1"
+description = "Layer-builder entrypoints for the fxtr publishing demo."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+    "demo_types",
+    "fxtr_report_builder",
+]
+
+[tool.uv.sources]
+demo_types = { path = "../packages/demo_types", editable = true }
+fxtr2 = { path = "../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+fxtr = { path = "../../../../projects/fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+fxtr_report_builder = { path = "../../../../projects/fxtr_report_builder", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr_report_builder = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_report_builder" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]
+# Canonical (hyphenated) name — uv keys extra-build-dependencies by the normalized
+# package name, so `fxtr_report_builder` here would be silently ignored and its
+# (git-sourced) hatchling-backed wheel build would fail.
+fxtr-report-builder = ["hatchling"]

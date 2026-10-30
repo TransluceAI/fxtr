@@ -1,0 +1,12 @@
+[project]
+name = "foo"
+version = "0.0.1"
+requires-python = ">=3.12"
+dependencies = ["fxtr2-portable"]
+
+[tool.uv.sources]
+# Template form (active here): relative path, so the template locks against
+# local working code. The workdir copy comments this out and activates the
+# pinned git source below.
+fxtr2-portable = { path = "../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir

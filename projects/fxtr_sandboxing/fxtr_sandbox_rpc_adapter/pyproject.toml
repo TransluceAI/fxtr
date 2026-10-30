@@ -1,0 +1,53 @@
+[project]
+name = "fxtr-sandbox-rpc-adapter"
+version = "0.0.0"
+description = "Guest-side RPC bridge adapter for sandboxed fxtr tasks"
+requires-python = ">=3.12"
+# Parametric over which fxtr2 flavor is installed as a peer. Base deps are
+# empty; consumers pick a flavor via one of the two extras below. The
+# adapter's __init__.py raises an informative ImportError if neither is
+# present at import time.
+dependencies = []
+
+[project.optional-dependencies]
+# Full fxtr2 — for hosts and full Linux containers.
+fxtr2 = [
+    "fxtr2",
+    "fxtr-sandbox-types[fxtr2]",
+]
+# Pure-Python fxtr2 subset — for the eryx WASM sandbox.
+fxtr2-portable = [
+    "fxtr2-portable",
+    "fxtr-sandbox-types[fxtr2-portable]",
+]
+# Optional HTTP client surface — pulls httpx + httpcore so user code
+# can call ``get_client(authorizer_ref)`` to build an ``httpx.AsyncClient``
+# whose backend mints + redeems transport tokens per connection.
+# Without this extra, ``connect_transport(token)`` (raw ByteStream)
+# still works; only ``get_client`` is gated.
+http = [
+    "httpx",
+    "httpcore",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv]
+# fxtr2 and fxtr2-portable are mutually exclusive — see fxtr_sandbox_types
+# pyproject for the rationale.
+conflicts = [
+    [
+        { extra = "fxtr2" },
+        { extra = "fxtr2-portable" },
+    ],
+]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../../v2", editable = true }
+fxtr2-portable = { path = "../../../v2/portable" }
+fxtr-sandbox-types = { path = "../fxtr_sandbox_types", editable = true }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fxtr_sandbox_rpc_adapter"]

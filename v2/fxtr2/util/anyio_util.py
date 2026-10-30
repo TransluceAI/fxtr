@@ -16,10 +16,8 @@ class BaseExceptionDetachedGroup(BaseException):
     """A base exception used as a placeholder for a base exception group that was collapsed."""
 
 
-
 class ExceptionDetachedGroup(Exception):
     """An exception used as a placeholder for an exception group that was collapsed."""
-
 
 
 @contextlib.asynccontextmanager

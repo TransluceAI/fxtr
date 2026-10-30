@@ -1,0 +1,21 @@
+{
+	"name": "@fxtr-workstation/theme",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.ts",
+			"types": "./src/index.ts"
+		},
+		"./tokens.css": "./styles/tokens.css",
+		"./panel-chrome.css": "./styles/panel-chrome.css",
+		"./fw-dockview-theme.css": "./styles/fw-dockview-theme.css",
+		"./fonts.css": "./styles/fonts.css",
+		"./hover-card.css": "./styles/hover-card.css",
+		"./context-menu.css": "./styles/context-menu.css",
+		"./sidebar.css": "./styles/sidebar.css",
+		"./breadcrumb.css": "./styles/breadcrumb.css",
+		"./all.css": "./styles/all.css"
+	}
+}

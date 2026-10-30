@@ -12,27 +12,28 @@ Transaction Philosophy:
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
+import os
 import sqlite3
 import uuid
+from collections import deque
 from datetime import datetime, timezone
-from typing import cast
-from urllib.parse import parse_qs, urlparse
+from typing import TYPE_CHECKING, Any, cast
+
+if TYPE_CHECKING:
+    from fxtr2.data.abstract_arena import DepKind
+    from fxtr2.data.entity_core import FxtrID
 
 import anyio.to_thread
-import cbor2
 
-from fxtr2.data import entity_core
-from fxtr2.data.arena_util import visit_and_project_ids_in_canonical_cbor_order
-from fxtr2.data.entity_core import (
-    FxtrCbor,
-    FxtrID,
-    RawFxtrEntityMarkerID,
-    RawStrongFxtrID,
-    RawWeakFxtrID,
+from fxtr2.data.sqlite_store import sqlite_index_ops
+from fxtr2.data.sqlite_store.sqlite_util import (
+    ConnectionWorkerPool,
+    ConnectionWorkerPoolGroup,
+    transaction,
 )
-from fxtr2.data.sqlite_store.sqlite_util import ConnectionPool, ConnectionPoolGroup, transaction
 
 logger = logging.getLogger(__name__)
 
@@ -41,23 +42,31 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 # Database user version for migrations
-DB_USER_VERSION = 2
+DB_USER_VERSION = 6
 
 # Garbage session constants (internal id=0, public_id=zero UUID)
 GARBAGE_SESSION_ID = 0
 GARBAGE_SESSION_UUID = uuid.UUID(int=0)
 
+# When an IN clause has more than this many values, use json_each() with a
+# single JSON parameter instead of individual ? placeholders to avoid hitting
+# SQLite's SQLITE_MAX_VARIABLE_NUMBER limit.
+_JSON_EACH_THRESHOLD = 10
+
 # =============================================================================
 # SQL Schema Definitions
 # =============================================================================
 
-# Table creation SQL - must match the SQLAlchemy schema in sqlite_arena.py
+# Table creation SQL for DB version 6 (segment-file store)
 SQL_CREATE_TABLES = [
     # Entity tables
     """CREATE TABLE IF NOT EXISTS entity (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    public_id BLOB NOT NULL UNIQUE,
-    storage_location VARCHAR(10) NOT NULL
+    public_id BLOB UNIQUE,
+    storage_location VARCHAR(10) NOT NULL,
+    seg_id INTEGER,
+    seg_offset INTEGER,
+    seg_length INTEGER
 )""",
     """CREATE TABLE IF NOT EXISTS entity_dep (
     requirer_id INTEGER NOT NULL REFERENCES entity(id),
@@ -66,10 +75,7 @@ SQL_CREATE_TABLES = [
     UNIQUE (requirer_id, required_id, kind)
 )""",
     """CREATE INDEX IF NOT EXISTS ix_entity_dep_requirer ON entity_dep(requirer_id)""",
-    """CREATE TABLE IF NOT EXISTS stored_entity_data (
-    entity_id INTEGER PRIMARY KEY REFERENCES entity(id),
-    data BLOB NOT NULL
-)""",
+    # Note: stored_entity_data table removed in v4 - data now stored in segment files
     # Namespace tables
     """CREATE TABLE IF NOT EXISTS namespace (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -77,6 +83,7 @@ SQL_CREATE_TABLES = [
     kind VARCHAR NOT NULL,
     public_id BLOB(16) NOT NULL UNIQUE
 )""",
+    """CREATE INDEX IF NOT EXISTS ix_namespace_name_kind ON namespace(name, kind)""",
     """CREATE TABLE IF NOT EXISTS namespace_entity_ownership (
     namespace_id INTEGER NOT NULL REFERENCES namespace(id),
     entity_id INTEGER NOT NULL REFERENCES entity(id),
@@ -98,6 +105,8 @@ SQL_CREATE_TABLES = [
     name VARCHAR NOT NULL,
     UNIQUE (namespace_id, name)
 )""",
+    """CREATE INDEX IF NOT EXISTS ix_namespace_pin_entity
+    ON namespace_pin(entity_id, namespace_id)""",
     # Session tables
     """CREATE TABLE IF NOT EXISTS session (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -113,16 +122,38 @@ SQL_CREATE_TABLES = [
     namespace_id INTEGER NOT NULL REFERENCES namespace(id),
     session_id INTEGER NOT NULL REFERENCES session(id)
 )""",
+    """CREATE INDEX IF NOT EXISTS ix_arena_session ON arena(session_id)""",
+    """CREATE INDEX IF NOT EXISTS ix_arena_namespace ON arena(namespace_id)""",
     """CREATE TABLE IF NOT EXISTS arena_membership (
     arena_id INTEGER NOT NULL REFERENCES arena(id),
     entity_id INTEGER NOT NULL REFERENCES entity(id),
     UNIQUE (arena_id, entity_id)
 )""",
-    """CREATE TABLE IF NOT EXISTS entity_reservations (
-    session_id INTEGER NOT NULL REFERENCES session(id),
-    entity_id INTEGER NOT NULL REFERENCES entity(id),
-    count INTEGER NOT NULL DEFAULT 1,
-    UNIQUE (session_id, entity_id)
+    """CREATE INDEX IF NOT EXISTS ix_arena_membership_entity ON arena_membership(entity_id)""",
+    # Index registry table (namespace indexing)
+    """CREATE TABLE IF NOT EXISTS ns_index_registry (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    namespace_id INTEGER NOT NULL REFERENCES namespace(id),
+    indexer_entity_id INTEGER NOT NULL REFERENCES entity(id),
+    key_prefix VARCHAR NOT NULL DEFAULT '',
+    state VARCHAR NOT NULL CHECK(state IN ('BUILDING', 'INDEXED', 'GARBAGE')),
+    building_session_id INTEGER REFERENCES session(id),
+    key_types VARCHAR NOT NULL DEFAULT '',
+    value_type VARCHAR NOT NULL DEFAULT '',
+    UNIQUE(namespace_id, indexer_entity_id, key_prefix)
+)""",
+]
+
+# Additional tables for segment-file storage (v6).
+# For fresh databases, the entity table already includes seg_id/seg_offset/seg_length
+# columns (defined inline in SQL_CREATE_TABLES). The ALTER TABLE forms here are used
+# only by the v5→v6 migration.
+SQL_CREATE_SEGMENT_TABLES = [
+    """CREATE TABLE IF NOT EXISTS segment_metadata (
+    segment_id INTEGER PRIMARY KEY,
+    status VARCHAR NOT NULL DEFAULT 'active',
+    write_cursor INTEGER NOT NULL DEFAULT 0,
+    created_at DATETIME NOT NULL
 )""",
 ]
 
@@ -140,165 +171,65 @@ def _connection_setup(conn: sqlite3.Connection) -> None:
     # Enable foreign key constraints
     conn.execute("PRAGMA foreign_keys = ON")
     # Note: sqlite3 doesn't support disabling double-quoted strings via config
-    # Set busy timeout to avoid intermittent SQLITE_BUSY errors
-    conn.execute("PRAGMA busy_timeout = 500")
+    # Wait up to 5 seconds for a write lock before returning SQLITE_BUSY.
+    # The previous 500ms value caused intermittent failures when multiple
+    # processes (e.g. subprocess-based CLI calls in tests) competed for
+    # the same database file. 5 seconds is conservative but safe — in
+    # production the single-process server rarely contends, and in tests
+    # the extra headroom avoids flaky failures.
+    conn.execute("PRAGMA busy_timeout = 5000")
 
 
-def _is_shared_cache_supported() -> bool:
-    """Check if the SQLite build supports shared cache mode.
+def _connection_teardown(conn: sqlite3.Connection) -> None:
+    """Per-connection teardown callback for connection pools.
 
-    Returns:
-        True if shared cache is supported, False otherwise.
+    This is called just before each connection is closed. Runs PRAGMA optimize
+    to update query statistics if needed.
+
+    From SQLite docs: "Applications should be prepared to run PRAGMA optimize
+    once per database connection just prior to closing the connection."
+    See: https://www.sqlite.org/pragma.html#pragma_optimize
     """
-    # Check compile options for OMIT_SHARED_CACHE
-    conn = sqlite3.connect(":memory:", isolation_level=None)
     try:
-        cursor = conn.execute("PRAGMA compile_options")
-        for row in cursor:
-            if row[0] == "OMIT_SHARED_CACHE":
-                return False
-        return True
-    finally:
-        conn.close()
+        conn.execute("PRAGMA optimize")
+    except sqlite3.OperationalError:
+        logger.debug("[conn %x] PRAGMA optimize skipped (database locked)", id(conn))
 
 
-def _parse_sqlite_uri(db_path: str) -> tuple[bool, bool, str | None]:
-    """Parse a SQLite URI to detect memory database configuration.
-
-    SQLite URI format: file:name?query_params
-    For named shared-cache memory DBs: file:memdb1?mode=memory&cache=shared
+def _setup_database_schema(db_path: str) -> tuple[Any, sqlite3.Connection]:
+    """Initialize database schema, create segment infrastructure, and return setup state.
 
     Args:
-        db_path: The database path or URI.
+        db_path: Path to the SQLite database file (must be a file path, not URI).
 
     Returns:
-        Tuple of (is_memory, has_shared_cache, db_name) where:
-        - is_memory: True if this is an in-memory database
-        - has_shared_cache: True if cache=shared is set
-        - db_name: The database name (for named memory DBs), or None
-    """
-    # Handle plain :memory: case
-    if db_path == ":memory:":
-        return True, False, None
-
-    # Handle file: URIs
-    if not db_path.startswith("file:"):
-        return False, False, None
-
-    # Parse the URI - SQLite uses file: scheme
-    # urlparse handles file:name?params format
-    parsed = urlparse(db_path)
-
-    # The path contains the database name (e.g., "memdb1" from "file:memdb1?...")
-    # Note: for "file::memory:?cache=shared", path would be ":memory:"
-    db_name = parsed.path if parsed.path else None
-
-    # Parse query parameters
-    query_params = parse_qs(parsed.query)
-
-    # Check for mode=memory parameter
-    is_mode_memory = "memory" in query_params.get("mode", [])
-
-    # Check for :memory: in path (legacy format like file::memory:?cache=shared)
-    is_path_memory = db_name == ":memory:" if db_name else False
-
-    is_memory = is_mode_memory or is_path_memory
-
-    # Check for cache=shared
-    has_shared_cache = "shared" in query_params.get("cache", [])
-
-    return is_memory, has_shared_cache, db_name
-
-
-def _is_memory_db(db_path: str) -> bool:
-    """Check if the database path is for an in-memory database."""
-    is_memory, _, _ = _parse_sqlite_uri(db_path)
-    return is_memory
-
-
-def _is_valid_named_shared_memory_db(db_path: str) -> bool:
-    """Check if the database path is a valid named shared-cache memory database.
-
-    Valid format: file:name?mode=memory&cache=shared
-    where 'name' is a non-empty identifier (not :memory:).
-
-    Args:
-        db_path: The database path or URI.
-
-    Returns:
-        True if this is a valid named shared-cache memory database.
-    """
-    is_memory, has_shared_cache, db_name = _parse_sqlite_uri(db_path)
-
-    # Must be a memory database with shared cache
-    if not is_memory or not has_shared_cache:
-        return False
-
-    # Must have a proper name (not :memory: or empty)
-    if not db_name or db_name == ":memory:":
-        return False
-
-    return True
-
-
-def setup_database_and_create_pool_group(
-    db_path: str,
-    write_pool_size: int = 1,
-    read_pool_size: int = 5,
-) -> ConnectionPoolGroup:
-    """Initialize database schema and return a ConnectionPoolGroup.
-
-    This is the main entry point for creating a database connection pool.
-    It:
-    1. Creates a temporary connection for setup
-    2. Sets PRAGMA journal_mode = WAL (for file-based DBs)
-    3. Creates tables if needed (checks user_version)
-    4. Creates the garbage session (session 0) if needed
-    5. Creates and returns a ConnectionPoolGroup
-
-    Each ConnectionPool's per-connection setup handles PRAGMA foreign_keys = ON.
-
-    Args:
-        db_path: Path to the SQLite database file, or a named shared-cache memory URI
-            like "file:memdb1?mode=memory&cache=shared". Plain ":memory:" and
-            "file::memory:?cache=shared" are NOT supported because they don't
-            reliably share data between connections.
-        write_pool_size: Maximum concurrent write connections (default 1).
-        read_pool_size: Maximum concurrent read connections (default 5).
-
-    Returns:
-        A ConnectionPoolGroup with separate read and write pools.
+        Tuple of (segment_manager, setup_conn). The caller is responsible
+        for closing these resources.
 
     Raises:
-        ValueError: If the database version is newer than the code supports,
-            or if a non-named-shared-cache memory database is requested.
+        ValueError: If the database version is newer than the code supports, or if
+            the db_path is not a valid file path.
     """
-    # Check for unsupported memory database formats
-    is_memory = _is_memory_db(db_path)
-    if is_memory:
-        if not _is_valid_named_shared_memory_db(db_path):
-            raise ValueError(
-                f"Memory database path '{db_path}' is not supported. "
-                "Use the format 'file:name?mode=memory&cache=shared' where 'name' is a "
-                "unique identifier (e.g., 'file:memdb1?mode=memory&cache=shared'). "
-                "Plain ':memory:' and 'file::memory:?cache=shared' are not supported "
-                "because they don't reliably share data between connections."
-            )
+    from fxtr2.data.sqlite_store.segment_io import SegmentManager, truncate_to_cursor
 
-    # Create setup connection with manual transaction control
-    # For memory databases with URI format, we need to explicitly use URI mode
-    use_uri = db_path.startswith("file:")
-    setup_conn = sqlite3.connect(
-        db_path, isolation_level=None, check_same_thread=False, uri=use_uri
-    )
+    # Validate that db_path is a plain file path (not a URI or :memory:)
+    if db_path == ":memory:" or db_path.startswith("file:"):
+        raise ValueError(
+            f"Database path '{db_path}' must be a plain file path, not a URI. "
+            "In-memory databases are not supported (segment files require a filesystem path)."
+        )
+
+    segments_dir = f"{db_path}.data2.shards"
+
+    # Open SQLite connection
+    setup_conn = sqlite3.connect(db_path, isolation_level=None, check_same_thread=False)
     _connection_setup(setup_conn)
 
     try:
-        # Set WAL mode for file-based databases (not applicable to memory DBs)
-        if not is_memory:
-            setup_conn.execute("PRAGMA journal_mode = WAL")
+        # Enable WAL mode
+        setup_conn.execute("PRAGMA journal_mode = WAL")
 
-        # Check current database version
+        # Check database version
         cursor = setup_conn.execute("PRAGMA user_version")
         row = cursor.fetchone()
         current_version = row[0] if row else 0
@@ -309,20 +240,36 @@ def setup_database_and_create_pool_group(
                 f"{DB_USER_VERSION}. Please upgrade your code."
             )
         elif current_version == 0:
-            # Fresh database: create all tables and set version
+            # Fresh database: create schema with segment support
             with transaction(setup_conn, "IMMEDIATE"):
                 for statement in SQL_CREATE_TABLES:
                     setup_conn.execute(statement)
+                for statement in SQL_CREATE_SEGMENT_TABLES:
+                    setup_conn.execute(statement)
+
+                # Create segments directory and initial segment file
+                os.makedirs(segments_dir, exist_ok=True)
+                seg_path = os.path.join(segments_dir, "seg_00000000.bin")
+                seg_fd = os.open(seg_path, os.O_CREAT | os.O_RDWR, 0o644)
+                os.close(seg_fd)
+
+                # Insert initial segment_metadata row
+                now = datetime.now(timezone.utc)
+                setup_conn.execute(
+                    "INSERT INTO segment_metadata "
+                    "(segment_id, status, write_cursor, created_at) "
+                    "VALUES (0, 'active', 0, ?)",
+                    (now.isoformat(),),
+                )
+
                 setup_conn.execute(f"PRAGMA user_version = {DB_USER_VERSION}")
         elif current_version < DB_USER_VERSION:
-            # Older database: need migrations. Not supported right now
-            raise ValueError(
-                f"Database version {current_version} is older than the latest supported version "
-                f"{DB_USER_VERSION}. Migrations are not supported right now."
-            )
-        # else: current_version == DB_USER_VERSION, nothing to do
+            # Run migrations
+            from fxtr2.data.sqlite_store.sqlite_migrations import run_migrations
 
-        # Create garbage session if needed
+            run_migrations(setup_conn, current_version, DB_USER_VERSION)
+
+        # Create garbage session
         with transaction(setup_conn, "IMMEDIATE"):
             cursor = setup_conn.execute(
                 "SELECT id FROM session WHERE id = ? AND public_id = ?",
@@ -344,61 +291,159 @@ def setup_database_and_create_pool_group(
                     ),
                 )
 
+        # Crash recovery: truncate active segment to committed write_cursor
+        cursor = setup_conn.execute(
+            "SELECT segment_id, write_cursor FROM segment_metadata WHERE status = 'active'"
+        )
+        active_row = cursor.fetchone()
+        if active_row is not None:
+            active_seg_id, write_cursor = active_row
+            seg_path = os.path.join(segments_dir, f"seg_{active_seg_id:08d}.bin")
+            if os.path.exists(seg_path):
+                truncate_to_cursor(seg_path, write_cursor)
+
+        # Create SegmentManager for reading segment files
+        segment_manager = SegmentManager(segments_dir)
+
     except BaseException:
         setup_conn.close()
         raise
 
-    # Create connection pools
-    # Both pools use read-write connections; reads go through read_pool by convention
-    write_pool = ConnectionPool(
-        db_path=db_path,
-        max_connections=write_pool_size,
-        connection_setup=_connection_setup,
-        is_memory_db=is_memory,
-    )
-    read_pool = ConnectionPool(
-        db_path=db_path,
-        max_connections=read_pool_size,
-        connection_setup=_connection_setup,
-        is_memory_db=is_memory,
-    )
-
-    # For memory databases, we need to keep at least one connection alive to preserve the data.
-    if is_memory:
-        return ConnectionPoolGroup(
-            write_pool=write_pool, read_pool=read_pool, memory_keep_alive_connection=setup_conn
-        )
-    else:
-        setup_conn.close()
-        return ConnectionPoolGroup(write_pool=write_pool, read_pool=read_pool)
+    return segment_manager, setup_conn
 
 
-async def async_setup_database_and_create_pool_group(
+def setup_database_and_create_worker_pool_group(
     db_path: str,
     write_pool_size: int = 1,
     read_pool_size: int = 5,
-) -> ConnectionPoolGroup:
-    """Async wrapper for setup_database_and_create_pool_group.
+) -> ConnectionWorkerPoolGroup:
+    """Initialize database schema, create segment infrastructure, and return a pool group.
 
-    Runs the database setup in a background thread to avoid blocking the event loop.
+    Creates ConnectionWorkerPool instances (persistent worker threads) for
+    read and write operations. Worker threads must be started by the caller
+    after creation (e.g. via pool.start_all_workers() in a task group).
+
+    CRITICAL: Only call this function ONCE per database path, or use GLOBAL_POOL_GROUP_MANAGER
+    (in sqlite_namespace.py) to ensure singleton pool groups.
 
     Args:
-        db_path: Path to the SQLite database file, or a shared-cache memory URI.
-        write_pool_size: Maximum concurrent write connections (default 1).
-        read_pool_size: Maximum concurrent read connections (default 5).
+        db_path: Path to the SQLite database file (must be a plain file path, not URI).
+        write_pool_size: Max connections for the write pool (default 1).
+        read_pool_size: Max connections for the read pool (default 5).
 
     Returns:
-        A ConnectionPoolGroup with separate read and write pools.
+        A ConnectionWorkerPoolGroup with separate read and write worker pools
+        and a SegmentManager for entity data.
+    """
+    # Initialize schema and segment infrastructure
+    segment_manager, setup_conn = _setup_database_schema(db_path)
+    setup_conn.close()
+
+    segments_dir = f"{db_path}.data2.shards"
+
+    # Create worker pools
+    write_pool = ConnectionWorkerPool(
+        db_path=db_path,
+        max_connections=write_pool_size,
+        connection_setup=_connection_setup,
+        connection_teardown=_connection_teardown,
+    )
+    read_pool = ConnectionWorkerPool(
+        db_path=db_path,
+        max_connections=read_pool_size,
+        connection_setup=_connection_setup,
+        connection_teardown=_connection_teardown,
+    )
+
+    return ConnectionWorkerPoolGroup(
+        write_pool=write_pool,
+        read_pool=read_pool,
+        segment_manager=segment_manager,
+        segments_dir=segments_dir,
+    )
+
+
+async def async_setup_database_and_create_worker_pool_group(
+    db_path: str,
+) -> ConnectionWorkerPoolGroup:
+    """Async wrapper for setup_database_and_create_worker_pool_group."""
+    return await anyio.to_thread.run_sync(
+        setup_database_and_create_worker_pool_group,
+        db_path,
+    )
+
+
+def setup_readonly_pool_group(
+    db_path: str,
+    read_pool_size: int = 5,
+) -> ConnectionWorkerPoolGroup:
+    """Open a database in read-only mode and return a pool group with no write pool.
+
+    This validates that the database exists and has the expected schema version,
+    but performs NO writes: no migrations, no garbage session creation, no crash
+    recovery truncation.
+
+    Connections are opened with SQLite ``mode=ro`` so that any accidental write
+    attempt will be rejected by the database engine itself.
+
+    Args:
+        db_path: Path to the SQLite database file (must already exist).
+        read_pool_size: Max connections for the read pool (default 5).
+
+    Returns:
+        A ConnectionWorkerPoolGroup with ``write_pool=None``.
 
     Raises:
-        ValueError: If the database version is newer than the code supports,
-            or if a non-shared-cache memory database is requested.
+        FileNotFoundError: If the database file does not exist.
+        ValueError: If the database schema version does not match.
     """
+    from fxtr2.data.sqlite_store.segment_io import SegmentManager
+
+    if not os.path.exists(db_path):
+        raise FileNotFoundError(f"Database file not found: {db_path}")
+
+    # Open a temporary connection to validate the schema version
+    uri = f"file:{db_path}?mode=ro"
+    check_conn = sqlite3.connect(uri, uri=True, isolation_level=None, check_same_thread=False)
+    try:
+        cursor = check_conn.execute("PRAGMA user_version")
+        current_version = (cursor.fetchone() or (0,))[0]
+        if current_version != DB_USER_VERSION:
+            raise ValueError(
+                f"Database version {current_version} does not match expected version "
+                f"{DB_USER_VERSION}. Cannot open in read-only mode "
+                f"(migrations require read-write access)."
+            )
+    finally:
+        check_conn.close()
+
+    segments_dir = f"{db_path}.data2.shards"
+    segment_manager = SegmentManager(segments_dir)
+
+    read_pool = ConnectionWorkerPool(
+        db_path=uri,
+        max_connections=read_pool_size,
+        connection_setup=_connection_setup,
+        # Skip PRAGMA optimize on teardown — it may attempt to write
+        connection_teardown=None,
+        uri=True,
+    )
+
+    return ConnectionWorkerPoolGroup(
+        write_pool=None,
+        read_pool=read_pool,
+        segment_manager=segment_manager,
+        segments_dir=segments_dir,
+    )
+
+
+async def async_setup_readonly_pool_group(
+    db_path: str,
+) -> ConnectionWorkerPoolGroup:
+    """Async wrapper for setup_readonly_pool_group."""
     return await anyio.to_thread.run_sync(
-        setup_database_and_create_pool_group,
+        setup_readonly_pool_group,
         db_path,
-        write_pool_size,
-        read_pool_size,
     )
 
 
@@ -434,6 +479,9 @@ def insert_session(conn: sqlite3.Connection, public_id: bytes, now: datetime) ->
 def mark_session_garbage(conn: sqlite3.Connection, session_id: int, now: datetime) -> None:
     """Mark a session as garbage.
 
+    Also marks any BUILDING index registrations owned by this session as
+    GARBAGE so they will be cleaned up by the GC worker.
+
     Args:
         conn: sqlite3 connection.
         session_id: The internal session ID.
@@ -444,6 +492,7 @@ def mark_session_garbage(conn: sqlite3.Connection, session_id: int, now: datetim
             "UPDATE session SET is_garbage = 1, last_seen_at = ? WHERE id = ?",
             (now.isoformat(), session_id),
         )
+        sqlite_index_ops._mark_building_registrations_garbage_for_session(conn, session_id)
 
 
 def mark_session_garbage_by_public_id(conn: sqlite3.Connection, public_id: bytes) -> int:
@@ -519,7 +568,6 @@ def find_and_delete_orphan_garbage_session(conn: sqlite3.Connection) -> int | No
         if row is None:
             return None
         session_id = row[0]
-        conn.execute("DELETE FROM entity_reservations WHERE session_id = ?", (session_id,))
         conn.execute("DELETE FROM session WHERE id = ?", (session_id,))
         return session_id
 
@@ -558,6 +606,29 @@ def get_or_create_user_namespace(conn: sqlite3.Connection, name: str) -> tuple[i
         internal_id = cursor.lastrowid
         assert internal_id is not None
         return internal_id, namespace_uuid
+
+
+def get_user_namespace(conn: sqlite3.Connection, name: str) -> tuple[int, uuid.UUID]:
+    """Look up a user namespace by name (read-only, no creation).
+
+    Args:
+        conn: sqlite3 connection.
+        name: The namespace name.
+
+    Returns:
+        Tuple of (internal_id, public_uuid).
+
+    Raises:
+        KeyError: If the namespace does not exist.
+    """
+    cursor = conn.execute(
+        "SELECT id, public_id FROM namespace WHERE name = ? AND kind = 'user'",
+        (name,),
+    )
+    row = cursor.fetchone()
+    if row is None:
+        raise KeyError(f"Namespace '{name}' not found")
+    return row[0], uuid.UUID(bytes=bytes(row[1]))
 
 
 # =============================================================================
@@ -605,8 +676,153 @@ def list_pins_with_prefix(
         return cast(list[tuple[str, bytes]], cursor.fetchall())
 
 
+def check_entities_exist(
+    conn: sqlite3.Connection,
+    namespace_id: int,
+    public_ids: list[bytes],
+) -> set[bytes]:
+    """Check which entity public IDs exist in a namespace.
+
+    Args:
+        conn: sqlite3 connection.
+        namespace_id: The namespace internal ID.
+        public_ids: Entity public IDs to check.
+
+    Returns:
+        Set of public IDs that exist in the namespace.
+    """
+    if not public_ids:
+        return set()
+
+    found: set[bytes] = set()
+    with transaction(conn, "DEFERRED"):
+        chunk_size = 500
+        for i in range(0, len(public_ids), chunk_size):
+            chunk = public_ids[i : i + chunk_size]
+            placeholders = ",".join("?" for _ in chunk)
+            cursor = conn.execute(
+                f"""
+                SELECT e.public_id
+                FROM entity e
+                JOIN namespace_entity_ownership neo ON e.id = neo.entity_id
+                WHERE neo.namespace_id = ? AND e.public_id IN ({placeholders})
+                """,
+                [namespace_id, *chunk],
+            )
+            found.update(bytes(row[0]) for row in cursor)
+
+    return found
+
+
+def get_transitive_closure(
+    conn: sqlite3.Connection,
+    namespace_id: int,
+    root_public_ids: list[bytes],
+) -> list[tuple[bytes, int]]:
+    """Walk entity_dep to find the transitive closure of root entities.
+
+    Returns (public_id, seg_length) pairs in topological order (deps before
+    dependents). Only includes entities owned by the given namespace.
+
+    Uses a recursive CTE to find reachable internal IDs, then fetches dep
+    edges within the closure for a topological sort in Python.
+    """
+    if not root_public_ids:
+        return []
+
+    with transaction(conn, "DEFERRED"):
+        # Resolve root public IDs to internal IDs
+        placeholders = ",".join("?" for _ in root_public_ids)
+        cursor = conn.execute(
+            f"""
+            SELECT e.id
+            FROM entity e
+            JOIN namespace_entity_ownership neo ON e.id = neo.entity_id
+            WHERE neo.namespace_id = ? AND e.public_id IN ({placeholders})
+            """,
+            [namespace_id, *root_public_ids],
+        )
+        root_internal_ids = [row[0] for row in cursor]
+
+        if not root_internal_ids:
+            return []
+
+        # Recursive CTE to find all transitively-reachable entities
+        seed_placeholders = ",".join("?" for _ in root_internal_ids)
+        conn.execute(
+            f"""
+            CREATE TEMP TABLE _closure_ids AS
+            WITH RECURSIVE reachable(entity_id) AS (
+                SELECT id FROM entity WHERE id IN ({seed_placeholders})
+                UNION
+                SELECT ed.required_id
+                FROM entity_dep ed
+                JOIN reachable ON ed.requirer_id = reachable.entity_id
+            )
+            SELECT entity_id FROM reachable
+            WHERE EXISTS (
+                SELECT 1 FROM namespace_entity_ownership
+                WHERE namespace_id = ? AND entity_id = reachable.entity_id
+            )
+            """,
+            [*root_internal_ids, namespace_id],
+        )
+
+        # Fetch entity info: internal_id, public_id, seg_length
+        cursor = conn.execute(
+            """
+            SELECT e.id, e.public_id, COALESCE(e.seg_length, 0)
+            FROM _closure_ids c
+            JOIN entity e ON c.entity_id = e.id
+            """
+        )
+        entities: dict[int, tuple[bytes, int]] = {}
+        for iid, pub_id, seg_len in cursor:
+            entities[iid] = (bytes(pub_id), seg_len)
+
+        # Fetch dep edges within the closure for topological sorting
+        cursor = conn.execute(
+            """
+            SELECT ed.requirer_id, ed.required_id
+            FROM entity_dep ed
+            WHERE ed.requirer_id IN (SELECT entity_id FROM _closure_ids)
+              AND ed.required_id IN (SELECT entity_id FROM _closure_ids)
+            """
+        )
+        # Forward adjacency: required_id -> list of requirer_ids that depend on it
+        dependents: dict[int, list[int]] = {iid: [] for iid in entities}
+        in_degree: dict[int, int] = {iid: 0 for iid in entities}
+        for requirer, required in cursor:
+            if requirer in entities and required in entities:
+                dependents[required].append(requirer)
+                in_degree[requirer] += 1
+
+        conn.execute("DROP TABLE _closure_ids")
+
+    # Kahn's algorithm for topological sort (deps before dependents)
+    queue = deque(iid for iid, deg in in_degree.items() if deg == 0)
+    result: list[tuple[bytes, int]] = []
+    visited: set[int] = set()
+
+    while queue:
+        node = queue.popleft()
+        visited.add(node)
+        result.append(entities[node])
+        for dep in dependents[node]:
+            in_degree[dep] -= 1
+            if in_degree[dep] == 0:
+                queue.append(dep)
+
+    # Include any remaining nodes (cycles or disconnected) at the end
+    for iid in entities:
+        if iid not in visited:
+            result.append(entities[iid])
+
+    return result
+
+
 def unpin_and_maybe_rebind(conn: sqlite3.Connection, namespace_id: int, name: str) -> bool:
-    """Remove a pin and rebind the entity to garbage if orphaned.
+    """Remove a pin, clean up index data, and rebind the entity to garbage if orphaned.
 
     Args:
         conn: sqlite3 connection.
@@ -631,10 +847,17 @@ def unpin_and_maybe_rebind(conn: sqlite3.Connection, namespace_id: int, name: st
             raise KeyError(f"No pin named {name!r} in namespace")
         entity_id: int = row[0]
 
-        # Remove the pin
+        # Remove the pin first, then clean up index entries only if the entity
+        # is no longer pinned under any key covered by an INDEXED registration.
         conn.execute(
             "DELETE FROM namespace_pin WHERE namespace_id = ? AND name = ?",
             (namespace_id, name),
+        )
+
+        sqlite_index_ops._delete_index_entries_for_entity_if_unneeded(
+            conn,
+            namespace_id,
+            entity_id,
         )
 
         # If entity is now orphaned, move it to a garbage arena
@@ -647,8 +870,17 @@ def create_or_update_pin(
     entity_public_id: bytes,
     name: str,
     overwrite: bool,
+    index_entries: dict[int, list[tuple]] | None = None,
 ) -> tuple[int, bool]:
     """Look up an entity in namespace and create or update a pin for it.
+
+    Always verifies that every current INDEXED registration's indexer is
+    covered by *index_entries* keys (CAS check).  When *index_entries* is
+    provided, also writes the computed index rows and processed markers, and
+    cleans up old entity index data on overwrite.
+
+    If the CAS check fails, ``sqlite_index_ops.IndexMismatchError`` is raised
+    and the transaction is rolled back so the caller can retry.
 
     Args:
         conn: sqlite3 connection.
@@ -656,6 +888,9 @@ def create_or_update_pin(
         entity_public_id: The entity's public ID bytes to pin.
         name: The pin name.
         overwrite: If True, overwrite existing pin. If False, raise on conflict.
+        index_entries: ``{indexer_entity_iid: [(key_val_0, ..., value), ...]}``
+            for each INDEXED registration covering this key.  ``None`` means
+            no index work and asserts no INDEXED registrations exist.
 
     Returns:
         Tuple of (entity_internal_id, garbage_created):
@@ -665,8 +900,21 @@ def create_or_update_pin(
     Raises:
         RuntimeError: If entity not found in namespace.
         KeyError: If pin exists and overwrite=False.
+        sqlite_index_ops.IndexMismatchError: If INDEXED registrations changed.
     """
     with transaction(conn, "IMMEDIATE"):
+        # Get the ground-truth set of INDEXED registrations for this key.
+        # If any indexer is not covered by index_entries, we must retry.
+        covered_iids = frozenset(index_entries.keys()) if index_entries else frozenset()
+        live_regs = sqlite_index_ops._get_indexed_registrations_for_key(
+            conn,
+            namespace_id,
+            name,
+        )
+        live_indexer_iids = frozenset(r[1] for r in live_regs)
+        if not live_indexer_iids.issubset(covered_iids):
+            raise sqlite_index_ops.IndexMismatchError(live_regs)
+
         # Look up entity by public_id and verify it's in the namespace
         cursor = conn.execute(
             """
@@ -689,6 +937,7 @@ def create_or_update_pin(
         )
         existing_pin = cursor.fetchone()
 
+        old_entity_id: int | None = None
         if existing_pin is not None:
             if not overwrite:
                 raise KeyError(f"Pin {name!r} already exists in namespace")
@@ -700,16 +949,35 @@ def create_or_update_pin(
                 (entity_id, pin_id),
             )
 
-            # Check if old entity is now orphaned
-            garbage_created = _rebind_to_garbage_if_needed(conn, namespace_id, old_entity_id)
-            return entity_id, garbage_created
+            # Clean up old entity's index entries if it's no longer pinned
+            # under any key covered by an INDEXED registration
+            if old_entity_id != entity_id:
+                assert old_entity_id is not None
+                sqlite_index_ops._delete_index_entries_for_entity_if_unneeded(
+                    conn,
+                    namespace_id,
+                    old_entity_id,
+                )
         else:
             # Create new pin
             conn.execute(
                 "INSERT INTO namespace_pin (namespace_id, entity_id, name) VALUES (?, ?, ?)",
                 (namespace_id, entity_id, name),
             )
-            return entity_id, False
+
+        # Write index entries only for indexers that are actually INDEXED right now
+        for indexer_iid in live_indexer_iids:
+            rows = index_entries.get(indexer_iid, []) if index_entries else []
+            if rows:
+                sqlite_index_ops._write_index_rows(conn, namespace_id, indexer_iid, entity_id, rows)
+            sqlite_index_ops._write_processed_marker(conn, namespace_id, indexer_iid, entity_id)
+
+        # Handle garbage for overwritten entity
+        garbage_created = False
+        if old_entity_id is not None and old_entity_id != entity_id:
+            garbage_created = _rebind_to_garbage_if_needed(conn, namespace_id, old_entity_id)
+
+        return entity_id, garbage_created
 
 
 # =============================================================================
@@ -725,106 +993,14 @@ def reassign_arena_to_garbage_session(conn: sqlite3.Connection, arena_id: int) -
         arena_id: The arena internal ID.
     """
     with transaction(conn, "IMMEDIATE"):
-        logger.debug(f"reassign_arena_to_garbage_session executing update")
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"reassign_arena_to_garbage_session executing update")
         conn.execute(
             "UPDATE arena SET session_id = ? WHERE id = ?",
             (GARBAGE_SESSION_ID, arena_id),
         )
-        logger.debug(f"reassign_arena_to_garbage_session finished update")
-
-
-def retrieve_pinned_and_create_arena(
-    conn: sqlite3.Connection,
-    namespace_id: int,
-    session_id: int,
-    pin_name: str,
-    arena_public_id: bytes,
-) -> tuple[int, bytes, int]:
-    """Look up a pin and create an arena with the pinned entity.
-
-    Args:
-        conn: sqlite3 connection.
-        namespace_id: The namespace internal ID.
-        session_id: The session internal ID that will own the arena.
-        pin_name: The name of the pin to look up.
-        arena_public_id: The public UUID bytes for the new arena.
-
-    Returns:
-        Tuple of (entity_internal_id, entity_public_id, arena_internal_id).
-
-    Raises:
-        KeyError: If no pin with that name exists.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        # Look up the pin
-        cursor = conn.execute(
-            """
-            SELECT np.entity_id, e.public_id
-            FROM namespace_pin np
-            JOIN entity e ON np.entity_id = e.id
-            WHERE np.namespace_id = ? AND np.name = ?
-            """,
-            (namespace_id, pin_name),
-        )
-        logger.debug(f"retrieve_pinned_and_create_arena executed first query")
-        row = cursor.fetchone()
-        logger.debug(f"retrieve_pinned_and_create_arena got first result: %s", row)
-        if row is None:
-            raise KeyError(f"No pin named {pin_name!r} in namespace")
-
-        entity_internal_id: int = row[0]
-        entity_public_id: bytes = row[1]
-
-        # Create arena with the entity
-        arena_id = _create_arena_with_entities(
-            conn, namespace_id, session_id, [entity_internal_id], arena_public_id
-        )
-
-        return entity_internal_id, entity_public_id, arena_id
-
-
-def lookup_in_namespace_and_create_arena(
-    conn: sqlite3.Connection,
-    namespace_id: int,
-    session_id: int,
-    entity_public_id: bytes,
-    arena_public_id: bytes,
-) -> tuple[int, int] | None:
-    """Look up an entity in namespace and create an arena if found.
-
-    Args:
-        conn: sqlite3 connection.
-        namespace_id: The namespace internal ID.
-        session_id: The session internal ID that will own the arena.
-        entity_public_id: The entity's public ID bytes.
-        arena_public_id: The public UUID bytes for the new arena.
-
-    Returns:
-        Tuple of (entity_internal_id, arena_internal_id) if found, None if not found.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        # Look up entity by public_id and check if it's in this namespace
-        cursor = conn.execute(
-            """
-            SELECT e.id
-            FROM entity e
-            JOIN namespace_entity_ownership neo ON e.id = neo.entity_id
-            WHERE e.public_id = ? AND neo.namespace_id = ?
-            """,
-            (entity_public_id, namespace_id),
-        )
-        row = cursor.fetchone()
-        if row is None:
-            return None
-
-        entity_internal_id: int = row[0]
-
-        # Create arena with the entity
-        arena_id = _create_arena_with_entities(
-            conn, namespace_id, session_id, [entity_internal_id], arena_public_id
-        )
-
-        return entity_internal_id, arena_id
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(f"reassign_arena_to_garbage_session finished update")
 
 
 # =============================================================================
@@ -841,6 +1017,7 @@ def _is_entity_orphaned_in_namespace(
     - Not required by anything else in the namespace (no backrefs)
     - Not pinned
     - Not in any arena associated with the namespace
+    - Not used as an indexer in any non-GARBAGE index registration
 
     MUST be called within an existing transaction.
 
@@ -864,9 +1041,21 @@ def _is_entity_orphaned_in_namespace(
             SELECT 1 FROM arena_membership am
             JOIN arena a ON am.arena_id = a.id
             WHERE am.entity_id = ? AND a.namespace_id = ?
+        ) OR EXISTS(
+            SELECT 1 FROM ns_index_registry
+            WHERE indexer_entity_id = ? AND namespace_id = ? AND state != 'GARBAGE'
         )
         """,
-        (entity_id, namespace_id, entity_id, namespace_id, entity_id, namespace_id),
+        (
+            entity_id,
+            namespace_id,
+            entity_id,
+            namespace_id,
+            entity_id,
+            namespace_id,
+            entity_id,
+            namespace_id,
+        ),
     )
     row = cursor.fetchone()
     # If any of the conditions is true, entity is NOT orphaned
@@ -915,23 +1104,25 @@ def _rebind_to_garbage_if_needed(
         )
         garbage_arena_id = cursor.lastrowid
         assert garbage_arena_id is not None
-        logger.debug(
-            "Created garbage arena %s for namespace %s",
-            garbage_arena_id,
-            namespace_id,
-        )
+        if logger.isEnabledFor(logging.DEBUG):
+            logger.debug(
+                "Created garbage arena %s for namespace %s",
+                garbage_arena_id,
+                namespace_id,
+            )
 
     # Add entity to the garbage arena
     conn.execute(
         "INSERT INTO arena_membership (arena_id, entity_id) VALUES (?, ?)",
         (garbage_arena_id, entity_id),
     )
-    logger.debug(
-        "Rebound orphaned entity %s to garbage arena %s in namespace %s",
-        entity_id,
-        garbage_arena_id,
-        namespace_id,
-    )
+    if logger.isEnabledFor(logging.DEBUG):
+        logger.debug(
+            "Rebound orphaned entity %s to garbage arena %s in namespace %s",
+            entity_id,
+            garbage_arena_id,
+            namespace_id,
+        )
     return True
 
 
@@ -971,64 +1162,9 @@ def _create_arena_with_entities(
 
     return arena_id
 
-
-# =============================================================================
-# Entity Reservation Operations
-# =============================================================================
-
-
-def _add_entity_reservation(conn: sqlite3.Connection, session_id: int, entity_id: int) -> None:
-    """Add a reservation for an entity.
-
-    Reservations protect entities from garbage collection during copy operations.
-    Multiple reservations can be held for the same entity (count is incremented).
-
-    MUST be called within an existing transaction (internal helper).
-
-    Args:
-        conn: sqlite3 connection (must be in a transaction).
-        session_id: The session internal ID holding the reservation.
-        entity_id: The internal ID of the entity to reserve.
-    """
-    # Use INSERT ... ON CONFLICT to either insert or increment count
-    conn.execute(
-        """
-        INSERT INTO entity_reservations (session_id, entity_id, count)
-        VALUES (?, ?, 1)
-        ON CONFLICT (session_id, entity_id) DO UPDATE SET count = count + 1
-        """,
-        (session_id, entity_id),
-    )
-
-
-def _release_entity_reservation(conn: sqlite3.Connection, session_id: int, entity_id: int) -> None:
-    """Release a reservation for an entity.
-
-    Decrements the reservation count, and removes the reservation row if count reaches 0.
-
-    MUST be called within an existing transaction (internal helper).
-
-    Args:
-        conn: sqlite3 connection (must be in a transaction).
-        session_id: The session internal ID holding the reservation.
-        entity_id: The internal ID of the entity to release.
-    """
-    # Decrement count
-    conn.execute(
-        """
-        UPDATE entity_reservations SET count = count - 1
-        WHERE session_id = ? AND entity_id = ?
-        """,
-        (session_id, entity_id),
-    )
-    # Delete if count <= 0
-    conn.execute(
-        """
-        DELETE FROM entity_reservations
-        WHERE session_id = ? AND entity_id = ? AND count <= 0
-        """,
-        (session_id, entity_id),
-    )
+    # Note: Entity reservation operations (_add_entity_reservation, _release_entity_reservation)
+    # have been removed. Entity-table GC never runs while sessions are open, so reservations
+    # are unnecessary during the bulk copy workflow.
 
 
 # =============================================================================
@@ -1056,6 +1192,7 @@ def check_and_claim_gc(conn: sqlite3.Connection, session_id: int) -> bool:
         # Check if there's any garbage to collect:
         # - Garbage arenas (arenas in garbage sessions)
         # - Garbage sessions (except session 0)
+        # - GARBAGE index registrations
         cursor = conn.execute(
             """
             SELECT EXISTS(
@@ -1065,6 +1202,9 @@ def check_and_claim_gc(conn: sqlite3.Connection, session_id: int) -> bool:
             ) OR EXISTS(
                 SELECT 1 FROM session
                 WHERE is_garbage = 1 AND id != ?
+            ) OR EXISTS(
+                SELECT 1 FROM ns_index_registry
+                WHERE state = 'GARBAGE'
             )
             """,
             (GARBAGE_SESSION_ID,),
@@ -1109,6 +1249,14 @@ def run_one_gc_step(conn: sqlite3.Connection) -> tuple[bool, bool]:
         - garbage_created: True if new garbage was created (entity rebound to garbage arena).
     """
     with transaction(conn, "IMMEDIATE"):
+        # Phase 0: Clean up GARBAGE index registrations
+        idx_work_done, indexer_iid, idx_ns_id = (
+            sqlite_index_ops._gc_cleanup_one_garbage_registration(conn)
+        )
+        if idx_work_done:
+            assert indexer_iid is not None and idx_ns_id is not None
+            garbage_created = _rebind_to_garbage_if_needed(conn, idx_ns_id, indexer_iid)
+            return True, garbage_created
         # Step 1: Find any garbage arena
         cursor = conn.execute(
             """
@@ -1134,7 +1282,8 @@ def run_one_gc_step(conn: sqlite3.Connection) -> tuple[bool, bool]:
             if entity_row is None:
                 # Arena is empty - delete it
                 conn.execute("DELETE FROM arena WHERE id = ?", (arena_id,))
-                logger.debug("Garbage cleanup: deleted empty garbage arena %s", arena_id)
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug("Garbage cleanup: deleted empty garbage arena %s", arena_id)
                 return True, False
 
             # Arena has entities - process one
@@ -1179,19 +1328,21 @@ def run_one_gc_step(conn: sqlite3.Connection) -> tuple[bool, bool]:
                     if _rebind_to_garbage_if_needed(conn, namespace_id, cast(int, dep_id)):
                         garbage_created = True
 
-                logger.debug(
-                    "Garbage cleanup: removed entity %s from namespace %s",
-                    entity_id,
-                    namespace_id,
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Garbage cleanup: removed entity %s from namespace %s",
+                        entity_id,
+                        namespace_id,
+                    )
                 return True, garbage_created
             else:
-                logger.debug(
-                    "Garbage cleanup: removed entity %s from garbage arena %s (still needed"
-                    " elsewhere)",
-                    entity_id,
-                    arena_id,
-                )
+                if logger.isEnabledFor(logging.DEBUG):
+                    logger.debug(
+                        "Garbage cleanup: removed entity %s from garbage arena %s (still needed"
+                        " elsewhere)",
+                        entity_id,
+                        arena_id,
+                    )
                 return True, False
 
         # Step 2: No garbage arenas - clean up orphan garbage sessions (not session 0)
@@ -1208,13 +1359,11 @@ def run_one_gc_step(conn: sqlite3.Connection) -> tuple[bool, bool]:
 
         if row is not None:
             orphan_session_id = row[0]
-            # Manually delete entity reservations before deleting the session
-            conn.execute(
-                "DELETE FROM entity_reservations WHERE session_id = ?",
-                (orphan_session_id,),
-            )
             conn.execute("DELETE FROM session WHERE id = ?", (orphan_session_id,))
-            logger.debug("Garbage cleanup: deleted orphan garbage session %s", orphan_session_id)
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(
+                    "Garbage cleanup: deleted orphan garbage session %s", orphan_session_id
+                )
             return True, False
 
         # No garbage found
@@ -1273,430 +1422,448 @@ def create_arena_with_entities(
         return _create_arena_with_entities(conn, namespace_id, session_id, entity_ids, public_id)
 
 
-def verify_in_namespace_and_add_to_arena(
-    conn: sqlite3.Connection,
-    namespace_id: int,
-    arena_id: int,
-    entity_id: int,
-) -> None:
-    """Verify entity is in namespace, then add to arena.
-
-    Args:
-        conn: sqlite3 connection.
-        namespace_id: The namespace internal ID.
-        arena_id: The arena internal ID.
-        entity_id: The entity internal ID.
-
-    Raises:
-        RuntimeError: If entity not in namespace.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        # Verify entity is in namespace
-        cursor = conn.execute(
-            """
-            SELECT 1 FROM namespace_entity_ownership
-            WHERE namespace_id = ? AND entity_id = ?
-            """,
-            (namespace_id, entity_id),
-        )
-        if cursor.fetchone() is None:
-            raise RuntimeError(f"Entity {entity_id} is not in namespace {namespace_id}")
-
-        # Add to arena
-        conn.execute(
-            "INSERT INTO arena_membership (arena_id, entity_id) VALUES (?, ?)",
-            (arena_id, entity_id),
-        )
-
-
-def remove_from_arena_and_maybe_rebind(
-    conn: sqlite3.Connection,
-    namespace_id: int,
-    arena_id: int,
-    entity_id: int,
-) -> bool:
-    """Remove entity from arena and rebind to garbage if orphaned.
-
-    Args:
-        conn: sqlite3 connection.
-        namespace_id: The namespace internal ID.
-        arena_id: The arena internal ID.
-        entity_id: The entity internal ID.
-
-    Returns:
-        True if garbage was created (entity was rebound to garbage arena),
-        False otherwise.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        # Remove from arena
-        conn.execute(
-            "DELETE FROM arena_membership WHERE arena_id = ? AND entity_id = ?",
-            (arena_id, entity_id),
-        )
-
-        # Rebind to garbage if orphaned
-        return _rebind_to_garbage_if_needed(conn, namespace_id, entity_id)
-
-
-def _add_entity_to_arena_if_not_present(
-    conn: sqlite3.Connection,
-    arena_id: int,
-    entity_id: int,
-) -> None:
-    """Add entity to arena if not already present.
-
-    MUST be called within an existing transaction (internal helper).
-
-    Args:
-        conn: sqlite3 connection (must be in a transaction).
-        arena_id: The arena internal ID.
-        entity_id: The entity internal ID.
-    """
-    conn.execute(
-        """
-        INSERT INTO arena_membership (arena_id, entity_id)
-        VALUES (?, ?)
-        ON CONFLICT (arena_id, entity_id) DO NOTHING
-        """,
-        (arena_id, entity_id),
-    )
-
-
 # =============================================================================
-# Namespace Operations (helpers for copy worklist)
+# Bulk Copy Operations (v2 — batched transactions)
 # =============================================================================
 
 
-def _add_entity_to_namespace_if_needed(
+@dataclasses.dataclass
+class SaveItem:
+    """An entity that needs to be saved to the entity tables during bulk copy."""
+
+    fxtr_id: FxtrID
+    public_id_bytes: bytes
+    cbor_bytes: bytes | None
+    deps: list[tuple[FxtrID, DepKind]]
+    deps_as_bytes: list[tuple[bytes, str]]  # (public_id_bytes, kind_str)
+
+
+def discover_entity_by_public_id(
     conn: sqlite3.Connection,
-    namespace_id: int,
-    entity_id: int,
-) -> None:
-    """Add entity to namespace tables if not already present.
-
-    Checks namespace_entity_ownership, and if not present:
-    - Inserts into namespace_entity_ownership
-    - Copies deps from entity_dep into namespace_entity_backref
-
-    MUST be called within an existing transaction (internal helper).
-
-    Args:
-        conn: sqlite3 connection (must be in a transaction).
-        namespace_id: The namespace internal ID.
-        entity_id: The entity internal ID.
-
-    Raises:
-        RuntimeError: If any dependency is not in the namespace.
-    """
-    # Check if already in namespace
-    cursor = conn.execute(
-        """
-        SELECT 1 FROM namespace_entity_ownership
-        WHERE namespace_id = ? AND entity_id = ?
-        """,
-        (namespace_id, entity_id),
-    )
-    if cursor.fetchone() is not None:
-        return  # Already in namespace
-
-    # Add to ownership
-    conn.execute(
-        "INSERT INTO namespace_entity_ownership (namespace_id, entity_id) VALUES (?, ?)",
-        (namespace_id, entity_id),
-    )
-
-    # Copy deps to backrefs
-    cursor = conn.execute(
-        "SELECT required_id, kind FROM entity_dep WHERE requirer_id = ?",
-        (entity_id,),
-    )
-    for row in cursor.fetchall():
-        required_id, kind = row[0], row[1]
-
-        # Ensure the required_id is actually in the namespace
-        check_cursor = conn.execute(
-            """
-            SELECT 1 FROM namespace_entity_ownership
-            WHERE namespace_id = ? AND entity_id = ?
-            """,
-            (namespace_id, required_id),
-        )
-        if check_cursor.fetchone() is None:
-            raise RuntimeError(
-                f"Internal invariant violation: child ID {required_id} is not in namespace"
-                f" {namespace_id}"
-            )
-
-        # Insert a back reference
-        conn.execute(
-            """
-            INSERT INTO namespace_entity_backref (namespace_id, requirer_id, required_id, kind)
-            VALUES (?, ?, ?, ?)
-            """,
-            (namespace_id, entity_id, required_id, kind),
-        )
-
-
-# =============================================================================
-# Copy Worklist Operations
-# =============================================================================
-
-
-def copy_discover(
-    conn: sqlite3.Connection,
-    session_id: int,
     public_id: bytes,
-) -> tuple[int | None, bool]:
-    """Discover phase: check if entity exists in entity tables.
+) -> int | None:
+    """Check if a committed entity exists in the entity table. Read-only.
 
     Args:
         conn: sqlite3 connection.
-        session_id: The session internal ID (for reservations).
         public_id: The entity's public ID bytes.
 
     Returns:
-        Tuple of (internal_id, found):
-        - If found: (internal_id, True) - reservation added, caller should enqueue TrackDeps.
-        - If not found: (None, False) - caller should fetch from source arena and enqueue Save.
+        The entity's internal ID if found (committed), or None if not found.
     """
-    with transaction(conn, "IMMEDIATE"):
-        cursor = conn.execute(
-            "SELECT id FROM entity WHERE public_id = ?",
-            (public_id,),
-        )
-        row = cursor.fetchone()
-
-        if row is not None:
-            internal_id: int = row[0]
-            _add_entity_reservation(conn, session_id, internal_id)
-            return internal_id, True
-
-        return None, False
+    cursor = conn.execute(
+        "SELECT id FROM entity WHERE public_id = ?",
+        (public_id,),
+    )
+    row = cursor.fetchone()
+    return row[0] if row is not None else None
 
 
-def copy_track_deps(
+def bulk_copy_commit(
     conn: sqlite3.Connection,
-    session_id: int,
     namespace_id: int,
-    temp_arena_id: int,
-    entity_id: int,
-) -> tuple[bool, list[int]]:
-    """TrackDeps phase: check namespace membership, get deps if not in namespace.
-
-    Args:
-        conn: sqlite3 connection.
-        session_id: The session internal ID (for reservations).
-        namespace_id: The namespace internal ID.
-        temp_arena_id: The temporary arena internal ID.
-        entity_id: The entity internal ID.
-
-    Returns:
-        Tuple of (already_in_namespace, dep_internal_ids):
-        - If already in namespace: (True, []) - added to arena, released reservation.
-        - Otherwise: (False, dep_ids) - loaded dep IDs, added reservations for deps.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        # Check if already in namespace
-        cursor = conn.execute(
-            """
-            SELECT 1 FROM namespace_entity_ownership
-            WHERE namespace_id = ? AND entity_id = ?
-            """,
-            (namespace_id, entity_id),
-        )
-        if cursor.fetchone() is not None:
-            # Already in namespace, add to arena (with ON CONFLICT DO NOTHING)
-            _add_entity_to_arena_if_not_present(conn, temp_arena_id, entity_id)
-            # Release the reservation
-            _release_entity_reservation(conn, session_id, entity_id)
-            return True, []
-
-        # Load deps from entity_dep table (just internal IDs)
-        cursor = conn.execute(
-            "SELECT required_id FROM entity_dep WHERE requirer_id = ?",
-            (entity_id,),
-        )
-        dep_internal_ids: list[int] = [cast(int, row[0]) for row in cursor.fetchall()]
-
-        # Reserve all deps
-        for dep_internal_id in dep_internal_ids:
-            _add_entity_reservation(conn, session_id, dep_internal_id)
-
-        return False, dep_internal_ids
-
-
-def copy_save(
-    conn: sqlite3.Connection,
+    arena_public_id: bytes,
     session_id: int,
-    public_id: bytes,
-    storage_location: str,
-    cbor_bytes: bytes | None,
-    deps: list[tuple[bytes, str]],
-) -> int:
-    """Save phase: insert entity into entity tables.
+    root_public_id_bytes: bytes,
+    preexisting: dict[bytes, int],
+    save_queue: list[SaveItem],
+    segment_manager: Any,
+    segments_dir: str,
+    max_segment_size: int = 512 * 1024 * 1024,
+) -> tuple[dict[bytes, int], int]:
+    """Execute the big commit: save entities to segment files, add to namespace/arena.
+
+    Single IMMEDIATE transaction that allocates entity IDs on the fly, writes blobs
+    to the active segment file, and uses a recursive CTE to bulk-add reachable
+    entities to the namespace and arena.
+
+    Crash safety: segment data is flushed to disk (fdatasync/F_FULLFSYNC) before the
+    SQLite transaction commits. If a crash occurs between flush and commit, startup
+    crash recovery truncates the segment to the committed write_cursor.
 
     Args:
         conn: sqlite3 connection.
-        session_id: The session internal ID (for reservations).
-        public_id: The entity's public ID bytes.
-        storage_location: Either "here" or "none".
-        cbor_bytes: The CBOR data to store, or None for non-content nodes.
-        deps: List of (dep_public_id, kind) tuples.
+        namespace_id: The namespace internal ID.
+        arena_public_id: The arena's public UUID as bytes.
+        session_id: The session internal ID.
+        root_public_id_bytes: The root entity's public ID bytes (to resolve root internal_id).
+        preexisting: Map of public_id_bytes -> internal_id for preexisting entities.
+        save_queue: Topologically ordered list of SaveItem objects (deps first).
+        segment_manager: SegmentManager instance for reading existing blobs.
+        segments_dir: Path to the segments directory.
+        max_segment_size: Soft limit for segment rotation (default 512 MB).
 
     Returns:
-        The entity's internal ID.
+        Tuple of (resolved, arena_id) where resolved is the map of
+        public_id_bytes -> internal_id for all entities.
     """
-    with transaction(conn, "IMMEDIATE"):
-        # Re-check: concurrent process might have saved it
-        cursor = conn.execute(
-            "SELECT id FROM entity WHERE public_id = ?",
-            (public_id,),
-        )
-        row = cursor.fetchone()
+    import fcntl
 
-        if row is not None:
-            internal_id = row[0]
-        else:
-            # Insert entity
+    from fxtr2.data.sqlite_store.entity_blob import (
+        build_closed_precomp_map_for_segments,
+        encode_blob,
+    )
+    from fxtr2.data.sqlite_store.segment_io import append_record, flush_segment
+
+    # Acquire write lock (released when fd is closed)
+    lock_path = os.path.join(segments_dir, "write.lock")
+    lock_fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o644)
+    try:
+        fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+        with transaction(conn, "IMMEDIATE"):
+            # Read active segment info
             cursor = conn.execute(
-                "INSERT INTO entity (public_id, storage_location) VALUES (?, ?)",
-                (public_id, storage_location),
+                "SELECT segment_id, write_cursor FROM segment_metadata "
+                "WHERE status = 'active' LIMIT 1"
             )
-            internal_id = cursor.lastrowid
-            assert internal_id is not None
+            row = cursor.fetchone()
+            assert row is not None, "No active segment found"
+            active_seg_id: int = row[0]
+            write_cursor: int = row[1]
 
-            # Insert entity data if applicable
-            if cbor_bytes is not None:
-                conn.execute(
-                    "INSERT INTO stored_entity_data (entity_id, data) VALUES (?, ?)",
-                    (internal_id, cbor_bytes),
-                )
+            # Open segment file and seek to write_cursor
+            seg_path = segment_manager.segment_path(active_seg_id)
+            seg_fd = os.open(seg_path, os.O_CREAT | os.O_RDWR, 0o644)
+            try:
+                os.lseek(seg_fd, write_cursor, os.SEEK_SET)
 
-            # Insert deps - need to look up internal IDs from public IDs
-            for dep_public_id, dep_kind in deps:
+                # Create arena
                 cursor = conn.execute(
-                    "SELECT id FROM entity WHERE public_id = ?",
-                    (dep_public_id,),
+                    "INSERT INTO arena (public_id, namespace_id, session_id) VALUES (?, ?, ?)",
+                    (arena_public_id, namespace_id, session_id),
                 )
-                dep_row = cursor.fetchone()
-                assert dep_row is not None, f"Dep with public_id not found in entity table"
-                dep_internal_id = dep_row[0]
+                arena_id = cursor.lastrowid
+                assert arena_id is not None
 
+                # Pre-fetch segment locations for preexisting deps
+                preexisting_seg_locs: dict[int, tuple[int, int, int]] = {}
+                preexisting_ids = list(preexisting.values())
+                if preexisting_ids:
+                    if len(preexisting_ids) <= _JSON_EACH_THRESHOLD:
+                        placeholders = ",".join("?" * len(preexisting_ids))
+                        cursor = conn.execute(
+                            f"SELECT id, seg_id, seg_offset, seg_length FROM entity "
+                            f"WHERE id IN ({placeholders})",
+                            preexisting_ids,
+                        )
+                    else:
+                        cursor = conn.execute(
+                            "SELECT id, seg_id, seg_offset, seg_length FROM entity"
+                            " WHERE id IN (SELECT value FROM json_each(?))",
+                            (json.dumps(preexisting_ids),),
+                        )
+                    for r in cursor.fetchall():
+                        if r[1] is not None:
+                            preexisting_seg_locs[r[0]] = (r[1], r[2], r[3])
+
+                resolved: dict[bytes, int] = dict(preexisting)
+                precomp_cache: dict[int, dict[int, list]] = {}
+                # Track (internal_id -> offset) for same-batch/segment dep resolution
+                batch_offsets: dict[int, int] = {}
+
+                def read_blob(dep_internal_id: int) -> tuple[bytes, bool]:
+                    """Read a dep's blob and report whether it's in the same segment.
+
+                    Returns (blob_bytes, same_segment). same_segment is True when the
+                    dep lives in active_seg_id, letting the caller know inherited
+                    precomp offsets are valid.
+
+                    For same-batch deps, this reads from the active segment file via a
+                    separate O_RDONLY fd (through segment_manager) while we're writing
+                    to the same file through the O_RDWR seg_fd. This works because
+                    os.pread() sees the current file contents via the OS page cache —
+                    unlike LMDB, there's no MVCC snapshot isolation between fds.
+                    """
+                    # Same-batch: already written to this segment
+                    if dep_internal_id in batch_offsets:
+                        dep_offset = batch_offsets[dep_internal_id]
+                        blob = segment_manager.read_record_at(active_seg_id, dep_offset)
+                        return blob, True
+                    # Preexisting: known segment location
+                    if dep_internal_id in preexisting_seg_locs:
+                        sid, off, length = preexisting_seg_locs[dep_internal_id]
+                        blob = segment_manager.read_record(sid, off, length)
+                        return blob, sid == active_seg_id
+                    raise ValueError(
+                        f"Dependency with internal_id {dep_internal_id} "
+                        "not found in batch or preexisting segments"
+                    )
+
+                # Process save queue
+                for item in save_queue:
+                    # Race check: has someone else committed this entity?
+                    cursor = conn.execute(
+                        "SELECT id FROM entity WHERE public_id = ? AND public_id IS NOT NULL",
+                        (item.public_id_bytes,),
+                    )
+                    row = cursor.fetchone()
+
+                    if row is not None:
+                        # Raced — use winner's ID
+                        winner_id = row[0]
+                        resolved[item.public_id_bytes] = winner_id
+                        # Fetch segment location so read_blob can find this dep later
+                        if winner_id not in preexisting_seg_locs:
+                            loc_row = conn.execute(
+                                "SELECT seg_id, seg_offset, seg_length FROM entity WHERE id = ?",
+                                (winner_id,),
+                            ).fetchone()
+                            if loc_row is not None and loc_row[0] is not None:
+                                preexisting_seg_locs[winner_id] = (
+                                    loc_row[0],
+                                    loc_row[1],
+                                    loc_row[2],
+                                )
+                        continue
+
+                    # Allocate ID on the fly
+                    cursor = conn.execute(
+                        "INSERT INTO entity (public_id, storage_location) "
+                        "VALUES (?, 'data2/seg')",
+                        (item.public_id_bytes,),
+                    )
+                    internal_id = cursor.lastrowid
+                    assert internal_id is not None
+
+                    # Resolve dep internal IDs
+                    deps_internal: list[tuple[int, str]] = [
+                        (resolved[dep_pub_id], kind) for dep_pub_id, kind in item.deps_as_bytes
+                    ]
+
+                    # Build own precomp entry (5 elements with seg_offset placeholder)
+                    unwraps_to = None
+                    ctx_node = None
+                    backstep = None
+                    for dep_iid, dep_kind in deps_internal:
+                        if dep_kind == "unwraps_to":
+                            unwraps_to = dep_iid
+                        elif dep_kind == "ctx_node":
+                            ctx_node = dep_iid
+                        elif dep_kind == "backstep":
+                            backstep = dep_iid
+
+                    # 5th element: seg_offset will be filled after append
+                    own_precomp_entry: list = [
+                        item.public_id_bytes,
+                        unwraps_to,
+                        ctx_node,
+                        backstep,
+                        None,
+                    ]
+
+                    # Build closed precomp map (read_blob handles cross-segment offset clearing)
+                    precomp_map = build_closed_precomp_map_for_segments(
+                        internal_id,
+                        own_precomp_entry,
+                        deps_internal,
+                        precomp_cache,
+                        read_blob,
+                    )
+
+                    # Fill in same-batch offsets for deps written earlier in this commit
+                    for iid, entry in precomp_map.items():
+                        if len(entry) >= 5 and iid in batch_offsets:
+                            entry[4] = batch_offsets[iid]
+
+                    # Build metadata and encode blob
+                    metadata = {
+                        "deps": [[iid, kind] for iid, kind in deps_internal],
+                        "precomp": precomp_map,
+                    }
+                    blob = encode_blob(item.public_id_bytes, item.cbor_bytes, metadata)
+
+                    # Append to segment file
+                    offset, length = append_record(seg_fd, blob)
+
+                    # Update own precomp entry's seg_offset now that we know it.
+                    # Note: this mutates the list in precomp_map (same object), but the
+                    # blob was already encoded above with seg_offset=None for the own
+                    # entry. The persisted blob always has None for the entity's own
+                    # seg_offset. This in-memory update only benefits later entities in
+                    # the same batch that reference this one via precomp_cache.
+                    own_precomp_entry[4] = offset
+
+                    # Fill in seg_id/seg_offset/seg_length on the entity row
+                    conn.execute(
+                        "UPDATE entity SET seg_id = ?, seg_offset = ?, seg_length = ? "
+                        "WHERE id = ?",
+                        (active_seg_id, offset, length, internal_id),
+                    )
+
+                    # Insert entity_dep rows
+                    if deps_internal:
+                        conn.executemany(
+                            "INSERT INTO entity_dep "
+                            "(requirer_id, required_id, kind) VALUES (?, ?, ?)",
+                            [
+                                (internal_id, dep_iid, dep_kind)
+                                for dep_iid, dep_kind in deps_internal
+                            ],
+                        )
+
+                    resolved[item.public_id_bytes] = internal_id
+                    precomp_cache[internal_id] = precomp_map
+                    batch_offsets[internal_id] = offset
+
+                # Flush segment to disk before SQLite commits
+                flush_segment(seg_fd)
+
+                # Update write_cursor
+                new_cursor = os.lseek(seg_fd, 0, os.SEEK_CUR)
                 conn.execute(
-                    "INSERT INTO entity_dep (requirer_id, required_id, kind) VALUES (?, ?, ?)",
-                    (internal_id, dep_internal_id, dep_kind),
+                    "UPDATE segment_metadata SET write_cursor = ? WHERE segment_id = ?",
+                    (new_cursor, active_seg_id),
                 )
 
-        # Add reservation
-        _add_entity_reservation(conn, session_id, internal_id)
+                # Segment rotation check
+                if new_cursor > max_segment_size:
+                    conn.execute(
+                        "UPDATE segment_metadata SET status = 'sealed' " "WHERE segment_id = ?",
+                        (active_seg_id,),
+                    )
+                    new_seg_id = active_seg_id + 1
+                    now = datetime.now(timezone.utc)
+                    conn.execute(
+                        "INSERT INTO segment_metadata "
+                        "(segment_id, status, write_cursor, created_at) "
+                        "VALUES (?, 'active', 0, ?)",
+                        (new_seg_id, now.isoformat()),
+                    )
+                    new_seg_path = segment_manager.segment_path(new_seg_id)
+                    new_fd = os.open(new_seg_path, os.O_CREAT | os.O_RDWR, 0o644)
+                    os.close(new_fd)
 
-        return internal_id
+            finally:
+                os.close(seg_fd)
+
+            # CTE for namespace + arena membership
+            root_iid = resolved[root_public_id_bytes]
+            _bulk_add_namespace_and_arena_via_cte(conn, namespace_id, arena_id, root_iid)
+
+            # SQLite COMMIT happens here (transaction context manager exit)
+
+    finally:
+        os.close(lock_fd)
+
+    return resolved, arena_id
 
 
-def copy_track(
+def bulk_copy_commit_preexisting_only(
     conn: sqlite3.Connection,
-    session_id: int,
     namespace_id: int,
-    arena_id: int,
-    entity_id: int,
-) -> None:
-    """Track phase: add entity to namespace and arena.
+    arena_public_id: bytes,
+    session_id: int,
+    root_internal_id: int,
+) -> int:
+    """Fast path: all entities preexist, just create arena and add to namespace.
+
+    Creates an arena and uses the recursive CTE to add all reachable entities
+    to the namespace and arena.
 
     Args:
         conn: sqlite3 connection.
-        session_id: The session internal ID (for reservations).
         namespace_id: The namespace internal ID.
-        arena_id: The arena internal ID.
-        entity_id: The entity internal ID.
-    """
-    with transaction(conn, "IMMEDIATE"):
-        _add_entity_to_namespace_if_needed(conn, namespace_id, entity_id)
-        # Add to arena
-        conn.execute(
-            "INSERT INTO arena_membership (arena_id, entity_id) VALUES (?, ?)",
-            (arena_id, entity_id),
-        )
-        # Release reservation
-        _release_entity_reservation(conn, session_id, entity_id)
-
-
-# =============================================================================
-# Precomputed Data Loading
-# =============================================================================
-
-
-def load_precomp_data_for_entities(
-    conn: sqlite3.Connection,
-    initial_entity_ids: list[int],
-    sync_dep_kinds: list[str],
-) -> tuple[dict[int, bytes], dict[int, list[tuple[int, str]]]]:
-    """Load precomputed data for entities and their transitive sync deps.
-
-    Iteratively expands frontier to include all transitively-reachable entities
-    via the specified dep kinds.
-
-    Args:
-        conn: sqlite3 connection.
-        initial_entity_ids: List of entity internal IDs to start from.
-        sync_dep_kinds: List of dep kind strings to follow (e.g., ["ctx_node", "backstep", "unwraps_to"]).
+        arena_public_id: The arena's public UUID as bytes.
+        session_id: The session internal ID.
+        root_internal_id: The root entity's internal ID.
 
     Returns:
-        Tuple of (id_to_public_id, id_to_deps) where:
-        - id_to_public_id: mapping from internal ID to public ID bytes
-        - id_to_deps: mapping from internal ID to list of (required_id, kind) tuples
+        The arena internal ID.
     """
-    with transaction(conn, "DEFERRED"):
-        id_to_public_id: dict[int, bytes] = {}
-        id_to_deps: dict[int, list[tuple[int, str]]] = {}
-        frontier: set[int] = set(initial_entity_ids)
+    with transaction(conn, "IMMEDIATE"):
+        # Create arena
+        cursor = conn.execute(
+            "INSERT INTO arena (public_id, namespace_id, session_id) VALUES (?, ?, ?)",
+            (arena_public_id, namespace_id, session_id),
+        )
+        arena_id = cursor.lastrowid
+        assert arena_id is not None
 
-        while frontier:
-            # Convert frontier to JSON array for constant SQL
-            frontier_list = list(frontier)
-            frontier_json = json.dumps(frontier_list)
-            sync_dep_kinds_json = json.dumps(sync_dep_kinds)
+        # Use CTE to add to namespace and arena
+        _bulk_add_namespace_and_arena_via_cte(conn, namespace_id, arena_id, root_internal_id)
 
-            # Step 1: Fetch public IDs for internal IDs we haven't seen yet
-            cursor = conn.execute(
-                """SELECT e.id, e.public_id FROM entity e
-                   WHERE e.id IN (SELECT value FROM json_each(?))""",
-                (frontier_json,),
-            )
-            for row in cursor.fetchall():
-                internal_id = cast(int, row[0])
-                pub_id = cast(bytes, row[1])
-                id_to_public_id[internal_id] = bytes(pub_id)
-                if internal_id not in id_to_deps:
-                    id_to_deps[internal_id] = []
+    return arena_id
 
-            # Step 2: Fetch deps for the frontier
-            cursor = conn.execute(
-                """SELECT ed.requirer_id, ed.required_id, ed.kind
-                   FROM entity_dep ed
-                   WHERE ed.requirer_id IN (SELECT value FROM json_each(?))
-                     AND ed.kind IN (SELECT value FROM json_each(?))""",
-                (frontier_json, sync_dep_kinds_json),
-            )
-            dep_rows = cursor.fetchall()
 
-            # Clear frontier, will be repopulated with new internal IDs we discover
-            frontier = set()
+def _bulk_add_namespace_and_arena_via_cte(
+    conn: sqlite3.Connection,
+    namespace_id: int,
+    arena_id: int,
+    root_internal_id: int,
+) -> None:
+    """Use recursive CTE to add all reachable entities to namespace, and root to arena.
 
-            for row in dep_rows:
-                requirer_id = cast(int, row[0])
-                required_id = cast(int, row[1])
-                kind = cast(str, row[2])
-                # Store the dep
-                if requirer_id not in id_to_deps:
-                    id_to_deps[requirer_id] = []
-                id_to_deps[requirer_id].append((required_id, kind))
+    Walks entity_dep from the root entity, finds all transitively-reachable entities,
+    and bulk-adds any not yet in the namespace. Only adds the root entity to the arena
+    (the arena is temporary and only needs to hold the root).
 
-                # If we haven't seen this required_id, add to frontier for next iteration
-                if required_id not in id_to_public_id:
-                    frontier.add(required_id)
+    MUST be called within an existing transaction (internal helper).
 
-        return id_to_public_id, id_to_deps
+    Args:
+        conn: sqlite3 connection (must be in a transaction).
+        namespace_id: The namespace internal ID.
+        arena_id: The arena internal ID.
+        root_internal_id: The root entity's internal ID.
+    """
+    # Find reachable entities not yet in namespace (CTE inlined into temp table creation)
+    conn.execute(
+        """
+        CREATE TEMP TABLE _bulk_ns_add AS
+        WITH RECURSIVE reachable(entity_id) AS (
+            SELECT ?
+            UNION
+            SELECT ed.required_id
+            FROM entity_dep ed
+            JOIN reachable ON ed.requirer_id = reachable.entity_id
+        )
+        SELECT entity_id FROM reachable
+        WHERE NOT EXISTS (
+            SELECT 1 FROM namespace_entity_ownership
+            WHERE namespace_id = ? AND entity_id = reachable.entity_id
+        )
+        """,
+        (root_internal_id, namespace_id),
+    )
 
+    # Bulk add to namespace_entity_ownership
+    conn.execute(
+        """
+        INSERT INTO namespace_entity_ownership (namespace_id, entity_id)
+        SELECT ?, entity_id FROM _bulk_ns_add
+        """,
+        (namespace_id,),
+    )
+
+    # Bulk add backrefs for newly-added namespace entities
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO namespace_entity_backref
+            (namespace_id, requirer_id, required_id, kind)
+        SELECT ?, ed.requirer_id, ed.required_id, ed.kind
+        FROM entity_dep ed
+        WHERE ed.requirer_id IN (SELECT entity_id FROM _bulk_ns_add)
+        """,
+        (namespace_id,),
+    )
+
+    # Add only the root entity to the arena (arena is temporary, only needs root)
+    conn.execute(
+        "INSERT INTO arena_membership (arena_id, entity_id) VALUES (?, ?)",
+        (arena_id, root_internal_id),
+    )
+
+    # Cleanup temp table
+    conn.execute("DROP TABLE _bulk_ns_add")
+
+
+# =============================================================================
+# Precomputed Data Loading (REMOVED IN V4)
+# =============================================================================
+
+# Note: load_precomp_data_for_entities has been removed in v4.
+# Entity data and precomputed metadata are now read from segment files
+# in SQLiteNamespaceArena (see _load_into_tracked method).
 
 # =============================================================================
 # Backref Queries
@@ -1782,286 +1949,74 @@ def get_backrefs_for_entity(
 
 
 # =============================================================================
-# Entity Load Operation (internal helper)
+# Read-only Arena Operations (no DB arena creation)
 # =============================================================================
 
 
-def _load_cbor_and_create_children(
+def retrieve_pinned_entity(
     conn: sqlite3.Connection,
-    fxtr_id: FxtrID,
-    internal_id: int,
     namespace_id: int,
-) -> FxtrCbor:
-    """Load entity data, creating child entities in entity tables for p/u nodes.
+    pin_name: str,
+) -> tuple[int, bytes, int, int, int]:
+    """Look up a pin and return the entity's internal ID, public ID, and segment location.
 
-    For d/n nodes, simply fetches and deserializes the stored CBOR.
-    For p/u nodes, loads the underlying data and creates wrapped child entities.
-
-    Does NOT handle namespace or arena membership - caller does that.
-
-    MUST be called within an existing transaction (internal helper).
+    Read-only operation — does not create a DB arena.
 
     Args:
-        conn: sqlite3 connection (must be in a transaction).
-        fxtr_id: The FxtrID of the entity to load.
-        internal_id: The internal ID of the entity.
-        namespace_id: The namespace internal ID (needed for child lookups).
+        conn: sqlite3 connection.
+        namespace_id: The namespace internal ID.
+        pin_name: The name of the pin to look up.
 
     Returns:
-        The (possibly transformed) FxtrCbor data.
-    """
-    tag = fxtr_id.get_tag()
+        Tuple of (entity_internal_id, entity_public_id, seg_id, seg_offset, seg_length).
 
-    if tag in ("d", "n"):
-        # Simple case: fetch from stored_entity_data and deserialize
+    Raises:
+        KeyError: If no pin with that name exists.
+    """
+    with transaction(conn, "DEFERRED"):
         cursor = conn.execute(
-            "SELECT data FROM stored_entity_data WHERE entity_id = ?",
-            (internal_id,),
+            """
+            SELECT np.entity_id, e.public_id, e.seg_id, e.seg_offset, e.seg_length
+            FROM namespace_pin np
+            JOIN entity e ON np.entity_id = e.id
+            WHERE np.namespace_id = ? AND np.name = ?
+            """,
+            (namespace_id, pin_name),
         )
         row = cursor.fetchone()
         if row is None:
-            raise ValueError(f"No stored data for entity {fxtr_id}")
-        return entity_core.fxtr_cbor_loads(bytes(row[0]))
+            raise KeyError(f"No pin named {pin_name!r} in namespace")
 
-    elif tag == "p":
-        # P-node: load underlying data, wrap children as new p-nodes
-        # Get deps: CTX_NODE and UNWRAPS_TO
-        cursor = conn.execute(
-            "SELECT kind, required_id FROM entity_dep WHERE requirer_id = ?",
-            (internal_id,),
-        )
-        deps = {cast(str, row[0]): cast(int, row[1]) for row in cursor.fetchall()}
-        ctx_node_internal = deps.get("ctx_node")
-        unwraps_to_internal = deps.get("unwraps_to")
-        assert ctx_node_internal is not None
-        assert unwraps_to_internal is not None
-
-        # Get the unwraps_to FxtrID
-        cursor = conn.execute(
-            "SELECT public_id FROM entity WHERE id = ?",
-            (unwraps_to_internal,),
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        unwraps_to_fxtr_id = FxtrID(raw_data_id=bytes(row[0]))
-
-        # Recursively load the underlying data
-        underlying_data = _load_cbor_and_create_children(
-            conn, unwraps_to_fxtr_id, unwraps_to_internal, namespace_id
+        return (
+            cast(int, row[0]),
+            bytes(row[1]),
+            cast(int, row[2]),
+            cast(int, row[3]),
+            cast(int, row[4]),
         )
 
-        # Extract path from current p-node
-        _, payload = fxtr_id.split_tag_and_payload()
-        current_path = cbor2.loads(payload)
-        assert isinstance(current_path, list)
 
-        # Counter for child index
-        child_counter = 0
-
-        def transform_p_child(
-            typed_id: RawWeakFxtrID | RawStrongFxtrID | RawFxtrEntityMarkerID,
-        ) -> FxtrID:
-            nonlocal child_counter
-            child_fxtr_id = typed_id.inner_id
-            new_path = current_path + [child_counter]
-            child_counter += 1
-            new_p_id = FxtrID.from_tag_and_payload("p", cbor2.dumps(new_path))
-
-            # Check if new p-node already exists
-            cursor = conn.execute(
-                "SELECT id FROM entity WHERE public_id = ?",
-                (new_p_id._raw_data_id,),
-            )
-            existing = cursor.fetchone()
-
-            if existing is None:
-                # Get internal ID of the child we're wrapping
-                cursor = conn.execute(
-                    "SELECT id FROM entity WHERE public_id = ?",
-                    (child_fxtr_id._raw_data_id,),
-                )
-                child_row = cursor.fetchone()
-                assert child_row is not None
-                child_internal = cast(int, child_row[0])
-
-                # Create new p-node entity
-                cursor = conn.execute(
-                    "INSERT INTO entity (public_id, storage_location) VALUES (?, 'none')",
-                    (new_p_id._raw_data_id,),
-                )
-                new_internal = cursor.lastrowid
-                assert new_internal is not None
-
-                # Insert deps: CTX_NODE, UNWRAPS_TO, and optionally BACKSTEP
-                conn.execute(
-                    "INSERT INTO entity_dep (requirer_id, required_id, kind) VALUES (?, ?,"
-                    " 'ctx_node')",
-                    (new_internal, ctx_node_internal),
-                )
-                conn.execute(
-                    "INSERT INTO entity_dep (requirer_id, required_id, kind) VALUES (?, ?,"
-                    " 'unwraps_to')",
-                    (new_internal, child_internal),
-                )
-                if isinstance(typed_id, RawFxtrEntityMarkerID):
-                    # Marker node: add BACKSTEP to parent
-                    conn.execute(
-                        "INSERT INTO entity_dep (requirer_id, required_id, kind) VALUES (?, ?,"
-                        " 'backstep')",
-                        (new_internal, internal_id),
-                    )
-
-            return new_p_id
-
-        return visit_and_project_ids_in_canonical_cbor_order(underlying_data, transform_p_child)
-
-    elif tag == "u":
-        # U-node: load underlying data, wrap children as new u-nodes
-        # Get UNWRAPS_TO dep
-        cursor = conn.execute(
-            "SELECT required_id FROM entity_dep WHERE requirer_id = ? AND kind = 'unwraps_to'",
-            (internal_id,),
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        unwraps_to_internal = cast(int, row[0])
-
-        # Get the unwraps_to FxtrID
-        cursor = conn.execute(
-            "SELECT public_id FROM entity WHERE id = ?",
-            (unwraps_to_internal,),
-        )
-        row = cursor.fetchone()
-        assert row is not None
-        unwraps_to_fxtr_id = FxtrID(raw_data_id=bytes(row[0]))
-
-        # Recursively load the underlying data
-        underlying_data = _load_cbor_and_create_children(
-            conn, unwraps_to_fxtr_id, unwraps_to_internal, namespace_id
-        )
-
-        def transform_u_child(
-            typed_id: RawWeakFxtrID | RawStrongFxtrID | RawFxtrEntityMarkerID,
-        ) -> FxtrID:
-            child_fxtr_id = typed_id.inner_id
-            new_u_id = FxtrID.from_tag_and_payload("u", child_fxtr_id._raw_data_id)
-
-            # Check if new u-node already exists
-            cursor = conn.execute(
-                "SELECT id FROM entity WHERE public_id = ?",
-                (new_u_id._raw_data_id,),
-            )
-            existing = cursor.fetchone()
-
-            if existing is None:
-                # Get internal ID of the child we're wrapping
-                cursor = conn.execute(
-                    "SELECT id FROM entity WHERE public_id = ?",
-                    (child_fxtr_id._raw_data_id,),
-                )
-                child_row = cursor.fetchone()
-                assert child_row is not None
-                child_internal = cast(int, child_row[0])
-
-                # Create new u-node entity
-                cursor = conn.execute(
-                    "INSERT INTO entity (public_id, storage_location) VALUES (?, 'none')",
-                    (new_u_id._raw_data_id,),
-                )
-                new_internal = cursor.lastrowid
-                assert new_internal is not None
-
-                # Insert UNWRAPS_TO dep
-                conn.execute(
-                    "INSERT INTO entity_dep (requirer_id, required_id, kind) VALUES (?, ?,"
-                    " 'unwraps_to')",
-                    (new_internal, child_internal),
-                )
-
-            return new_u_id
-
-        return visit_and_project_ids_in_canonical_cbor_order(underlying_data, transform_u_child)
-
-    else:
-        raise ValueError(f"Cannot load contentless node type: {tag}")
-
-
-def load_and_add_children_to_arena(
+def lookup_entity_in_namespace(
     conn: sqlite3.Connection,
-    fxtr_id: FxtrID,
-    internal_id: int,
     namespace_id: int,
-    arena_id: int,
-) -> tuple[FxtrCbor, list[int]]:
-    """Load entity data and add all children to namespace and arena.
-
-    Args:
-        conn: sqlite3 connection.
-        fxtr_id: The FxtrID of the entity to load.
-        internal_id: The internal ID of the entity.
-        namespace_id: The namespace internal ID.
-        arena_id: The arena internal ID.
-
-    Returns:
-        Tuple of (data, child_internal_ids) where:
-        - data: The loaded (possibly transformed) FxtrCbor data
-        - child_internal_ids: List of internal IDs of children to load precomp data for
-    """
-    # Import locally
-    from fxtr2.data.arena_util import visit_ids
-
-    with transaction(conn, "IMMEDIATE"):
-        # Load data (creates child entities in entity tables for p/u nodes)
-        data = _load_cbor_and_create_children(conn, fxtr_id, internal_id, namespace_id)
-
-        # Extract child IDs from returned data
-        child_ids: list[FxtrID] = []
-        visit_ids(data, lambda tid: child_ids.append(tid.inner_id))
-
-        # Add children to namespace and arena
-        child_internal_ids: list[int] = []
-        for child_id in child_ids:
-            # Look up internal ID
-            cursor = conn.execute(
-                "SELECT id FROM entity WHERE public_id = ?",
-                (child_id._raw_data_id,),
-            )
-            row = cursor.fetchone()
-            assert row is not None, f"Child {child_id} not found in entity table"
-            child_internal = cast(int, row[0])
-            child_internal_ids.append(child_internal)
-
-            # Add to namespace if needed
-            _add_entity_to_namespace_if_needed(conn, namespace_id, child_internal)
-
-            # Add to arena membership (with ON CONFLICT DO NOTHING)
-            _add_entity_to_arena_if_not_present(conn, arena_id, child_internal)
-
-        return data, child_internal_ids
-
-
-def lookup_and_add_to_arena(
-    conn: sqlite3.Connection,
     entity_public_id: bytes,
-    namespace_id: int,
-    arena_id: int,
-) -> int | None:
-    """Look up an entity in namespace and add to arena if found.
+) -> tuple[int, int, int, int] | None:
+    """Look up an entity in namespace by public ID.
+
+    Read-only operation — does not create a DB arena.
 
     Args:
         conn: sqlite3 connection.
-        entity_public_id: The entity's public ID bytes.
         namespace_id: The namespace internal ID.
-        arena_id: The arena internal ID.
+        entity_public_id: The entity's public ID bytes.
 
     Returns:
-        The entity's internal ID if found and added, None if not found.
+        Tuple of (internal_id, seg_id, seg_offset, seg_length) if found, None otherwise.
     """
-    with transaction(conn, "IMMEDIATE"):
-        # Look up entity by public_id and check if it's in this namespace
+    with transaction(conn, "DEFERRED"):
         cursor = conn.execute(
             """
-            SELECT e.id
+            SELECT e.id, e.seg_id, e.seg_offset, e.seg_length
             FROM entity e
             JOIN namespace_entity_ownership neo ON e.id = neo.entity_id
             WHERE e.public_id = ? AND neo.namespace_id = ?
@@ -2071,10 +2026,43 @@ def lookup_and_add_to_arena(
         row = cursor.fetchone()
         if row is None:
             return None
+        return cast(int, row[0]), cast(int, row[1]), cast(int, row[2]), cast(int, row[3])
 
-        entity_internal_id: int = cast(int, row[0])
 
-        # Add to arena
-        _add_entity_to_arena_if_not_present(conn, arena_id, entity_internal_id)
+def fetch_entity_segment_locations(
+    conn: sqlite3.Connection,
+    internal_ids: list[int],
+) -> dict[int, tuple[int, int, int]]:
+    """Batch-fetch segment locations for a list of entity internal IDs.
 
-        return entity_internal_id
+    Args:
+        conn: sqlite3 connection.
+        internal_ids: List of entity internal IDs.
+
+    Returns:
+        Dict mapping internal_id -> (seg_id, seg_offset, seg_length).
+    """
+    if not internal_ids:
+        return {}
+
+    with transaction(conn, "DEFERRED"):
+        if len(internal_ids) <= _JSON_EACH_THRESHOLD:
+            placeholders = ",".join("?" for _ in internal_ids)
+            cursor = conn.execute(
+                f"SELECT id, seg_id, seg_offset, seg_length FROM entity WHERE id IN ({placeholders})",
+                internal_ids,
+            )
+        else:
+            cursor = conn.execute(
+                "SELECT id, seg_id, seg_offset, seg_length FROM entity"
+                " WHERE id IN (SELECT value FROM json_each(?))",
+                (json.dumps(internal_ids),),
+            )
+        return {
+            cast(int, row[0]): (cast(int, row[1]), cast(int, row[2]), cast(int, row[3]))
+            for row in cursor
+        }
+
+
+# Note: load_entity_cbor_and_children and load_entity_flat have been removed in v4.
+# Entity data is now read from segment files in SQLiteNamespaceArena.

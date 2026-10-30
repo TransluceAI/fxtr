@@ -5,8 +5,10 @@ import hashlib
 import pytest
 
 from fxtr2.data.entity_core import (
+    DuplicateEntityMarkerError,
     FxtrCbor,
     FxtrID,
+    InvalidEntityError,
     RawFxtrEntityMarkerID,
     RawStrongFxtrID,
     RawWeakFxtrID,
@@ -170,12 +172,17 @@ class TestFxtrIDStringSerialization:
         parsed = FxtrID.from_id_string(s)
         assert fid == parsed
 
-    def test_id_string_with_provenance_parent(self):
-        """id_string() includes @provenance_part."""
+    def test_id_string_excludes_provenance_by_default(self):
+        """id_string() excludes provenance by default."""
         parent = FxtrID.builtin("parent")
         fid = FxtrID.from_tag_and_payload(".", b"", provenance_parent=parent)
-        s = fid.id_string()
-        assert "@" in s
+        assert fid.id_string() == "."
+
+    def test_id_string_with_provenance_opt_in(self):
+        """id_string(include_provenance=True) includes @provenance_part."""
+        parent = FxtrID.builtin("parent")
+        fid = FxtrID.from_tag_and_payload(".", b"", provenance_parent=parent)
+        s = fid.id_string(include_provenance=True)
         assert s == ".@!parent"
 
     def test_from_id_string_with_provenance(self):
@@ -184,6 +191,14 @@ class TestFxtrIDStringSerialization:
         assert fid.get_tag() == "."
         assert fid._provenance_parent is not None
         assert fid._provenance_parent.get_tag() == "!"
+
+    def test_from_id_string_allow_provenance_false_rejects_at_form(self):
+        """allow_provenance=False rejects the @-form (for bare-id wire slots)."""
+        with pytest.raises(ValueError, match="allow_provenance"):
+            FxtrID.from_id_string(".@!parent", allow_provenance=False)
+        # A bare id still parses fine under allow_provenance=False.
+        bare = FxtrID.from_id_string(".", allow_provenance=False)
+        assert bare.get_tag() == "." and bare._provenance_parent is None
 
     def test_from_id_string_empty_raises(self):
         """Empty string raises ValueError."""
@@ -449,19 +464,19 @@ class TestCborMarkerCheck:
         assert encoded is not None
 
     def test_marker_check_non_dict_raises(self):
-        """Non-dict raises ValueError."""
-        with pytest.raises(ValueError, match="dictionary"):
+        """Non-dict raises InvalidEntityError."""
+        with pytest.raises(InvalidEntityError, match="dictionary"):
             fxtr_cbor_dumps_with_marker_check([1, 2, 3])  # type: ignore
 
     def test_marker_check_missing_ctx_raises(self):
-        """Missing $fxtr.ctx raises ValueError."""
-        with pytest.raises(ValueError, match="\\$fxtr.ctx"):
+        """Missing $fxtr.ctx raises InvalidEntityError."""
+        with pytest.raises(InvalidEntityError, match="\\$fxtr.ctx"):
             fxtr_cbor_dumps_with_marker_check({"data": "test"})
 
     def test_marker_check_wrong_ctx_type_raises(self):
-        """Wrong type for $fxtr.ctx raises ValueError."""
+        """Wrong type for $fxtr.ctx raises InvalidEntityError."""
         ground = FxtrID.from_tag_and_payload(".", b"")
-        with pytest.raises(ValueError, match="RawFxtrEntityMarkerID"):
+        with pytest.raises(InvalidEntityError, match="RawFxtrEntityMarkerID"):
             fxtr_cbor_dumps_with_marker_check(
                 {
                     "$fxtr.ctx": RawWeakFxtrID(inner_id=ground),  # Wrong type
@@ -470,9 +485,9 @@ class TestCborMarkerCheck:
             )
 
     def test_marker_check_multiple_markers_raises(self):
-        """Multiple RawFxtrEntityMarkerID raises ValueError."""
+        """Multiple RawFxtrEntityMarkerID raises DuplicateEntityMarkerError."""
         ground = FxtrID.from_tag_and_payload(".", b"")
-        with pytest.raises(ValueError, match="more than one"):
+        with pytest.raises(DuplicateEntityMarkerError, match="more than one"):
             fxtr_cbor_dumps_with_marker_check(
                 {
                     "$fxtr.ctx": RawFxtrEntityMarkerID(inner_id=ground),
@@ -534,19 +549,30 @@ class TestLiftToProvenance:
 # =============================================================================
 
 
-class TestFxtrIDRepr:
-    """Tests for FxtrID string representation."""
+class TestFxtrIDStrAndRepr:
+    """Tests for FxtrID __str__ and __repr__."""
 
-    def test_repr_ground_node(self):
-        """repr for ground node."""
-        fid = FxtrID.from_tag_and_payload(".", b"")
-        r = repr(fid)
-        assert "FxtrID" in r
-        assert "." in r
+    def test_str_returns_full_id_string(self):
+        """str() returns the full id_string, usable in f-strings for pins etc."""
+        hash_bytes = hashlib.sha256(b"test data").digest()
+        fid = FxtrID.from_tag_and_payload("d", hash_bytes)
+        assert str(fid) == fid.id_string()
+        assert "<" not in f"transcripts/{fid}"
 
-    def test_repr_with_provenance(self):
-        """repr includes provenance info."""
+    def test_str_excludes_provenance(self):
+        """str() does not include provenance info."""
         parent = FxtrID.builtin("parent")
         fid = FxtrID.from_tag_and_payload(".", b"", provenance_parent=parent)
+        assert str(fid) == "."
+        assert "@" not in str(fid)
+
+    def test_repr_is_short_and_includes_provenance(self):
+        """repr uses the short summary form and includes provenance."""
+        parent = FxtrID.builtin("parent")
+        hash_bytes = hashlib.sha256(b"test data").digest()
+        fid = FxtrID.from_tag_and_payload("d", hash_bytes, provenance_parent=parent)
         r = repr(fid)
+        assert r == f"<FxtrID {fid.summary(include_provenance=True)}>"
         assert "@" in r
+        # repr is shorter than str due to truncation
+        assert len(fid.summary()) < len(str(fid))

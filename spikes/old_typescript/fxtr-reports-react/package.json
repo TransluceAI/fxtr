@@ -1,0 +1,27 @@
+{
+	"name": "@fxtr/reports-react",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.ts",
+			"types": "./src/index.ts"
+		}
+	},
+	"peerDependencies": {
+		"react": ">=18",
+		"react-dom": ">=18"
+	},
+	"dependencies": {
+		"@fxtr/core": "workspace:*",
+		"@fxtr/react": "workspace:*",
+		"@fxtr/react-dispatch": "workspace:*"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0"
+	}
+}

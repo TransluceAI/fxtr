@@ -1,0 +1,30 @@
+{
+	"name": "@fxtr-ui/workstation",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.ts",
+			"types": "./src/index.ts"
+		}
+	},
+	"peerDependencies": {
+		"react": ">=18"
+	},
+	"dependencies": {
+		"@fxtr-ui/core": "workspace:*",
+		"@fxtr-ui/panel-viewer": "workspace:*",
+		"@fxtr-ui/react-dispatch": "workspace:*",
+		"@fxtr-ui/state-util": "workspace:*",
+		"@fxtr-ui/connector-workstation": "workspace:*",
+		"@fxtr-ui/workstation-dispatch": "workspace:*",
+		"dockview": "^4.13.1",
+		"jotai": "^2.10.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"react": "^19.0.0",
+		"vitest": "^3.0.0"
+	}
+}

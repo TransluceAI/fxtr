@@ -363,7 +363,7 @@ Flushing writes dirty sqlite state back to TSV files. Can happen:
 - Explicitly via `flush()` method
 - Automatically on GitNamespaceBackend close
 - Automatically after K seconds since last write (configurable, via background task)
-- Via CLI `flush-to-git` command
+- Via CLI `flush-to-tsv` command
 
 The flush uses a **callback-based API** that handles the RESTART loop internally:
 
@@ -442,9 +442,9 @@ FullSync():
 └── 3. Mark store as consistent (or inconsistent if entities missing)
 ```
 
-### CLI: flush-to-git (Force Flush)
+### CLI: flush-to-tsv (Force Flush)
 
-The `flush-to-git` command forcefully flushes all dirty TSVs:
+The `flush-to-tsv` command forcefully flushes all dirty TSVs:
 
 ```
 force_flush(tsv_path, dump_fn: Callable) -> FlushResult:
@@ -456,7 +456,7 @@ force_flush(tsv_path, dump_fn: Callable) -> FlushResult:
 │   └── Returns COMPLETE or NO_MARK (lost mark to another force-flusher)
 └── 4. Return result
 
-flush-to-git command:
+flush-to-tsv command:
 ├── 1. Scan for and delete orphaned temp directories (*.fxtr.tsv.dirty.removing-*)
 ├── 2. Scan for all *.fxtr.tsv.dirty directories
 ├── 3. For each dirty TSV: force_flush(tsv_path, dump_fn)
@@ -754,7 +754,7 @@ class GitNamespaceBackend(PersistentPinningBackend, ObservableStore):
         """Sync ALL dirty TSVs to git, regardless of who wrote them.
 
         This writes sqlite state to TSV files and removes all dirty marks.
-        Used by CLI 'flush-to-git' command to prepare for commits/branch switches.
+        Used by CLI 'flush-to-tsv' command to prepare for commits/branch switches.
         Other managers will need to re-claim dirty marks on their next write.
         """
         ...
@@ -1135,11 +1135,11 @@ fxtr-git-store init [--reserved-prefix PREFIX] PATH
 
 # Sync TSV files into sqlite (git -> sqlite)
 # Use after checkout/pull to pre-warm the sqlite store
-fxtr-git-store sync-from-git PATH
+fxtr-git-store sync-from-tsv PATH
 
 # Flush all dirty TSVs to disk (sqlite -> git)
 # Use before committing or switching branches
-fxtr-git-store flush-to-git PATH
+fxtr-git-store flush-to-tsv PATH
 
 # Export current state to archive (flushes first)
 fxtr-git-store export PATH OUTPUT_FILE
@@ -1156,13 +1156,13 @@ fxtr-git-store status PATH
 
 **Notes:**
 
-`sync-from-git`:
+`sync-from-tsv`:
 - Reads all clean TSV files and syncs them to sqlite
 - Skips dirty TSVs (sqlite is already authoritative for those)
 - Use after `git checkout` or `git pull` to pre-warm sqlite
 - Makes subsequent `GitNamespaceBackend.open()` fast (no sync needed)
 
-`flush-to-git`:
+`flush-to-tsv`:
 - Writes sqlite state to TSV files, removes all dirty marks
 - Use before `git commit` or `git checkout` to ensure TSVs are up to date
 - Recovers from crashed processes that left stale dirty marks
@@ -1529,7 +1529,7 @@ Each phase includes implementation, tests, and documentation. At the end of each
 - [x] 4.4 Implement flush operations (callback-based)
   - Use sync.flush_tsv_to_disk
   - `flush(defer_to_other_writers)`: flush all TSVs we have dirty marks for
-  - `full_sync_state_to_git()`: force flush ALL dirty TSVs (for CLI flush-to-git)
+  - `full_sync_state_to_git()`: force flush ALL dirty TSVs (for CLI flush-to-tsv)
     - Acquire dirty marks on each, then force flush each
 
 - [x] 4.5 Implement export/import
@@ -1580,7 +1580,7 @@ Each phase includes implementation, tests, and documentation. At the end of each
 
 - [x] 5.1 Create `cli/git_store_cli.py`
   - Use `typer` for CLI framework
-  - Implement commands: init, sync-from-git, flush-to-git, export, import, list, status
+  - Implement commands: init, sync-from-tsv, flush-to-tsv, export, import, list, status
   - Add help text and examples
   - Add comprehensive docstrings
 
@@ -1650,13 +1650,13 @@ Each phase includes implementation, tests, and documentation. At the end of each
 - **Batching**: Multiple pins can be written to sqlite, then flushed once
 - **Concurrent access**: Multiple processes can write to the same TSV via sqlite
 - **Visibility**: Dirty directories warn against committing mid-write state
-- **Recovery**: `flush-to-git` CLI can recover from crashed processes
+- **Recovery**: `flush-to-tsv` CLI can recover from crashed processes
 
 ### Why not gitignore the dirty directories?
 
 - They serve as a warning that the TSV is out of date
 - If committed, the `DO_NOT_COMMIT_WHILE_THIS_FILE_EXISTS.md` message alerts reviewers
-- Ensures users run `flush-to-git` before committing
+- Ensures users run `flush-to-tsv` before committing
 
 ## Future Extensions
 
@@ -1664,8 +1664,8 @@ These are NOT part of this implementation but inform the design:
 
 1. **Remote arena sync**: Custom git protocol to push/pull entity data alongside git packs
 2. **Custom merge driver**: Automatically sort TSV files on merge
-3. **Pre-commit hook**: Run `flush-to-git` automatically, warn about dirty directories
-4. **Pre-checkout hook**: Run `flush-to-git` before branch switches to avoid data loss
+3. **Pre-commit hook**: Run `flush-to-tsv` automatically, warn about dirty directories
+4. **Pre-checkout hook**: Run `flush-to-tsv` before branch switches to avoid data loss
 5. **Git LFS-like smudge/clean**: Alternative approach using git filters
 
 ## Open Questions / Uncertainties
@@ -1756,13 +1756,13 @@ These are NOT part of this implementation but inform the design:
 
 1. **Recursive TSV scanning**: Scan all subdirectories under the store root. No exclusion mechanism for now; can add later if needed.
 
-2. **Concurrent git operations**: What if `git checkout` runs while a process has dirty marks? The TSV changes from git will be overwritten on flush. Document that users should `flush-to-git` before branch switches. Future: pre-checkout hook.
+2. **Concurrent git operations**: What if `git checkout` runs while a process has dirty marks? The TSV changes from git will be overwritten on flush. Document that users should `flush-to-tsv` before branch switches. Future: pre-checkout hook.
 
 3. **Large number of TSV files**: Dirty mark system helps here - only need to sync clean TSVs, and dirty TSVs are read directly from sqlite.
 
 4. **TSV file atomicity**: Yes, use write to temp file then rename for atomic updates.
 
-5. **Stale dirty marks from crashed processes**: The `flush-to-git` CLI command handles cleanup. Could also add detection of likely-stale marks (e.g., PID no longer exists) as a warning.
+5. **Stale dirty marks from crashed processes**: The `flush-to-tsv` CLI command handles cleanup. Could also add detection of likely-stale marks (e.g., PID no longer exists) as a warning.
 
 6. **Auto-flush timing**: Configurable on GitNamespaceBackend (default 10 seconds). Background task runs periodically and flushes dirty TSVs with `defer_to_other_writers=True`.
 
@@ -1791,7 +1791,7 @@ Integration tests will need temporary git repositories. Use pytest fixtures in `
 
 **Problem:** If a process crashes after renaming the dirty dir to temp location but before deleting it, or if deletion fails, orphaned `*.removing-{uuid}` directories are left behind.
 
-**Resolution:** The `flush-to-git` CLI command should scan for and clean up these orphaned temp directories as part of its operation.
+**Resolution:** The `flush-to-tsv` CLI command should scan for and clean up these orphaned temp directories as part of its operation.
 
 ### Clarifications
 

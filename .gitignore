@@ -6,6 +6,13 @@
 .DS_Store
 # *.sql  (neil: disabled for ursid)
 *.gz
+*.tgz
+
+# Terraform
+*.tfstate
+*.tfstate.backup
+*/.terraform/
+*/*.terraform.*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
@@ -128,6 +135,8 @@ celerybeat.pid
 
 # Environments
 .env
+.env.*
+!.env.template
 .venv
 env/
 venv/
@@ -176,5 +185,15 @@ cython_debug/
 **/.yarn/
 **/.pnp.*
 **/node_modules/
+**/.next/
+**/next-env.d.ts
+**/bun.lock
 
-personal/lijie/robust_latentqa/test2.ipynb
+*.swp
+package-lock.json
+personal/
+
+# Claude Code session artifacts
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+.claude/worktrees/

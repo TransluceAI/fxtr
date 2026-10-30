@@ -10,13 +10,13 @@ This plan refactors the fxtr-thingwatcher integration code from `fxtr2/ui/` to `
 
 Based on discussion:
 - **Module path**: `thingwatcher/fxtr/` - short and matches the product name
-- **Tests**: Move to `extras/thingwatcher/tests/test_fxtr/`
+- **Tests**: Move to `spikes/thingwatcher/tests/test_fxtr/`
 - **Backwards compatibility**: No stub needed in fxtr2 (code hasn't been released)
-- **Demo name**: `extras/thingwatcher/examples/demo_fxtr/`
+- **Demo name**: `spikes/thingwatcher/examples/demo_fxtr/`
 
 ## Changes Summary
 
-### In thingwatcher (`extras/thingwatcher/`)
+### In thingwatcher (`spikes/thingwatcher/`)
 
 1. Add fxtr2 as an unconditional dependency
 2. Create `thingwatcher/fxtr/` module with all integration code
@@ -35,7 +35,7 @@ Based on discussion:
 ## New Module Structure
 
 ```
-extras/thingwatcher/
+spikes/thingwatcher/
 ├── thingwatcher/
 │   ├── fxtr/                    # NEW: fxtr integration module
 │   │   ├── __init__.py          # Re-exports public API
@@ -108,7 +108,7 @@ from thingwatcher.fxtr import fxtr_namespace_view, register_fxtr_renderer
 
 ### Phase 1: Set up thingwatcher infrastructure
 
-- [x] 1. Add fxtr2 dependency to `extras/thingwatcher/pyproject.toml`
+- [x] 1. Add fxtr2 dependency to `spikes/thingwatcher/pyproject.toml`
 - [x] 2. Create `thingwatcher/fxtr/` directory structure
 - [x] 3. Copy files from `fxtr2/ui/` to `thingwatcher/fxtr/`:
   - [x] `__init__.py`
@@ -151,7 +151,7 @@ from thingwatcher.fxtr import fxtr_namespace_view, register_fxtr_renderer
 
 ### Phase 5: Update documentation
 
-- [x] 19. Update `extras/thingwatcher/CODE_OVERVIEW.md`:
+- [x] 19. Update `spikes/thingwatcher/CODE_OVERVIEW.md`:
   - [x] Add fxtr/ module to directory structure
   - [x] Add fxtr module documentation section
   - [x] Update test count
@@ -168,7 +168,7 @@ from thingwatcher.fxtr import fxtr_namespace_view, register_fxtr_renderer
 
 After implementation, verify:
 
-1. **Unit tests pass**: `uv run pytest` in both `extras/thingwatcher/` and `v2/`
+1. **Unit tests pass**: `uv run pytest` in both `spikes/thingwatcher/` and `v2/`
 2. **Demo works**: Run `uv run python examples/demo_fxtr/demo.py` from thingwatcher
 3. **Imports work**: Verify both import styles work:
    ```python

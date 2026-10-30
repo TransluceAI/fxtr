@@ -1,0 +1,10 @@
+{
+  "name": "mcp-plugin-spike",
+  "version": "0.0.1",
+  "description": "Prototype plugin: bundled FastMCP server that schedules delayed messages and delivers them via the claude/channel notification.",
+  "channels": [
+    {
+      "server": "scheduler"
+    }
+  ]
+}

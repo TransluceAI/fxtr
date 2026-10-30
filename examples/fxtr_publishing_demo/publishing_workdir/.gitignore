@@ -1,0 +1,11 @@
+# Local repo entity store (the by-id blob backing store seeded by seed_data.py).
+# Not tracked: the served bytes reach a build via the manager's rehost, and the
+# committed *.fxtr.tsv namespace view + fod_lock.toml are the git-tracked surface.
+.fxtr/
+
+# Build / venv artifacts.
+.venv/
+result
+result-*
+__pycache__/
+*.pyc

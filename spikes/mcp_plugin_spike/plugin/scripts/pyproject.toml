@@ -1,0 +1,50 @@
+[project]
+name = "scheduler-mcp"
+version = "0.0.1"
+description = "Bundled FastMCP server for the mcp-plugin-spike Claude Code plugin."
+# Bumped to >=3.14 because we depend on fxtr2 (full flavor on the host) which
+# uses 3.12+ language features and is paired with eryx's CPython 3.14 in WASM.
+requires-python = ">=3.14"
+# Dep stack:
+#   mcp        — FastMCP server.
+#   fxtr2      — host-side fxtr2 (full flavor; sandbox uses fxtr2-portable
+#                separately, baked into the SandboxFactory).
+#   fxtr-sandboxing — direct_launcher, runner, prepare, build_site_packages.
+# fxtr-sandbox-types is pulled transitively via fxtr-sandboxing.
+dependencies = [
+    "mcp>=1.2",
+    "fxtr2",
+    "fxtr-sandboxing",
+]
+
+[project.scripts]
+scheduler-mcp = "scheduler_mcp.server:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    # pytest-anyio (not pytest-asyncio): pytest-asyncio runs each fixture
+    # phase in its own asyncio.Task, which trips anyio.create_task_group's
+    # cross-task cancel-scope guard when a long-lived task group is opened
+    # in a fixture setup and torn down in fixture teardown — exactly what
+    # `lifespan()` does. pytest-anyio drives setup/test/teardown in one
+    # task per test, matching how the lifespan runs in production.
+    "pytest-anyio",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["scheduler_mcp", "_fxtr_mcp_runner"]
+
+# Path deps into the monorepo. Locks scheduler-mcp to its in-tree
+# location during the spike — when this graduates we'll publish wheels
+# and remove these.
+[tool.uv.sources]
+fxtr2 = { path = "../../../../v2", editable = true }
+fxtr-sandboxing = { path = "../../../../projects/fxtr_sandboxing/fxtr_sandboxing", editable = true }
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

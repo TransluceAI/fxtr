@@ -1,0 +1,17 @@
+# Runtime config written by the MCP plugin (from .fxtr_workstation.toml.example);
+# not part of the committed flake, so keep it out of the tree current_commit()
+# and retrieve_nix_entity build from.
+.fxtr_workstation.toml
+
+# nix build stderr dumps + any stray `nix build` result symlinks.
+.tmp_outputs/
+result
+result-*
+
+# Local venvs / Python caches.
+.venv/
+__pycache__/
+
+# The repo entity store (local backing storage, minted on demand by the
+# fxtr_nix_runner manager the MCP / serve drive — not part of the committed flake).
+.fxtr/

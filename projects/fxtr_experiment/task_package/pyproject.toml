@@ -1,0 +1,47 @@
+# The task-side half of fxtr_experiment: the runtime a sandbox guest
+# installs to serve a task fn (`task_adapter.TaskFnAdapter`, the view
+# runtime, the view calculus, the wire types).
+#
+# It exists as its own distribution so a guest can install it WITHOUT the
+# runner side — the state db / ops engine / executor / sandbox host
+# machinery, which drag in sqlite and (via the launcher) the whole podman/
+# eryx stack. The runner package (`fxtr-experiment`, the project root)
+# depends on this one with `[frames]`; imports only ever run
+# runner -> task, never back — structurally, since a guest installs this
+# dist alone and the runner dist simply is not there.
+#
+# polars sits behind the `[frames]` extra because it is the one heavy,
+# not-everywhere-available dependency here (no wasm wheel), and only frame
+# ops need it: `tables.py` is the sole eager-polars module, and every
+# task-side import of it is function-local. An entity-only guest installs
+# without the extra.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fxtr-experiment-task"
+version = "0.0.1a0"
+description = "Task-side runtime for fxtr_experiment: the view calculus, view runtime, and task-fn adapter"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+    "frozendict>=2.4.6",
+    "mashumaro>=3.17",
+]
+
+[project.optional-dependencies]
+# The frame runtime (`tables.py`) and nothing else. Guests whose task fns
+# read/write dataframe cells or declare frame outputs need it; entity-only
+# guests do not (the `binding_taskfn` test fixture is the worked example).
+frames = ["polars>=1.42.1"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["fxtr_experiment_task"]
+
+# Present so the dist also resolves standalone (e.g. `uv build` here, or a
+# guest workdir that path-deps this directory directly). Consumers that
+# install it transitively must declare their own entries: uv honors only
+# the root project's sources.
+[tool.uv.sources]
+fxtr2 = { path = "../../../v2", editable = true }

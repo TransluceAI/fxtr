@@ -8,10 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from fxtr2.data import entity_serdes, system_entities
+from fxtr2.conversion.converters.mashumaro_entities import DataclassEntity
+from fxtr2.data import system_entities
 from fxtr2.data.entity_core import FxtrID
+from fxtr2.data.entity_ref_scope import ACTIVE_SCOPE, EntityRef, FxtrScope
 from fxtr2.data.fxtr_context_api import SQLiteFxtrNamespace
-from fxtr2.data.fxtr_scope import ACTIVE_SCOPE, FxtrScope
 
 pytestmark = pytest.mark.anyio
 
@@ -24,7 +25,7 @@ tydef_uuid = uuid.UUID("a1b2c3d4-e5f6-7890-abcd-ef1234567890")
 
 @dataclasses.dataclass(frozen=True)
 class SampleEntity(
-    entity_serdes.DataclassEntity,
+    DataclassEntity,
     fxtr_type=system_entities.define_type(tydef_uuid, "context_api_test_entity"),
 ):
     """Simple test entity for namespace tests."""
@@ -37,13 +38,41 @@ tydef_uuid2 = uuid.UUID("b2c3d4e5-f678-90ab-cdef-123456789012")
 
 @dataclasses.dataclass(frozen=True)
 class SampleEntityWithRef(
-    entity_serdes.DataclassEntity,
+    DataclassEntity,
     fxtr_type=system_entities.define_type(tydef_uuid2, "context_api_test_entity_with_ref"),
 ):
     """Test entity that contains a reference to another entity."""
 
     name: str
-    child: entity_serdes.EntityRef[SampleEntity]
+    child: EntityRef[SampleEntity]
+
+
+tydef_uuid3 = uuid.UUID("c3d4e5f6-7890-abcd-ef12-345678901234")
+
+
+@dataclasses.dataclass(frozen=True)
+class SampleOuterEntity(
+    DataclassEntity,
+    fxtr_type=system_entities.define_type(tydef_uuid3, "context_api_test_outer_entity"),
+):
+    """Test entity that wraps a SampleEntityWithRef (3-level chain)."""
+
+    label: str
+    middle: EntityRef[SampleEntityWithRef]
+
+
+tydef_uuid4 = uuid.UUID("d4e5f678-90ab-cdef-1234-567890123456")
+
+
+@dataclasses.dataclass(frozen=True)
+class SampleOutermostEntity(
+    DataclassEntity,
+    fxtr_type=system_entities.define_type(tydef_uuid4, "context_api_test_outermost_entity"),
+):
+    """Test entity that wraps a SampleOuterEntity (4-level chain)."""
+
+    tag: str
+    outer: EntityRef[SampleOuterEntity]
 
 
 # =============================================================================
@@ -129,7 +158,7 @@ class TestSQLiteFxtrNamespacePin:
 
             pins = await ns.list_pins()
             assert "mykey" in pins
-            assert pins["mykey"] == ref.ref
+            assert pins["mykey"] == ref.entity_id
 
     async def test_pin_fxtr_id(self, tmp_db_url: str):
         """Can pin a raw FxtrID."""
@@ -137,11 +166,11 @@ class TestSQLiteFxtrNamespacePin:
         async with ns:
             entity = SampleEntity(value="test_value")
             ref = entity.store()
-            await ns.pin("mykey", ref.ref)
+            await ns.pin("mykey", ref.entity_id)
 
             pins = await ns.list_pins()
             assert "mykey" in pins
-            assert pins["mykey"] == ref.ref
+            assert pins["mykey"] == ref.entity_id
 
     async def test_pin_overwrite_false_raises(self, tmp_db_url: str):
         """Pin with overwrite=False raises KeyError on duplicate."""
@@ -167,7 +196,7 @@ class TestSQLiteFxtrNamespacePin:
             await ns.pin("mykey", ref2, overwrite=True)
 
             pins = await ns.list_pins()
-            assert pins["mykey"] == ref2.ref
+            assert pins["mykey"] == ref2.entity_id
 
     async def test_pin_with_explicit_scope(self, tmp_db_url: str):
         """Can pin with an explicit scope parameter."""
@@ -190,7 +219,7 @@ class TestSQLiteFxtrNamespacePin:
         async with ns:
             # Create a fake ID that isn't tracked
             fake_id = FxtrID.builtin("nonexistent_entity")
-            with pytest.raises(ValueError, match="not tracked"):
+            with pytest.raises(ValueError, match="Could not find entity"):
                 await ns.pin("mykey", fake_id)
 
 
@@ -240,7 +269,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
 
             result = await ns.retrieve("mykey")
             assert isinstance(result, FxtrID)
-            assert result == ref.ref
+            assert result == ref.entity_id
 
     async def test_retrieve_with_type_returns_entity_ref(self, tmp_db_url: str):
         """Retrieve with type returns EntityRef[T]."""
@@ -251,7 +280,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
             await ns.pin("mykey", ref)
 
             result = await ns.retrieve("mykey", SampleEntity)
-            assert isinstance(result, entity_serdes.EntityRef)
+            assert isinstance(result, EntityRef)
             loaded = await result.load()
             assert loaded.value == "test"
 
@@ -272,7 +301,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
 
             # Retrieve into the namespace's own scope explicitly
             result = await ns.retrieve("mykey", SampleEntity, into_scope=ns.scope)
-            assert ns.scope.is_tracked(result.ref)
+            assert ns.scope.is_tracked(result.entity_id)
 
     async def test_retrieve_into_child_scope_with_lift(self, tmp_db_url: str):
         """Retrieve into child scope with copy_into_scope=False (lift)."""
@@ -286,7 +315,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
             async with FxtrScope(name="child") as child_scope:
                 # Retrieve into child scope via lift (default)
                 result = await ns.retrieve("mykey", SampleEntity, into_scope=child_scope)
-                assert child_scope.is_tracked(result.ref)
+                assert child_scope.is_tracked(result.entity_id)
 
                 # Should be loadable from child scope
                 loaded = await result.load()
@@ -303,10 +332,40 @@ class TestSQLiteFxtrNamespaceRetrieve:
                 await ns.pin("mykey", ref)
 
                 # Try to retrieve into isolated scope without copying - should fail
-                with pytest.raises(ValueError, match="not a child of scope"):
+                with pytest.raises(
+                    ValueError, match="not allowed without copy_into_scope=True"
+                ) as exc_info:
                     await ns.retrieve(
                         "mykey", SampleEntity, into_scope=isolated_scope, copy_into_scope=False
                     )
+                msg = str(exc_info.value)
+                # Verify all substitutions in the INTO_PROVIDED_SCOPE template
+                assert "SQLiteFxtrNamespace.retrieve" in msg
+                assert repr(isolated_scope) in msg
+                # Non-isolated namespace → block_instruction = "Call"
+                assert "Call `retrieve` inside" in msg
+                assert "Re-open the namespace" not in msg
+
+    async def test_retrieve_into_non_child_scope_without_copy_raises_isolated(
+        self, tmp_db_url: str, local_fxtr_scope: FxtrScope
+    ):
+        """Same as above but with isolate_scope=True → different block_instruction."""
+        async with FxtrScope(name="isolated", isolated=True) as isolated_scope:
+            ns = SQLiteFxtrNamespace(tmp_db_url, "test_ns", isolate_scope=True)
+            async with ns:
+                entity = SampleEntity(value="test")
+                ref = entity.store()
+                await ns.pin("mykey", ref)
+
+                with pytest.raises(ValueError) as exc_info:
+                    await ns.retrieve(
+                        "mykey", SampleEntity, into_scope=isolated_scope, copy_into_scope=False
+                    )
+                msg = str(exc_info.value)
+                assert "SQLiteFxtrNamespace.retrieve" in msg
+                assert repr(isolated_scope) in msg
+                # Isolated namespace → block_instruction mentions re-opening
+                assert "Re-open the namespace with isolate_scope=False and call" in msg
 
     async def test_retrieve_into_non_child_scope_with_copy(self, tmp_db_url: str):
         """Retrieve into non-child scope with copy_into_scope=True works."""
@@ -322,7 +381,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
                 result = await ns.retrieve(
                     "mykey", SampleEntity, into_scope=isolated_scope, copy_into_scope=True
                 )
-                assert isolated_scope.is_tracked(result.ref)
+                assert isolated_scope.is_tracked(result.entity_id)
 
                 # Should be loadable from isolated scope
                 loaded = await result.load(isolated_scope)
@@ -342,8 +401,43 @@ class TestSQLiteFxtrNamespaceRetrieve:
 
             # Active scope (local_fxtr_scope) is NOT a child of namespace scope (isolated)
             # Retrieve without copy_into_scope should fail
-            with pytest.raises(ValueError, match="not.+child"):
+            with pytest.raises(
+                ValueError, match="not allowed in this scope by default"
+            ) as exc_info:
                 await ns.retrieve("mykey", SampleEntity)
+            msg = str(exc_info.value)
+            # Verify all substitutions in the INTO_ACTIVE_SCOPE template
+            assert "SQLiteFxtrNamespace.retrieve" in msg
+            # Isolated namespace → block_instruction mentions re-opening
+            assert "Re-open the namespace with isolate_scope=False and call" in msg
+
+    async def test_retrieve_active_scope_not_child_without_copy_raises_non_isolated(
+        self,
+        tmp_db_url: str,
+        local_fxtr_scope: FxtrScope,
+    ):
+        """Same as above but with isolate_scope=False → different block_instruction.
+
+        Non-isolated namespaces set their scope as the active scope on entry, so we
+        need to use as_active_scope() on a separate scope to override the active scope
+        to one that doesn't include the namespace scope.
+        """
+        ns = SQLiteFxtrNamespace(tmp_db_url, "test_ns", isolate_scope=False)
+        async with ns:
+            entity = SampleEntity(value="test")
+            ref = entity.store()
+            await ns.pin("mykey", ref)
+
+            # Enter a separate isolated scope and make it the active scope
+            async with FxtrScope(name="separate", isolated=True) as separate:
+                with separate.as_active_scope():
+                    with pytest.raises(ValueError) as exc_info:
+                        await ns.retrieve("mykey", SampleEntity)
+                    msg = str(exc_info.value)
+                    assert "SQLiteFxtrNamespace.retrieve" in msg
+                    # Non-isolated namespace → block_instruction = "Call"
+                    assert "Call `retrieve` inside" in msg
+                    assert "Re-open the namespace" not in msg
 
     async def test_retrieve_active_scope_not_child_with_copy_works(
         self, tmp_db_url: str, local_fxtr_scope: FxtrScope
@@ -360,7 +454,7 @@ class TestSQLiteFxtrNamespaceRetrieve:
             # Active scope (local_fxtr_scope) is NOT a child of namespace scope (isolated)
             # Retrieve with copy_into_scope=True should work
             result = await ns.retrieve("mykey", SampleEntity, copy_into_scope=True)
-            assert ACTIVE_SCOPE.get().is_tracked(result.ref)
+            assert ACTIVE_SCOPE.get().is_tracked(result.entity_id)
 
             loaded = await result.load()
             assert loaded.value == "test"
@@ -384,7 +478,7 @@ class TestSQLiteFxtrNamespaceTryRetrieve:
 
             result = await ns.try_retrieve("mykey")
             assert isinstance(result, FxtrID)
-            assert result == ref.ref
+            assert result == ref.entity_id
 
     async def test_try_retrieve_found_returns_entity_ref(self, tmp_db_url: str):
         """try_retrieve returns EntityRef when found (with type)."""
@@ -396,7 +490,7 @@ class TestSQLiteFxtrNamespaceTryRetrieve:
 
             result = await ns.try_retrieve("mykey", SampleEntity)
             assert result is not None
-            assert isinstance(result, entity_serdes.EntityRef)
+            assert isinstance(result, EntityRef)
             loaded = await result.load()
             assert loaded.value == "test"
 
@@ -425,7 +519,7 @@ class TestSQLiteFxtrNamespaceTryRetrieve:
             async with FxtrScope(name="child") as child_scope:
                 result = await ns.try_retrieve("mykey", SampleEntity, into_scope=child_scope)
                 assert result is not None
-                assert child_scope.is_tracked(result.ref)
+                assert child_scope.is_tracked(result.entity_id)
 
     async def test_try_retrieve_into_non_child_scope_with_copy(self, tmp_db_url: str):
         """try_retrieve into non-child scope with copy works."""
@@ -440,7 +534,7 @@ class TestSQLiteFxtrNamespaceTryRetrieve:
                     "mykey", SampleEntity, into_scope=isolated_scope, copy_into_scope=True
                 )
                 assert result is not None
-                assert isolated_scope.is_tracked(result.ref)
+                assert isolated_scope.is_tracked(result.entity_id)
 
 
 # =============================================================================
@@ -472,8 +566,8 @@ class TestSQLiteFxtrNamespaceListPins:
 
             pins = await ns.list_pins()
             assert len(pins) == 2
-            assert pins["key1"] == ref1.ref
-            assert pins["key2"] == ref2.ref
+            assert pins["key1"] == ref1.entity_id
+            assert pins["key2"] == ref2.entity_id
 
     async def test_list_pins_with_prefix(self, tmp_db_url: str):
         """list_pins with prefix filters results."""
@@ -574,7 +668,7 @@ class TestSQLiteFxtrNamespaceWithReferences:
                 result = await ns.retrieve(
                     "parent_key", SampleEntityWithRef, into_scope=child_scope
                 )
-                assert child_scope.is_tracked(result.ref)
+                assert child_scope.is_tracked(result.entity_id)
 
                 # Load and verify
                 loaded = await result.load()
@@ -582,3 +676,116 @@ class TestSQLiteFxtrNamespaceWithReferences:
 
                 loaded_child = await loaded.child.load()
                 assert loaded_child.value == "child_value"
+
+
+# =============================================================================
+# Cross-Segment Read Tests
+# =============================================================================
+
+
+class TestCrossSegmentReads:
+    """Tests for reading entities that span multiple segment files."""
+
+    async def test_load_transitive_ref_across_segments(self, tmp_db_url: str):
+        """Loading a transitive dep across segments works via load_flat path.
+
+        Currently passes because load_flat does not use the fast path for the
+        loaded entity's own precomp entries. Once the fast path is enabled in
+        load_flat, this test should also be protected by the write-path fix.
+
+        3-level chain: inner (SampleEntity) -> middle (SampleEntityWithRef) -> outer (SampleOuterEntity)
+
+        Session 1 writes inner + middle to segment 0. Middle's precomp has
+        inner with seg_offset=X (valid in segment 0). Segment 0 is sealed.
+
+        Session 2 writes outer to segment 1. Outer inherits middle's precomp,
+        including inner -> seg_offset=X. But X is an offset in segment 0.
+
+        Session 3 loads outer from segment 1 -> read path caches inner's
+        location as (seg_id=1, X, None). Loading middle -> loading inner
+        reads from segment 1 at offset X -> garbage -> MemoryError.
+        """
+        # Session 1: pin middle (which refs inner) -> both in segment 0, seals it
+        ns1 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns1:
+            inner = SampleEntity(value="inner_value")
+            middle = SampleEntityWithRef(name="middle", child=inner.store())
+            await ns1.pin("middle_key", middle)
+
+        # Session 2: pin outer referencing middle -> outer goes to segment 1
+        ns2 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns2:
+            middle_ref = await ns2.retrieve("middle_key", SampleEntityWithRef)
+            outer = SampleOuterEntity(label="outer", middle=middle_ref)
+            await ns2.pin("outer_key", outer)
+
+        # Session 3: fresh arena — retrieve outer and chase refs down
+        ns3 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns3:
+            result = await ns3.retrieve("outer_key", SampleOuterEntity)
+            loaded_outer = await result.load()
+            assert loaded_outer.label == "outer"
+
+            # Load middle through outer's ref
+            loaded_middle = await loaded_outer.middle.load()
+            assert loaded_middle.name == "middle"
+
+            # Load inner through middle's ref — this triggers the bug:
+            # inner's location was cached as (seg_id=1, stale_offset) from
+            # outer's inherited precomp, but inner is actually in segment 0.
+            loaded_inner = await loaded_middle.child.load()
+            assert loaded_inner.value == "inner_value"
+
+    async def test_load_into_tracked_corrupts_cache_via_stale_precomp(self, tmp_db_url: str):
+        """Stale inherited precomp offsets corrupt the segment location cache via _load_into_tracked.
+
+        4-level chain across 3 segments:
+          inner + middle -> segment 0
+          outer (refs middle) -> segment 1  (inherits stale offsets for inner/middle from seg 0)
+          outermost (refs outer) -> segment 2
+
+        When outermost is loaded, load_flat calls _load_into_tracked for its deps,
+        which includes outer. Processing outer's blob with entity_seg_id=1 caches
+        middle's location as (seg_id=1, stale_offset_from_seg_0). Then loading
+        middle reads from segment 1 at that stale offset -> garbage -> crash.
+        """
+        # Session 1: pin middle (which refs inner) -> both in segment 0, seals it
+        ns1 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns1:
+            inner = SampleEntity(value="inner_value")
+            middle = SampleEntityWithRef(name="middle", child=inner.store())
+            await ns1.pin("middle_key", middle)
+
+        # Session 2: pin outer (refs middle, preexisting) -> segment 1, seals it
+        ns2 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns2:
+            middle_ref = await ns2.retrieve("middle_key", SampleEntityWithRef)
+            outer = SampleOuterEntity(label="outer", middle=middle_ref)
+            await ns2.pin("outer_key", outer)
+
+        # Session 3: pin outermost (refs outer, preexisting) -> segment 2
+        ns3 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns3:
+            outer_ref = await ns3.retrieve("outer_key", SampleOuterEntity)
+            outermost = SampleOutermostEntity(tag="top", outer=outer_ref)
+            await ns3.pin("outermost_key", outermost)
+
+        # Session 4: fresh arena — retrieve outermost and chase refs down.
+        # load_flat(outermost) -> _load_into_tracked loads outer from segment 1
+        # -> processes outer's precomp with entity_seg_id=1 -> caches middle
+        #    with (seg_id=1, stale_offset_from_seg_0) -> later read of middle
+        #    hits garbage in segment 1.
+        ns4 = SQLiteFxtrNamespace(tmp_db_url, "test_ns", max_segment_size=200)
+        async with ns4:
+            result = await ns4.retrieve("outermost_key", SampleOutermostEntity)
+            loaded_outermost = await result.load()
+            assert loaded_outermost.tag == "top"
+
+            loaded_outer = await loaded_outermost.outer.load()
+            assert loaded_outer.label == "outer"
+
+            loaded_middle = await loaded_outer.middle.load()
+            assert loaded_middle.name == "middle"
+
+            loaded_inner = await loaded_middle.child.load()
+            assert loaded_inner.value == "inner_value"

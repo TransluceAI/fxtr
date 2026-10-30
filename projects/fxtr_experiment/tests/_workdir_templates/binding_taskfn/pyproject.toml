@@ -1,0 +1,68 @@
+# Test fixture: a container-kind workdir serving a *real fxtr_experiment
+# task fn* from inside the sandbox — the proof that a guest can implement
+# WorkflowTaskFnProto over the sandbox RPC boundary (grants + the run
+# capability ref bridge through; the task-side view runtime runs in-guest).
+# Built through mkContainerService as `fxtr.services.binding_taskfn` via
+# prepare_workdir_repo; modeled on fxtr_sandboxing's container_greeter.
+#
+# The guest installs `fxtr-experiment-task` — the task-side distribution
+# — and NOT the runner `fxtr-experiment`: a task-fn guest needs the view
+# runtime and the @task_fn adapter, never the state db / executor /
+# sandbox host machinery. It also takes the dist WITHOUT its [frames]
+# extra, since this fixture's task fn is entity-only (it reads a cell and
+# echoes the id); that is what proves polars stays optional, which is the
+# blocker for non-container runtimes. See notes/sandboxed_bindings.md.
+# fxtr v1 + full fxtr2 are redeclared as sources (uv only honors the
+# workspace root's [tool.uv.sources]; the container_greeter convention).
+#
+# `[tool.uv.sources]` uses the comment-flip convention: relative paths
+# active in the template, pinned git sources activated in the workdir
+# copy. No uv.lock is committed; the harness generates it.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "binding_taskfn"
+version = "0.0.1"
+description = "Sandboxed task-fn fixture for the sandboxed-binding e2e tests."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr",
+    "fxtr2",
+    "fxtr-experiment-task",
+    "fxtr-sandbox-types[fxtr2]",
+    "fxtr-sandbox-rpc-adapter[fxtr2]",
+    "fxtr-service-runner",
+]
+
+[project.entry-points."fxtr.service"]
+service = "binding_taskfn:run"
+
+[tool.uv.sources]
+fxtr-experiment-task = { path = "../../../task_package", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-experiment-task = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_experiment/task_package" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-rpc-adapter = { path = "../../../../fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr-service-runner = { path = "../../../../fxtr_sandboxing/fxtr_service_runner", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-service-runner = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_service_runner" } # fxtr-lib-sub: active-in-workdir
+fxtr2 = { path = "../../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+fxtr = { path = "../../../../fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+# Build-dep hints for sdists uv2nix builds in the nix sandbox (sdists that
+# under-declare their build backend). Mirrors container_greeter.
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]
+fxtr-experiment-task = ["hatchling"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr-service-runner = ["hatchling"]

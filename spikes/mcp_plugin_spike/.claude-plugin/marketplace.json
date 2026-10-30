@@ -1,0 +1,13 @@
+{
+  "name": "mcp-spike",
+  "owner": {
+    "name": "daniel"
+  },
+  "plugins": [
+    {
+      "name": "mcp-plugin-spike",
+      "source": "./plugin",
+      "description": "Schedules a delayed message and delivers it back via the claude/channel notification."
+    }
+  ]
+}

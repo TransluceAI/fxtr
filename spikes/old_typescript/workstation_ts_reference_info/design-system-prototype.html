@@ -1,0 +1,930 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Design System Prototype</title>
+<link href="https://fonts.googleapis.com/css2?family=Open+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+/* ═══════════════════════════════════════════
+   DESIGN SYSTEM TOKENS
+   ═══════════════════════════════════════════ */
+:root {
+  /* ── Spacing scale (base 4px) ── */
+  --sp-0: 0px;
+  --sp-1: 2px;
+  --sp-2: 4px;
+  --sp-3: 8px;
+  --sp-4: 12px;
+  --sp-5: 16px;
+  --sp-6: 24px;
+  --sp-7: 32px;
+  --sp-8: 48px;
+
+  /* ── Color ramp (from provided palette) ── */
+  --ramp-500: #3f50c2;
+  --ramp-400: #7687fa;
+  --ramp-300: #aec4f5;
+  --ramp-200: #dae4fb;
+  --ramp-100: #eef3fd;
+  --ramp-50:  #f6f8fe;
+
+  /* ── Semantic color roles ── */
+  --surface:          #ffffff;
+  --surface-raised:   #ffffff;
+  --surface-sunken:   var(--ramp-50);
+  --surface-inset:    var(--ramp-100);
+  --surface-panel:    #ffffff;
+
+  --border:           #d0d4dc;
+  --border-subtle:    #e4e7ed;
+  --border-accent:    var(--ramp-300);
+
+  --text-primary:     #1a1d26;
+  --text-secondary:   #4a4f5e;
+  --text-muted:       #8a8f9e;
+  --text-accent:      var(--ramp-500);
+  --text-on-accent:   #ffffff;
+
+  --accent:           var(--ramp-500);
+  --accent-subtle:    var(--ramp-200);
+  --accent-hover:     var(--ramp-400);
+
+  /* Status */
+  --status-info:      #3b82f6;
+  --status-info-bg:   #eff6ff;
+  --status-success:   #16a34a;
+  --status-success-bg:#f0fdf4;
+  --status-warning:   #ca8a04;
+  --status-warning-bg:#fefce8;
+  --status-error:     #dc2626;
+  --status-error-bg:  #fef2f2;
+
+  /* ── Typography ── */
+  --font-prose: 'Open Sans', sans-serif;
+  --font-mono:  'JetBrains Mono', monospace;
+
+  /* Size ramp */
+  --text-caption:    11px;
+  --text-body-sm:    12.5px;
+  --text-body:       13.5px;
+  --text-subheading: 14.5px;
+  --text-heading:    16px;
+  --text-title:      20px;
+
+  /* Line heights */
+  --lh-compact:    1.35;
+  --lh-comfortable: 1.55;
+
+  /* ── Radii ── */
+  --radius-badge: 3px;
+  --radius-card:  4px;
+  --radius-none:  0px;
+
+  /* ── Panel chrome ── */
+  --panel-header-h: 32px;
+  --panel-border: 1px solid var(--border);
+  --panel-gap: 1px;
+}
+
+/* ═══════════════════════════════════════════
+   RESET & BASE
+   ═══════════════════════════════════════════ */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+html { font-size: var(--text-body); line-height: var(--lh-comfortable); }
+body {
+  font-family: var(--font-prose);
+  color: var(--text-primary);
+  background: var(--ramp-200);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ═══════════════════════════════════════════
+   LAYOUT GRID (faking a docked panel layout)
+   ═══════════════════════════════════════════ */
+.panel-grid {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  grid-template-rows: repeat(12, 1fr);
+  gap: var(--panel-gap);
+  width: 100vw;
+  height: 100vh;
+  background: var(--border);
+}
+
+/* Panel placements — irregular hand-partitioned feel */
+.panel--article      { grid-column: 1 / 6;   grid-row: 1 / 7; }
+.panel--figure       { grid-column: 6 / 10;  grid-row: 1 / 5; }
+.panel--table        { grid-column: 10 / 13; grid-row: 1 / 7; }
+.panel--json         { grid-column: 6 / 10;  grid-row: 5 / 7; }
+.panel--code         { grid-column: 1 / 5;   grid-row: 7 / 13; }
+.panel--config       { grid-column: 5 / 9;   grid-row: 7 / 10; }
+.panel--transcript   { grid-column: 5 / 9;   grid-row: 10 / 13; }
+.panel--badges       { grid-column: 9 / 13;  grid-row: 7 / 13; }
+
+/* ═══════════════════════════════════════════
+   PANEL CHROME
+   ═══════════════════════════════════════════ */
+.panel {
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-panel);
+  overflow: hidden;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: var(--panel-header-h);
+  padding: 0 var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  background: var(--surface);
+  flex-shrink: 0;
+}
+
+.panel__title {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.panel__controls {
+  display: flex;
+  gap: var(--sp-3);
+  align-items: center;
+}
+
+.panel__control {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+  background: var(--border);
+}
+
+.panel__body {
+  flex: 1;
+  overflow: auto;
+  padding: var(--sp-5);
+}
+
+.panel__body--flush { padding: 0; }
+.panel__body--compact { padding: var(--sp-3) var(--sp-4); }
+
+/* Scrollbar styling */
+.panel__body::-webkit-scrollbar { width: 5px; }
+.panel__body::-webkit-scrollbar-track { background: transparent; }
+.panel__body::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+/* ═══════════════════════════════════════════
+   DISTILL ARTICLE PANEL
+   ═══════════════════════════════════════════ */
+.article { max-width: 540px; }
+.article h2 {
+  font-size: var(--text-heading);
+  font-weight: 700;
+  color: var(--text-primary);
+  margin-bottom: var(--sp-4);
+  line-height: var(--lh-compact);
+}
+.article h3 {
+  font-size: var(--text-subheading);
+  font-weight: 600;
+  color: var(--text-primary);
+  margin-top: var(--sp-6);
+  margin-bottom: var(--sp-3);
+}
+.article p {
+  font-size: var(--text-body);
+  color: var(--text-secondary);
+  line-height: var(--lh-comfortable);
+  margin-bottom: var(--sp-4);
+}
+.article p + p { margin-top: var(--sp-1); }
+
+.article__sidenote {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  border-left: 2px solid var(--accent-subtle);
+  padding-left: var(--sp-3);
+  margin: var(--sp-4) 0;
+  line-height: var(--lh-comfortable);
+}
+
+.article__math {
+  display: block;
+  font-family: var(--font-mono);
+  font-size: var(--text-body-sm);
+  color: var(--text-accent);
+  background: var(--surface-sunken);
+  padding: var(--sp-3) var(--sp-4);
+  margin: var(--sp-4) 0;
+  overflow-x: auto;
+}
+
+.article__cite {
+  color: var(--text-accent);
+  font-size: var(--text-caption);
+  vertical-align: super;
+  cursor: pointer;
+}
+.article__cite:hover { text-decoration: underline; }
+
+/* ═══════════════════════════════════════════
+   DISTILL FIGURE PANEL
+   ═══════════════════════════════════════════ */
+.figure {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.figure__canvas {
+  flex: 1;
+  background: var(--surface-sunken);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  overflow: hidden;
+}
+
+.figure__plot {
+  width: 90%;
+  height: 80%;
+  position: relative;
+}
+
+.figure__axis-y {
+  position: absolute;
+  left: 0; top: 0; bottom: 20px;
+  width: 36px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  align-items: flex-end;
+  padding-right: var(--sp-2);
+}
+.figure__axis-y span {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+.figure__axis-x {
+  position: absolute;
+  bottom: 0; left: 36px; right: 0;
+  height: 20px;
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  padding-top: var(--sp-1);
+}
+.figure__axis-x span {
+  font-family: var(--font-mono);
+  font-size: 9px;
+  color: var(--text-muted);
+}
+
+.figure__area {
+  position: absolute;
+  top: 0; bottom: 20px; left: 36px; right: 0;
+  border-left: 1px solid var(--border-subtle);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.figure__gridline {
+  position: absolute;
+  left: 0; right: 0;
+  height: 1px;
+  background: var(--border-subtle);
+  opacity: 0.5;
+}
+
+/* SVG bars */
+.figure__bar { fill: var(--ramp-400); opacity: 0.7; }
+.figure__bar:hover { opacity: 1; }
+.figure__line { stroke: var(--ramp-500); fill: none; stroke-width: 2; }
+.figure__dot { fill: var(--ramp-500); }
+
+.figure__caption {
+  padding: var(--sp-3) var(--sp-4);
+  border-top: 1px solid var(--border-subtle);
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  line-height: var(--lh-comfortable);
+  flex-shrink: 0;
+}
+.figure__caption strong { color: var(--text-secondary); font-weight: 600; }
+
+/* ═══════════════════════════════════════════
+   TABLE PANEL
+   ═══════════════════════════════════════════ */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-sm);
+  line-height: var(--lh-compact);
+}
+.data-table th {
+  text-align: left;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  padding: var(--sp-3) var(--sp-4);
+  border-bottom: 2px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--surface);
+  z-index: 1;
+}
+.data-table th.num { text-align: right; }
+.data-table td {
+  padding: var(--sp-2) var(--sp-4);
+  border-bottom: 1px solid var(--border-subtle);
+  color: var(--text-primary);
+  vertical-align: middle;
+}
+.data-table td.num {
+  text-align: right;
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+.data-table td.muted { color: var(--text-muted); }
+.data-table tr:hover td { background: var(--surface-sunken); }
+
+/* ═══════════════════════════════════════════
+   BADGES
+   ═══════════════════════════════════════════ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px; height: 18px;
+  border-radius: var(--radius-badge);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  flex-shrink: 0;
+}
+.badge--a { background: #dbeafe; color: #1e40af; }
+.badge--b { background: #dcfce7; color: #166534; }
+.badge--c { background: #fef3c7; color: #92400e; }
+.badge--d { background: #fce7f3; color: #9d174d; }
+.badge--e { background: #e0e7ff; color: var(--ramp-500); }
+
+.status-dot {
+  display: inline-block;
+  width: 6px; height: 6px;
+  border-radius: 50%;
+  margin-right: var(--sp-2);
+}
+.status-dot--ok { background: var(--status-success); }
+.status-dot--warn { background: var(--status-warning); }
+.status-dot--err { background: var(--status-error); }
+
+/* ═══════════════════════════════════════════
+   CODE / JSON PANEL
+   ═══════════════════════════════════════════ */
+.code-view {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text-primary);
+  counter-reset: line;
+}
+.code-view__line {
+  display: flex;
+  padding: 0 var(--sp-4);
+  min-height: 20px;
+}
+.code-view__line:hover { background: var(--surface-sunken); }
+.code-view__gutter {
+  width: 32px;
+  flex-shrink: 0;
+  text-align: right;
+  padding-right: var(--sp-4);
+  color: var(--text-muted);
+  user-select: none;
+  font-size: 10px;
+  line-height: 20px;
+  opacity: 0.6;
+}
+.code-view__content {
+  flex: 1;
+  white-space: pre;
+  overflow-x: auto;
+  line-height: 20px;
+}
+/* Syntax tokens */
+.tok-key { color: #6366f1; }
+.tok-str { color: #059669; }
+.tok-num { color: #d97706; }
+.tok-bool { color: #dc2626; }
+.tok-null { color: var(--text-muted); font-style: italic; }
+.tok-brace { color: var(--text-muted); }
+.tok-kw { color: #7c3aed; font-weight: 500; }
+.tok-fn { color: #2563eb; }
+.tok-comment { color: var(--text-muted); font-style: italic; }
+.tok-punct { color: var(--text-muted); }
+
+/* ═══════════════════════════════════════════
+   CONFIG / KEY-VALUE VIEW
+   ═══════════════════════════════════════════ */
+.kv-list { font-size: var(--text-body-sm); }
+.kv-group {
+  margin-bottom: var(--sp-4);
+}
+.kv-group__label {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+  margin-bottom: var(--sp-2);
+}
+.kv-row {
+  display: flex;
+  padding: var(--sp-1) 0;
+  gap: var(--sp-3);
+  line-height: var(--lh-compact);
+}
+.kv-row__key {
+  flex: 0 0 100px;
+  color: var(--text-muted);
+  font-size: var(--text-caption);
+  text-align: right;
+}
+.kv-row__val {
+  flex: 1;
+  color: var(--text-primary);
+}
+.kv-row__val--mono {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+.kv-row__val--accent { color: var(--text-accent); }
+
+/* ═══════════════════════════════════════════
+   TRANSCRIPT VIEW
+   ═══════════════════════════════════════════ */
+.transcript { font-size: var(--text-body-sm); }
+.transcript__turn {
+  padding: var(--sp-3) 0;
+  border-bottom: 1px solid var(--border-subtle);
+  display: flex;
+  gap: var(--sp-3);
+}
+.transcript__turn:last-child { border-bottom: none; }
+.transcript__meta {
+  flex: 0 0 72px;
+  text-align: right;
+}
+.transcript__speaker {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.transcript__time {
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--text-muted);
+}
+.transcript__text {
+  flex: 1;
+  color: var(--text-secondary);
+  line-height: var(--lh-comfortable);
+}
+.transcript__highlight {
+  background: var(--accent-subtle);
+  padding: 0 2px;
+  border-radius: 2px;
+}
+.transcript__annotation {
+  font-size: var(--text-caption);
+  color: var(--text-accent);
+  margin-top: var(--sp-1);
+  font-style: italic;
+}
+
+/* ═══════════════════════════════════════════
+   EXPANDED BADGE TABLE / CARDS
+   ═══════════════════════════════════════════ */
+.card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp-3);
+}
+.card {
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-card);
+  padding: var(--sp-3) var(--sp-4);
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.card:hover {
+  border-color: var(--border-accent);
+  box-shadow: 0 1px 4px rgba(63, 80, 194, 0.08);
+}
+.card__head {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  margin-bottom: var(--sp-2);
+}
+.card__title {
+  font-size: var(--text-body-sm);
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.card__desc {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  line-height: var(--lh-comfortable);
+}
+.card__metric {
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  color: var(--text-secondary);
+  margin-top: var(--sp-2);
+}
+
+/* ═══════════════════════════════════════════
+   UTILITY
+   ═══════════════════════════════════════════ */
+.pill {
+  display: inline-block;
+  padding: 1px 6px;
+  font-size: 10px;
+  font-weight: 600;
+  border-radius: var(--radius-badge);
+}
+.pill--info    { background: var(--status-info-bg);    color: var(--status-info); }
+.pill--success { background: var(--status-success-bg); color: var(--status-success); }
+.pill--warning { background: var(--status-warning-bg); color: var(--status-warning); }
+.pill--error   { background: var(--status-error-bg);   color: var(--status-error); }
+
+</style>
+</head>
+<body>
+
+<div class="panel-grid">
+
+  <!-- ═══ PANEL 1: Distill Article ═══ -->
+  <div class="panel panel--article">
+    <div class="panel__header">
+      <span class="panel__title">Article</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body">
+      <div class="article">
+        <h2>Attention as Soft Dictionary Lookup</h2>
+        <p>The attention mechanism can be understood as a differentiable dictionary. Each query vector computes a similarity score against all key vectors, and the resulting weights are used to return a blended value. This framing clarifies why positional encodings are necessary — without them, the dictionary is order-agnostic.</p>
+        <div class="article__sidenote">This interpretation was first suggested by Vaswani et al.<a class="article__cite">[1]</a> and later formalized in the kernel attention literature.<a class="article__cite">[4]</a></div>
+        <h3>Sparse Retrieval Variants</h3>
+        <p>When the attention distribution is sparse — as in top-<em>k</em> attention or entmax — the mechanism behaves more like a hard lookup. This trades off the smoothness of gradients for computational efficiency and interpretability.</p>
+        <div class="article__math">score(q, k) = softmax(q · kᵀ / √d_k) · V</div>
+        <p>The denominator √d<sub>k</sub> is a temperature parameter that controls the entropy of the attention distribution. Lower temperatures produce sharper distributions, converging toward argmax behavior.<a class="article__cite">[2]</a></p>
+        <h3>Multi-Head Decomposition</h3>
+        <p>Each head can be seen as a separate dictionary, specialized to different relationship types. Empirically, heads in lower layers tend to capture positional and syntactic patterns, while upper-layer heads capture more semantic relationships.</p>
+        <p>Pruning experiments suggest that 30–50% of heads can be removed with minimal performance degradation, indicating significant redundancy in standard configurations.<a class="article__cite">[3]</a></p>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 2: Distill Figure ═══ -->
+  <div class="panel panel--figure">
+    <div class="panel__header">
+      <span class="panel__title">Figure 3</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body panel__body--flush">
+      <div class="figure">
+        <div class="figure__canvas">
+          <div class="figure__plot">
+            <div class="figure__axis-y">
+              <span>1.0</span><span>0.8</span><span>0.6</span><span>0.4</span><span>0.2</span><span>0.0</span>
+            </div>
+            <div class="figure__axis-x">
+              <span>L1</span><span>L2</span><span>L3</span><span>L4</span><span>L5</span><span>L6</span><span>L7</span><span>L8</span>
+            </div>
+            <div class="figure__area">
+              <div class="figure__gridline" style="top:20%"></div>
+              <div class="figure__gridline" style="top:40%"></div>
+              <div class="figure__gridline" style="top:60%"></div>
+              <div class="figure__gridline" style="top:80%"></div>
+              <svg width="100%" height="100%" viewBox="0 0 280 160" preserveAspectRatio="none" style="position:absolute;top:0;left:0;">
+                <rect class="figure__bar" x="5"   y="16"  width="28" height="144" rx="1" />
+                <rect class="figure__bar" x="40"  y="32"  width="28" height="128" rx="1" />
+                <rect class="figure__bar" x="75"  y="48"  width="28" height="112" rx="1" />
+                <rect class="figure__bar" x="110" y="56"  width="28" height="104" rx="1" />
+                <rect class="figure__bar" x="145" y="80"  width="28" height="80"  rx="1" />
+                <rect class="figure__bar" x="180" y="96"  width="28" height="64"  rx="1" />
+                <rect class="figure__bar" x="215" y="88"  width="28" height="72"  rx="1" />
+                <rect class="figure__bar" x="250" y="72"  width="28" height="88"  rx="1" />
+                <polyline class="figure__line" points="19,24 54,40 89,52 124,60 159,88 194,100 229,92 264,80" />
+                <circle class="figure__dot" cx="19"  cy="24"  r="3"/>
+                <circle class="figure__dot" cx="54"  cy="40"  r="3"/>
+                <circle class="figure__dot" cx="89"  cy="52"  r="3"/>
+                <circle class="figure__dot" cx="124" cy="60"  r="3"/>
+                <circle class="figure__dot" cx="159" cy="88"  r="3"/>
+                <circle class="figure__dot" cx="194" cy="100" r="3"/>
+                <circle class="figure__dot" cx="229" cy="92"  r="3"/>
+                <circle class="figure__dot" cx="264" cy="80"  r="3"/>
+              </svg>
+            </div>
+          </div>
+        </div>
+        <div class="figure__caption">
+          <strong>Fig. 3.</strong> Head pruning sensitivity across layers. Bars show the fraction of heads retainable per layer; line shows validation loss delta. Layers 5–6 tolerate aggressive pruning with minimal degradation.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 3: Data Table ═══ -->
+  <div class="panel panel--table">
+    <div class="panel__header">
+      <span class="panel__title">Runs</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body panel__body--flush">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th></th>
+            <th>Name</th>
+            <th class="num">Loss</th>
+            <th class="num">Acc</th>
+            <th>Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="badge badge--a">A</span></td>
+            <td>baseline-v3</td>
+            <td class="num">0.342</td>
+            <td class="num">91.2%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--b">B</span></td>
+            <td>sparse-top8</td>
+            <td class="num">0.358</td>
+            <td class="num">90.7%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--c">C</span></td>
+            <td>pruned-40pct</td>
+            <td class="num">0.371</td>
+            <td class="num">89.9%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--d">D</span></td>
+            <td>distill-4layer</td>
+            <td class="num">0.415</td>
+            <td class="num">87.3%</td>
+            <td><span class="status-dot status-dot--warn"></span><span class="pill pill--warning">review</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--e">E</span></td>
+            <td>quantized-int8</td>
+            <td class="num">0.389</td>
+            <td class="num">88.6%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--a">A</span></td>
+            <td>baseline-v3-lr4</td>
+            <td class="num">0.338</td>
+            <td class="num">91.5%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--c">C</span></td>
+            <td>pruned-60pct</td>
+            <td class="num">0.452</td>
+            <td class="num">85.1%</td>
+            <td><span class="status-dot status-dot--err"></span><span class="pill pill--error">failed</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--b">B</span></td>
+            <td>sparse-top4</td>
+            <td class="num">0.401</td>
+            <td class="num">88.2%</td>
+            <td><span class="status-dot status-dot--ok"></span><span class="pill pill--success">done</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--d">D</span></td>
+            <td>distill-2layer</td>
+            <td class="num">0.512</td>
+            <td class="num">82.4%</td>
+            <td><span class="status-dot status-dot--err"></span><span class="pill pill--error">failed</span></td>
+          </tr>
+          <tr>
+            <td><span class="badge badge--e">E</span></td>
+            <td>quant-int4-gptq</td>
+            <td class="num">0.423</td>
+            <td class="num">87.0%</td>
+            <td><span class="status-dot status-dot--warn"></span><span class="pill pill--warning">review</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 4: JSON View ═══ -->
+  <div class="panel panel--json">
+    <div class="panel__header">
+      <span class="panel__title">Response · 200 OK</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body panel__body--flush panel__body--compact" style="background: var(--surface-sunken);">
+      <div class="code-view">
+        <div class="code-view__line"><span class="code-view__gutter">1</span><span class="code-view__content"><span class="tok-brace">{</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">2</span><span class="code-view__content">  <span class="tok-key">"model"</span><span class="tok-punct">:</span> <span class="tok-str">"attn-sparse-top8"</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">3</span><span class="code-view__content">  <span class="tok-key">"layers"</span><span class="tok-punct">:</span> <span class="tok-num">8</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">4</span><span class="code-view__content">  <span class="tok-key">"heads"</span><span class="tok-punct">:</span> <span class="tok-num">12</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">5</span><span class="code-view__content">  <span class="tok-key">"pruned"</span><span class="tok-punct">:</span> <span class="tok-bool">false</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">6</span><span class="code-view__content">  <span class="tok-key">"metrics"</span><span class="tok-punct">:</span> <span class="tok-brace">{</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">7</span><span class="code-view__content">    <span class="tok-key">"val_loss"</span><span class="tok-punct">:</span> <span class="tok-num">0.358</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">8</span><span class="code-view__content">    <span class="tok-key">"accuracy"</span><span class="tok-punct">:</span> <span class="tok-num">0.907</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">9</span><span class="code-view__content">    <span class="tok-key">"latency_ms"</span><span class="tok-punct">:</span> <span class="tok-num">23.4</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">10</span><span class="code-view__content">  <span class="tok-brace">}</span><span class="tok-punct">,</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">11</span><span class="code-view__content">  <span class="tok-key">"tags"</span><span class="tok-punct">:</span> <span class="tok-brace">[</span><span class="tok-str">"sparse"</span><span class="tok-punct">,</span> <span class="tok-str">"prod-candidate"</span><span class="tok-brace">]</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">12</span><span class="code-view__content"><span class="tok-brace">}</span></span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 5: Code View ═══ -->
+  <div class="panel panel--code">
+    <div class="panel__header">
+      <span class="panel__title">attention.py</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body panel__body--flush panel__body--compact" style="background: var(--surface-sunken);">
+      <div class="code-view">
+        <div class="code-view__line"><span class="code-view__gutter">1</span><span class="code-view__content"><span class="tok-kw">import</span> torch</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">2</span><span class="code-view__content"><span class="tok-kw">import</span> torch.nn <span class="tok-kw">as</span> nn</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">3</span><span class="code-view__content"><span class="tok-kw">import</span> math</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">4</span><span class="code-view__content"></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">5</span><span class="code-view__content"><span class="tok-kw">class</span> <span class="tok-fn">SparseAttention</span>(nn.Module):</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">6</span><span class="code-view__content">    <span class="tok-str">"""Top-k sparse attention."""</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">7</span><span class="code-view__content"></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">8</span><span class="code-view__content">    <span class="tok-kw">def</span> <span class="tok-fn">__init__</span>(self, d_model, n_heads, top_k=<span class="tok-num">8</span>):</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">9</span><span class="code-view__content">        <span class="tok-fn">super</span>().__init__()</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">10</span><span class="code-view__content">        self.d_k = d_model // n_heads</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">11</span><span class="code-view__content">        self.n_heads = n_heads</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">12</span><span class="code-view__content">        self.top_k = top_k</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">13</span><span class="code-view__content">        self.W_q = nn.Linear(d_model, d_model)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">14</span><span class="code-view__content">        self.W_k = nn.Linear(d_model, d_model)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">15</span><span class="code-view__content">        self.W_v = nn.Linear(d_model, d_model)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">16</span><span class="code-view__content"></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">17</span><span class="code-view__content">    <span class="tok-kw">def</span> <span class="tok-fn">forward</span>(self, x, mask=<span class="tok-null">None</span>):</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">18</span><span class="code-view__content">        B, T, C = x.shape</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">19</span><span class="code-view__content">        q = self.W_q(x).view(B, T, self.n_heads, self.d_k)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">20</span><span class="code-view__content">        k = self.W_k(x).view(B, T, self.n_heads, self.d_k)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">21</span><span class="code-view__content">        <span class="tok-comment"># scale + top-k sparsification</span></span></div>
+        <div class="code-view__line"><span class="code-view__gutter">22</span><span class="code-view__content">        scores = torch.einsum(<span class="tok-str">'bihd,bjhd-&gt;bhij'</span>, q, k)</span></div>
+        <div class="code-view__line"><span class="code-view__gutter">23</span><span class="code-view__content">        scores = scores / math.sqrt(self.d_k)</span></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 6: Config / Key-Value ═══ -->
+  <div class="panel panel--config">
+    <div class="panel__header">
+      <span class="panel__title">Run Config</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body">
+      <div class="kv-list">
+        <div class="kv-group">
+          <div class="kv-group__label">Model</div>
+          <div class="kv-row"><span class="kv-row__key">Architecture</span><span class="kv-row__val kv-row__val--mono">transformer-sparse</span></div>
+          <div class="kv-row"><span class="kv-row__key">Parameters</span><span class="kv-row__val kv-row__val--mono">124M</span></div>
+          <div class="kv-row"><span class="kv-row__key">Layers</span><span class="kv-row__val kv-row__val--mono">8</span></div>
+          <div class="kv-row"><span class="kv-row__key">Heads</span><span class="kv-row__val kv-row__val--mono">12</span></div>
+          <div class="kv-row"><span class="kv-row__key">d_model</span><span class="kv-row__val kv-row__val--mono">768</span></div>
+        </div>
+        <div class="kv-group">
+          <div class="kv-group__label">Training</div>
+          <div class="kv-row"><span class="kv-row__key">Optimizer</span><span class="kv-row__val kv-row__val--mono">AdamW</span></div>
+          <div class="kv-row"><span class="kv-row__key">LR</span><span class="kv-row__val kv-row__val--mono">3e-4</span></div>
+          <div class="kv-row"><span class="kv-row__key">Warmup</span><span class="kv-row__val kv-row__val--mono">2000 steps</span></div>
+          <div class="kv-row"><span class="kv-row__key">Batch</span><span class="kv-row__val kv-row__val--mono">64</span></div>
+          <div class="kv-row"><span class="kv-row__key">Epochs</span><span class="kv-row__val kv-row__val--mono">30</span></div>
+          <div class="kv-row"><span class="kv-row__key">Seed</span><span class="kv-row__val kv-row__val--mono kv-row__val--accent">42</span></div>
+        </div>
+        <div class="kv-group">
+          <div class="kv-group__label">Hardware</div>
+          <div class="kv-row"><span class="kv-row__key">Device</span><span class="kv-row__val kv-row__val--mono">4× A100 80GB</span></div>
+          <div class="kv-row"><span class="kv-row__key">Duration</span><span class="kv-row__val kv-row__val--mono">4h 12m</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 7: Transcript ═══ -->
+  <div class="panel panel--transcript">
+    <div class="panel__header">
+      <span class="panel__title">Review Notes</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body">
+      <div class="transcript">
+        <div class="transcript__turn">
+          <div class="transcript__meta">
+            <div class="transcript__speaker">S. Chen</div>
+            <div class="transcript__time">14:02</div>
+          </div>
+          <div class="transcript__text">
+            Pruning results look good at 40% but the <span class="transcript__highlight">60% variant degrades</span> too much. We should keep the cutoff conservative.
+            <div class="transcript__annotation">→ flagged for follow-up</div>
+          </div>
+        </div>
+        <div class="transcript__turn">
+          <div class="transcript__meta">
+            <div class="transcript__speaker">R. Kim</div>
+            <div class="transcript__time">14:05</div>
+          </div>
+          <div class="transcript__text">
+            Agreed. The int8 quantization is a better tradeoff — similar savings with <span class="transcript__highlight">only 2.6% accuracy drop</span>.
+          </div>
+        </div>
+        <div class="transcript__turn">
+          <div class="transcript__meta">
+            <div class="transcript__speaker">S. Chen</div>
+            <div class="transcript__time">14:08</div>
+          </div>
+          <div class="transcript__text">
+            Let's ship B and E to staging. Flag D for another training run with adjusted LR.
+            <div class="transcript__annotation">→ action item assigned</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══ PANEL 8: Badge Cards ═══ -->
+  <div class="panel panel--badges">
+    <div class="panel__header">
+      <span class="panel__title">Experiment Groups</span>
+      <div class="panel__controls"><div class="panel__control"></div><div class="panel__control"></div></div>
+    </div>
+    <div class="panel__body">
+      <div class="card-grid">
+        <div class="card">
+          <div class="card__head">
+            <span class="badge badge--a">A</span>
+            <span class="card__title">Baseline</span>
+          </div>
+          <div class="card__desc">Standard transformer, no modifications. Control group for all comparisons.</div>
+          <div class="card__metric">2 runs · best 91.5%</div>
+        </div>
+        <div class="card">
+          <div class="card__head">
+            <span class="badge badge--b">B</span>
+            <span class="card__title">Sparse Attention</span>
+          </div>
+          <div class="card__desc">Top-k attention with k ∈ {4, 8}. Reduces compute at slight accuracy cost.</div>
+          <div class="card__metric">2 runs · best 90.7%</div>
+        </div>
+        <div class="card">
+          <div class="card__head">
+            <span class="badge badge--c">C</span>
+            <span class="card__title">Head Pruning</span>
+          </div>
+          <div class="card__desc">Post-training head removal at 40% and 60% thresholds.</div>
+          <div class="card__metric">2 runs · best 89.9%</div>
+        </div>
+        <div class="card">
+          <div class="card__head">
+            <span class="badge badge--d">D</span>
+            <span class="card__title">Distillation</span>
+          </div>
+          <div class="card__desc">Knowledge distillation to 4-layer and 2-layer student models.</div>
+          <div class="card__metric">2 runs · best 87.3%</div>
+        </div>
+        <div class="card">
+          <div class="card__head">
+            <span class="badge badge--e">E</span>
+            <span class="card__title">Quantization</span>
+          </div>
+          <div class="card__desc">Post-training quantization — int8 symmetric and int4 GPTQ variants.</div>
+          <div class="card__metric">2 runs · best 88.6%</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>

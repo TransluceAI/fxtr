@@ -1,0 +1,102 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fxtr"
+version = "0.0.1a0"
+description = "A configuration and orchestration system for modular, reproducible experiments"
+requires-python = ">=3.12"
+dependencies = [
+    "msgspec>=0.20.0",
+    "cbrrr>=1.0.1",
+    "packaging>=25.0",
+    "httpx>=0.28.1",
+    "httpx-ws>=0.1.0",
+    "hypercorn>=0.17.3",
+    "logfire[asgi,httpx]>=4.6.0",
+    "anyio>=4.6.2",
+    "tomlkit>=0.12.3",
+    "frozendict>=2.4.6",
+    "starlette>=0.46.2",
+    "python-dotenv>=1.0.1",
+    "typer>=0.15.1",
+    # "typing_extensions>=4.10.0",  # for TypeIs (not currently used)
+    "sqlitedict>=2.1.0",
+    "lmdb>=1.4.1",
+    "cbor2>=5.8.0",
+    "pqdict>=1.4.1",
+    "tqdm>=4.66.0",
+]
+
+[project.optional-dependencies]
+ui = [
+    "picoview",
+]
+
+[dependency-groups]
+duckdb = [
+    "duckdb>=1.3.2",
+]
+test = [
+    "pytest>=8.4.2",
+    "pytest-xdist>=3.8.0",
+    "fxtr_testdeps",
+    "demo_09_15_defns",
+    "demo_09_15_user",
+    "demo_09_15_fake_defns",
+    "demo_09_15_fake_user",
+    "demo_09_15_fake",
+    "demo_agentic_misalignment_defns",
+    "demo_agentic_misalignment_user",
+]
+dev = [
+    "black==24.10.0",
+]
+
+[tool.uv]
+constraint-dependencies = ["async_util", "luce_lib", "picoview"]
+
+[tool.uv.sources]
+async_util = { path = "../../../clarity/lib/async_util", editable = true }
+luce_lib = { path = "../../../clarity/lib/luce_lib", editable = true }
+picoview = { path = "../../../clarity/lib/picoview", editable = true }
+demo_09_15_defns = { path = "examples/demo_09_15/lib/blueprint", editable = true }
+demo_09_15_user = { path = "examples/demo_09_15/user", editable = true }
+demo_09_15_fake_defns = { path = "examples/demo_09_15_fake/lib/blueprint", editable = true }
+demo_09_15_fake_user = { path = "examples/demo_09_15_fake/user", editable = true }
+demo_09_15_fake = { path = "examples/demo_09_15_fake/lib/pyimpl", editable = true }
+demo_agentic_misalignment_defns = { path = "examples/demo_agentic_misalignment/lib/blueprint", editable = true }
+demo_agentic_misalignment_user = { path = "examples/demo_agentic_misalignment/user", editable = true }
+fxtr_testdeps = { path = "tests/fxtr_testdeps", editable = true }
+
+
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fxtr"]
+[project.scripts]
+fxtr = "fxtr.api.fxtr_cli:app"
+
+
+[tool.pyright]
+include = [
+    "src/fxtr",
+]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+force-exclude = '''
+# force-exclude can be used to exclude from formatting even when run by VSCode.
+# A regex preceded with ^/ will apply only to files and directories
+# in the root of the project.
+^\/external\/.*
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+known_first_party = ["fxtr"]

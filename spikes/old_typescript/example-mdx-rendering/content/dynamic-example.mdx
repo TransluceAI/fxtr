@@ -1,0 +1,16 @@
+# Dynamic Content
+
+This MDX was compiled at **request time** using the dynamic evaluation path.
+
+## Features
+
+- Markdown works as expected: *italic*, **bold**, `code`
+- Custom components are injected via the components prop
+
+<Callout type="info">
+  This callout component was provided at runtime, not imported.
+</Callout>
+
+<FxtrStats timeout={25} fxtr_scope={props.fxtr_scope} />
+
+<Chart type="line" data={[10, 20, 15, 30]} title="Dynamic Chart" />

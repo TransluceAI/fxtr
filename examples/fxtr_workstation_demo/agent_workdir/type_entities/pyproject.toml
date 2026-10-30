@@ -1,0 +1,63 @@
+# Aggregator workspace for the agent-owned type entities the demo's UI preset
+# routes (note / transcript / the three docent types / the delayed_echo +
+# simple_scheduler + demo_helper service types / the simple_tasks entity types)
+# + the `demo_note` DATA entity. A *virtual* project (no
+# [build-system], no src/): its sole job is to be the single `mkVenv` root
+# that makes `presentables` / `transcripts` / `docent_fxtr_proxy` /
+# `delayed_echo` / `simple_tasks` / `demo_helper` importable so
+# `mkEntityFromPython` can pin each type's FxtrID into a typeEntity layer (the
+# dispatcher's eager set_preset validation builds + checks those against the
+# preset key).
+#
+# One aggregator instead of a venv per package: uv only honors the resolution
+# *root's* `[tool.uv.sources]`, so co-locating the comment-flip fxtr sources +
+# build hints here keeps the three packages themselves untouched (they declare
+# nothing uv2nix-specific). See
+# projects/fxtr_workstation/plans/phase0/part5_nix_workdir/stage6_workstation_demo.md
+# "Type-entity venv".
+#
+# Comment-flip convention (same as packages/delayed_echo + demo_data): the
+# relative fxtr2/fxtr sources are active in the template; `prepare_workdir_repo`
+# comments them out and activates the pinned git source in the workdir copy
+# (which is what the preset's git-ref build uses). No uv.lock is committed; the
+# scaffold/harness generates it. The intra-workdir package paths + the mashumaro
+# git dep carry no markers — they're correct in both forms.
+[project]
+name = "fxtr-demo-type-entities"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+    "presentables",
+    "transcripts",
+    "docent_fxtr_proxy",
+    "delayed-echo",
+    "simple-tasks",
+    "streaming-tasks",
+    "demo-helper",
+]
+
+[tool.uv]
+# Virtual root — coordinate + install the members, don't build this dir itself.
+package = false
+
+[tool.uv.sources]
+presentables = { path = "../packages/presentables", editable = true }
+transcripts = { path = "../packages/transcripts", editable = true }
+docent_fxtr_proxy = { path = "../packages/docent_fxtr_proxy", editable = true }
+delayed-echo = { path = "../packages/delayed_echo", editable = true }
+simple-tasks = { path = "../packages/simple_tasks", editable = true }
+streaming-tasks = { path = "../packages/streaming_tasks", editable = true }
+demo-helper = { path = "../packages/demo_helper", editable = true }
+fxtr2 = { path = "../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+fxtr = { path = "../../../../projects/fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]

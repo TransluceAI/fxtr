@@ -1,0 +1,49 @@
+# Demo sandbox service, built as `fxtr.services.hello_service` by the
+# agent_workdir flake (via mkWasmService) and spawned through the git-ref
+# path (NixWasmServiceDefn).
+#
+# `[tool.uv.sources]` uses the comment-flip convention (see
+# projects/fxtr_workstation/plans/phase0/part5_nix_workdir/stage3_bundle_and_spawner.md
+# "Test & scaffold workdir setup"): relative paths are the active form,
+# `prepare_workdir_repo` comments them out and activates the pinned git
+# source in the workdir copy (which is what builds — it gives uv2nix the
+# whole-repo context fxtr2-portable's force-include needs). No uv.lock is
+# committed; the harness/scaffold generates it in the workdir from the
+# git-source form.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "hello-service"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable]",
+]
+
+[project.entry-points."fxtr.service"]
+service = "hello_service:run"
+
+[tool.uv.sources]
+fxtr-sandbox-rpc-adapter = { path = "../../../../../../fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../../../fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr2-portable = { path = "../../../../../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr2-portable = ["hatchling"]
+
+[tool.uv]
+# Constrain the resolver to WASI/wasm32 (the eryx runtime target) so only
+# pure-python wheels are selected. Same rationale as nix/sandbox_smoke.
+environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]
+required-environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]

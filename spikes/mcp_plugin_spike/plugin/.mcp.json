@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "scheduler": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--directory",
+        "${CLAUDE_PLUGIN_ROOT}/scripts",
+        "scheduler-mcp"
+      ]
+    }
+  }
+}

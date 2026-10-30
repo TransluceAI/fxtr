@@ -1,0 +1,15 @@
+# Marks ``demo_pkg`` as a python package in the agent's
+# ``packages/`` layout so the workstation MCP's sandbox bridge
+# adds ``src/`` to ``sys.path`` automatically (see the
+# build_runner_volumes contract). The version + build-system
+# entries make this minimally pip-installable in case the demo
+# workstation script wants to install it instead of injecting
+# its src/ onto sys.path manually.
+[project]
+name = "demo-pkg"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

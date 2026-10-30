@@ -1,9 +1,0 @@
-# Fxtr git store local files (auto-generated)
-fxtr_store.local.toml
-
-# Sync lock files
-*.sync_lock
-
-# Dirty mark directories - ignore contents except the sentinel file
-*.fxtr.tsv.dirty/*
-!*.fxtr.tsv.dirty/DO_NOT_COMMIT_WHILE_THIS_FILE_EXISTS.md

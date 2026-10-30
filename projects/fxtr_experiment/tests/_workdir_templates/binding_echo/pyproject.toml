@@ -1,0 +1,60 @@
+# Test fixture: a wasm binding-echo service workdir for the sandboxed-binding
+# e2e tests (test_sandbox_e2e.py). Built through mkWasmService as
+# `fxtr.services.binding_echo` via prepare_workdir_repo (the git-ref path);
+# modeled on fxtr_sandboxing's greeter fixture.
+#
+# The entrypoint takes the standard BindingConnectRequest (the shape every
+# fxtr_experiment binding delivers — notes/sandboxed_bindings.md) and serves
+# a service that echoes the key/config and calls a wired dependency ref.
+#
+# `[tool.uv.sources]` uses the comment-flip convention: relative paths are
+# the active form in the template; prepare_workdir_repo activates the pinned
+# git sources in the workdir copy. No uv.lock is committed; the harness
+# generates it from the git-source form.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "binding_echo"
+version = "0.0.1"
+description = "Binding-echo service fixture for the sandboxed-binding e2e tests."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr-sandbox-types",
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable]",
+]
+
+[project.entry-points."fxtr.service"]
+service = "binding_echo:run"
+
+[tool.uv.sources]
+fxtr-sandbox-rpc-adapter = { path = "../../../../fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr2-portable = { path = "../../../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr2-portable = ["hatchling"]
+
+[tool.uv]
+# Constrain the resolver to the sandbox guest targets — WASI/wasm32 (the
+# eryx runtime) and emscripten/wasm32 (the pyodide runtime); the flake
+# builds this package as both kinds — so only pure-python wheels are
+# selected and the lock carries a working resolution for both guests.
+environments = [
+    "sys_platform == 'wasi' and platform_machine == 'wasm32'",
+    "sys_platform == 'emscripten' and platform_machine == 'wasm32'",
+]
+required-environments = [
+    "sys_platform == 'wasi' and platform_machine == 'wasm32'",
+    "sys_platform == 'emscripten' and platform_machine == 'wasm32'",
+]

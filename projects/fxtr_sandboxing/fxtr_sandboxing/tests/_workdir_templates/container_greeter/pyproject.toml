@@ -1,0 +1,61 @@
+# Test fixture: a container-kind greeter-service workdir for the
+# NixContainerServiceDefn spawn tests. Built through mkContainerService as
+# `fxtr.services.greeter` via prepare_workdir_repo (the git-ref path).
+# Ported from examples/container_rpc_task/task_src (the deprecated
+# registry-hosted container demo) onto the nix-built image path.
+#
+# Unlike the wasm `greeter` fixture this uses the FULL fxtr2 flavor (the
+# image runs real Linux CPython, not eryx), so there is no wasi
+# `[tool.uv] environments` restriction, and fxtr v1 + full fxtr2 are
+# redeclared as sources (uv only honors the workspace root's
+# [tool.uv.sources]; same convention as nix/fxtr_nix_writer).
+#
+# `[tool.uv.sources]` uses the comment-flip convention ("Test & scaffold
+# workdir setup" in projects/fxtr_workstation/plans/phase0/part5_nix_workdir/
+# stage3_bundle_and_spawner.md): relative paths active in the
+# template, pinned git sources activated in the workdir copy. No uv.lock
+# is committed; the harness generates it from the git-source form.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "container_rpc_task"
+version = "0.0.1"
+description = "Container greeter service fixture for the NixContainerServiceDefn spawn tests."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr",
+    "fxtr2",
+    "fxtr-sandbox-types[fxtr2]",
+    "fxtr-sandbox-rpc-adapter[fxtr2]",
+    "fxtr-service-runner",
+]
+
+[project.entry-points."fxtr.service"]
+service = "container_rpc_task:run"
+
+[tool.uv.sources]
+fxtr-sandbox-rpc-adapter = { path = "../../../../fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr-service-runner = { path = "../../../../fxtr_service_runner", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-service-runner = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_service_runner" } # fxtr-lib-sub: active-in-workdir
+fxtr2 = { path = "../../../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+fxtr = { path = "../../../../../../projects/fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+# Build-dep hints for sdists uv2nix builds in the nix sandbox (sdists that
+# under-declare their build backend). Mirrors nix/fxtr_nix_writer.
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr-service-runner = ["hatchling"]

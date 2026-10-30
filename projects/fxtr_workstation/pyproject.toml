@@ -1,0 +1,68 @@
+[project]
+name = "fxtr_workstation"
+version = "0.1.0"
+description = "Developer workstation tooling for fxtr2"
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.12.1",
+    "ariadne>=0.26.2",
+    "fxtr2",
+    "fxtr-nix-runner",
+    "fxtr_sandboxing",
+    "hypercorn>=0.17.0",
+    "jsonpatch>=1.33",
+    "msgspec>=0.21.0",
+    "starlette>=0.46.2",
+]
+
+[project.optional-dependencies]
+# The peer-RPC *client* helper (fxtr_workstation.peer_rpc). Kept out of
+# the core dependencies on purpose: embedding the server needs no ws
+# client (the same stance behind tests/_websocket_util.py's duplicated
+# copy of the httpx-ws quirk workaround).
+client = ["httpx-ws>=0.9.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
+
+
+[tool.pyright]
+include = [
+    "src/fxtr_workstation",
+]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/fxtr_workstation"]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../v2", editable = true }
+fxtr-nix-runner = { path = "../fxtr_nix_runner", editable = true }
+fxtr_sandboxing = { path = "../fxtr_sandboxing/fxtr_sandboxing", editable = true }
+# Used by the workstation-demo Python script (which runs under
+# the workstation's venv via `uv run`). Not a runtime dep of the
+# workstation library itself.
+fxtr_report_builder = { path = "../fxtr_report_builder", editable = true }
+
+[dependency-groups]
+dev = [
+    "fxtr_report_builder",
+    "httpx-ws>=0.9.0",
+    "pytest>=9.0.3",
+    "pytest-asyncio>=1.3.0",
+    "pytest-xdist>=3.8.0",
+    "pytest-anyio>=0.0.0",
+    "pytest-rerunfailures>=15.0",
+    "pyright>=1.1.0",
+]

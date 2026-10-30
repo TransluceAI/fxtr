@@ -218,6 +218,7 @@ import typing
 from typing import Any
 
 import cbor2
+from frozendict import frozendict
 
 logger = logging.getLogger(__name__)
 
@@ -296,10 +297,25 @@ class FxtrID:
         raise AttributeError("FxtrID is immutable")
 
     def __eq__(self, other: Any) -> bool:
-        return type(other) is type(self) and self._raw_data_id == other._raw_data_id
+        return self.__class__ == other.__class__ and self._raw_data_id == other._raw_data_id
 
     def __hash__(self) -> int:
-        return hash((type(self), self._raw_data_id))
+        return hash((self.__class__, self._raw_data_id))
+
+    def __bytes__(self) -> bytes:
+        return self._raw_data_id
+
+    def __format__(self, format_spec: str) -> str:
+        if not format_spec:
+            return str(self)
+        elif format_spec == "x":
+            return self._raw_data_id.hex()
+        elif format_spec == "i":
+            return self.id_string()
+        elif format_spec == "q":
+            return repr(self.id_string())
+        else:
+            raise ValueError(f"Unknown format spec: {format_spec}")
 
     def split_tag_and_payload(self) -> tuple[str, bytes]:
         return chr(self._raw_data_id[0]), self._raw_data_id[1:]
@@ -345,11 +361,32 @@ class FxtrID:
                 raise ValueError(f"Unknown tag: {tag}")
 
     @classmethod
-    def from_id_string(cls, id_str: str) -> FxtrID:
+    def from_id_string(cls, id_str: str, *, allow_provenance: bool = True) -> FxtrID:
+        """Parse an ``id_string`` back into an ``FxtrID``.
+
+        Args:
+            id_str: The id_string. The ``data@prov`` form (produced by
+                ``id_string(include_provenance=True)``) parses into a layered
+                id; a plain string parses into a bare id.
+            allow_provenance: When ``False``, an ``@``-form ``id_str`` is
+                **rejected** (raises) instead of parsed into a layered id.
+                Use this wherever an id_string must be a bare local id — e.g.
+                wire-ingest points that carry provenance explicitly elsewhere
+                and would otherwise silently accept a smuggled layered id.
+
+        Raises:
+            ValueError: On an empty/malformed id_str, or an ``@``-form when
+                ``allow_provenance=False``.
+        """
         if not id_str:
             raise ValueError("Empty ID string")
 
         if "@" in id_str:
+            if not allow_provenance:
+                raise ValueError(
+                    f"id_string carries an '@' provenance suffix but"
+                    f" allow_provenance=False: {id_str!r}"
+                )
             local_part, provenance_part = id_str.split("@", 1)
             local_id = cls.from_id_string(local_part)
             provenance_id = cls.from_id_string(provenance_part)
@@ -424,24 +461,27 @@ class FxtrID:
             case _:
                 raise ValueError(f"Unknown tag: {tag}")
 
-    def id_string(self) -> str:
+    def id_string(self, *, include_provenance: bool = False) -> str:
         res = self.local_id_string()
-        if self._provenance_parent is not None:
-            res += f"@{self._provenance_parent.id_string()}"
+        if include_provenance and self._provenance_parent is not None:
+            res += f"@{self._provenance_parent.id_string(include_provenance=True)}"
         return res
 
-    def summary(self) -> str:
+    def summary(self, *, include_provenance: bool = False) -> str:
         res = self.local_id_summary()
-        if self._provenance_parent is not None:
+        if include_provenance and self._provenance_parent is not None:
             pp = self._provenance_parent
             if pp.split_tag_and_payload()[0] == "u" and pp._provenance_parent is None:
                 res += f"@(untracked)"
             else:
-                res += f"@{self._provenance_parent.summary()}"
+                res += f"@{self._provenance_parent.summary(include_provenance=True)}"
         return res
 
+    def __str__(self):
+        return self.id_string()
+
     def __repr__(self):
-        return f"<FxtrID {self.summary()}>"
+        return f"<FxtrID {self.summary(include_provenance=True)}>"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -469,6 +509,42 @@ class RawFxtrEntityMarkerID:
     inner_id: FxtrID
 
 
+@dataclasses.dataclass(frozen=True)
+class RawFxtrEntityMissingMarkerSentinel:
+    """Sentinel default for an entity's ``$fxtr.ctx`` field at construction.
+
+    Fxtr entities (e.g. a DataclassEntity) that want to defer capturing a ``$fxtr.ctx``
+    marker until store time can use this sentinel as the field's default. The entity's
+    storage path is then responsible for replacing the top-level
+    ``$fxtr.ctx`` slot with the destination scope's real marker before
+    the cbor reaches byte-level encoding. The benefit is that the
+    marker is determined by where the entity is *stored*, not where it
+    happens to be *constructed*.
+
+    A sentinel must never reach byte-level encoding: it carries no
+    ``inner_id`` (deliberately distinct from ``RawFxtrEntityMarkerID``
+    so it cannot be silently substituted) and there's no canonical wire
+    form for "missing." :func:`fxtr_cbor_dumps_with_marker_check`
+    rejects sentinels outright. The most common way for a sentinel to
+    leak past store-time replacement is when one entity instance is
+    nested directly inside another and the surrounding serializer
+    doesn't know to flatten the nested entity into a reference — the
+    inner entity's default sentinel survives recursive serialization
+    and then trips the encoder.
+    """
+
+
+MISSING_FXTR_CTX_SENTINEL: RawFxtrEntityMissingMarkerSentinel = RawFxtrEntityMissingMarkerSentinel()
+"""Singleton instance of :class:`RawFxtrEntityMissingMarkerSentinel`.
+
+Used as the ``$fxtr.ctx`` default by Python entity representations
+that capture their marker at store time rather than construction time.
+Identity comparison (``is MISSING_FXTR_CTX_SENTINEL``) and
+``isinstance`` both work; we don't strictly require a singleton, since
+equality on a fieldless frozen dataclass is structural anyway.
+"""
+
+
 type FxtrCbor = (
     None
     | int
@@ -482,6 +558,58 @@ type FxtrCbor = (
     | RawStrongFxtrID
     | RawFxtrEntityMarkerID
 )
+
+type FrozenFxtrCbor = (
+    None
+    | int
+    | float
+    | bool
+    | str
+    | bytes
+    | tuple[FrozenFxtrCbor, ...]
+    | frozendict[str, FrozenFxtrCbor]
+    | RawWeakFxtrID
+    | RawStrongFxtrID
+    | RawFxtrEntityMarkerID
+)
+
+
+def freeze_fxtr_cbor(cbor: FxtrCbor) -> FrozenFxtrCbor:
+    """Recursively convert mutable FxtrCbor to immutable FrozenFxtrCbor.
+
+    Converts lists to tuples and dicts to frozendicts. Primitive values and
+    Raw*FxtrID objects are returned as-is since they are already immutable.
+    """
+    match cbor:
+        case list():
+            return tuple(freeze_fxtr_cbor(v) for v in cbor)
+        case dict():
+            return frozendict({k: freeze_fxtr_cbor(v) for k, v in cbor.items()})
+        case None | bool() | int() | float() | str() | bytes():
+            return cbor
+        case RawWeakFxtrID() | RawStrongFxtrID() | RawFxtrEntityMarkerID():
+            return cbor
+        case _:
+            raise TypeError(f"Unsupported FxtrCbor type: {type(cbor)}")
+
+
+def thaw_fxtr_cbor(cbor: FrozenFxtrCbor) -> FxtrCbor:
+    """Recursively convert immutable FrozenFxtrCbor back to mutable FxtrCbor.
+
+    Converts tuples to lists and frozendicts to dicts. Primitive values and
+    Raw*FxtrID objects are returned as-is.
+    """
+    match cbor:
+        case tuple():
+            return [thaw_fxtr_cbor(v) for v in cbor]
+        case frozendict():
+            return {k: thaw_fxtr_cbor(v) for k, v in cbor.items()}
+        case None | bool() | int() | float() | str() | bytes():
+            return cbor
+        case RawWeakFxtrID() | RawStrongFxtrID() | RawFxtrEntityMarkerID():
+            return cbor
+        case _:
+            raise TypeError(f"Unsupported FrozenFxtrCbor type: {type(cbor)}")
 
 
 def _fxtr_id_lift(fid: FxtrID, levels: int) -> FxtrID:
@@ -550,22 +678,48 @@ def fxtr_cbor_loads(data: bytes | memoryview) -> FxtrCbor:
     return cbor2.loads(data, tag_hook=fxtr_cbor_decode_hook)
 
 
+class InvalidEntityError(Exception):
+    """An error raised when an entity is invalid."""
+
+
+class DuplicateEntityMarkerError(InvalidEntityError):
+    """An error raised when an entity has more than one RawFxtrEntityMarkerID."""
+
+
 def fxtr_cbor_dumps_with_marker_check(value: FxtrCbor) -> bytes:
-    """Dump an entity and check that it has exactly one RawFxtrEntityMarkerID at "$fxtr.ctx"."""
+    """Dump an entity and check that it has exactly one RawFxtrEntityMarkerID at "$fxtr.ctx".
+
+    Also rejects any :class:`RawFxtrEntityMissingMarkerSentinel` reaching
+    encoding — the sentinel is a default that the entity's storage path
+    is expected to replace before the cbor reaches this function.
+    """
     if not isinstance(value, dict):
-        raise ValueError("Entity must be a dictionary")
+        raise InvalidEntityError("Entity must be a dictionary")
     if "$fxtr.ctx" not in value:
-        raise ValueError('Entity must have a "$fxtr.ctx" field')
-    if not isinstance(value["$fxtr.ctx"], RawFxtrEntityMarkerID):
-        raise ValueError('"$fxtr.ctx" field must be a RawFxtrEntityMarkerID')
+        raise InvalidEntityError('Entity must have a "$fxtr.ctx" field')
+    ctx = value["$fxtr.ctx"]
+    if isinstance(ctx, RawFxtrEntityMissingMarkerSentinel):
+        raise DuplicateEntityMarkerError(
+            'Top-level "$fxtr.ctx" is a RawFxtrEntityMissingMarkerSentinel.'
+            " The destination scope's marker should have replaced it before"
+            " encoding."
+        )
+    if not isinstance(ctx, RawFxtrEntityMarkerID):
+        raise InvalidEntityError('"$fxtr.ctx" field must be a RawFxtrEntityMarkerID')
 
     found = False
 
     def enc_hook(encoder, value):
         nonlocal found
+        if isinstance(value, RawFxtrEntityMissingMarkerSentinel):
+            raise DuplicateEntityMarkerError(
+                "Found a RawFxtrEntityMissingMarkerSentinel during encoding."
+                " Sentinels should be replaced by the destination scope's"
+                " marker at store time and never reach byte encoding."
+            )
         if isinstance(value, RawFxtrEntityMarkerID):
             if found:
-                raise ValueError(
+                raise DuplicateEntityMarkerError(
                     "Found more than one RawFxtrEntityMarkerID in this entity! Not allowed."
                 )
             found = True
@@ -573,6 +727,6 @@ def fxtr_cbor_dumps_with_marker_check(value: FxtrCbor) -> bytes:
         elif isinstance(value, (RawWeakFxtrID, RawStrongFxtrID)):
             return encoder.encode(cbor2.CBORTag(value._CBOR_TAG, value.inner_id._raw_data_id))
         else:
-            raise ValueError(f"Unsupported type: {type(value)}")
+            raise InvalidEntityError(f"Unsupported type: {type(value)}")
 
     return cbor2.dumps(value, default=enc_hook, canonical=True)

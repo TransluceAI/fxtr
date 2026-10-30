@@ -1,0 +1,44 @@
+# Streaming tasks for the nested-channel demo — a wasm spawn package
+# (single-pyproject shape, like simple_task_lib; see packages/README.md).
+# The connect config (a plain string) picks which task you get.
+#
+# Depends on the marker packages `streaming-tasks` (protocols + tags),
+# `simple-tasks` (transitively imported by streaming_tasks), and
+# `presentables` (Note) by intra-workdir path.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "streaming-task-lib"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable]",
+    "streaming-tasks",
+    "simple-tasks",
+    "presentables",
+]
+
+[project.entry-points."fxtr.service"]
+service = "streaming_task_lib:run"
+
+[tool.uv.sources]
+streaming-tasks = { path = "../streaming_tasks", editable = true }
+simple-tasks = { path = "../simple_tasks", editable = true }
+presentables = { path = "../presentables", editable = true }
+fxtr-sandbox-rpc-adapter = { path = "../../../../../projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../../projects/fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr2-portable = { path = "../../../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr2-portable = ["hatchling"]

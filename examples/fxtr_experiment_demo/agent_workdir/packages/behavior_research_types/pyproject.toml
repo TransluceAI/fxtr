@@ -1,0 +1,15 @@
+# Marks ``behavior_research_types`` as a Python package in the demo's
+# ``packages/`` layout (host-importable via sys.path inserts; the
+# sandbox bridge adds ``src/`` automatically when an agent is driving).
+#
+# Pure vocabulary — entity types, service protocols, and handle-key
+# helpers for the behavior-research scenario; no service-side code, no
+# external deps (the embedding venv supplies fxtr2).
+[project]
+name = "behavior_research_types"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,40 @@
+[project]
+name = "fxtr_workstation_demo"
+version = "0.0.1"
+description = "Consumer-level demo bringing the workstation + agent MCP + agent-plugin renderer together"
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.12.1",
+    "fxtr2",
+    "fxtr_workstation[client]",
+    "fxtr_workstation_mcp",
+    "fxtr_sandboxing",
+    "fxtr_report_builder",
+    "docent-python",
+]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../v2", editable = true }
+fxtr_workstation = { path = "../../projects/fxtr_workstation", editable = true }
+fxtr_workstation_mcp = { path = "../../projects/fxtr_workstation_agent_plugin/fxtr_workstation_mcp", editable = true }
+fxtr_sandboxing = { path = "../../projects/fxtr_sandboxing/fxtr_sandboxing", editable = true }
+fxtr_report_builder = { path = "../../projects/fxtr_report_builder", editable = true }
+
+# Host-side tests for the agent_workdir packages (the agent packages are
+# made importable by tests/conftest.py sys.path inserts, mirroring
+# run_demo_workstation.py).
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+# This is a script-only package — no packaged wheel, no installable
+# modules. ``uv run`` resolves the deps; the ``run_demo_workstation.py``
+# script is invoked directly.
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+bypass-selection = true

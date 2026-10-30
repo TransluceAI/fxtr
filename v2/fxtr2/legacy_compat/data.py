@@ -8,11 +8,10 @@ integrity verification.
 Typical usage:
     from fxtr.object_model.core import EntityBase as V1Entity
     from fxtr2.legacy_compat import LegacyCompat
-    from fxtr2.data.entity_serdes import store_entity
 
     # Wrap and store a v1 entity
     v1_entity: V1Entity = ...
-    ref = store_entity(LegacyCompat(v1_entity))
+    ref = LegacyCompat(v1_entity).store()
 
     # Load it back
     loaded = await ref.load()
@@ -22,13 +21,21 @@ Typical usage:
 from __future__ import annotations
 
 import abc
-from typing import Any, Generic, TypeVar
+import dataclasses
+from typing import Any, ClassVar, Generic, TypeVar
 
 import cbrrr
-from fxtr2.data import fxtr_context_api, fxtr_scope
-from fxtr2.data.entity_core import FxtrCbor, FxtrID, RawStrongFxtrID, RawWeakFxtrID
-from fxtr2.data.entity_serdes import Entity, EntityRef, build_converter_for, store_entity
 
+from fxtr2.conversion.converters.legacy_entity_abc import SelfLoadingLegacyEntity
+from fxtr2.data import entity_ref_scope, fxtr_context_api
+from fxtr2.data.entity_core import (
+    FxtrCbor,
+    FxtrID,
+    RawFxtrEntityMarkerID,
+    RawStrongFxtrID,
+    RawWeakFxtrID,
+)
+from fxtr2.data.entity_ref_scope import Entity, EntityRef
 from fxtr.object_model import core as v1_core
 
 # Type variable for the wrapped v1 entity type
@@ -242,7 +249,7 @@ class PostOrderEntityCollector(v1_core.HubValueVisitor):
 # =============================================================================
 
 
-class LegacyCompat(Entity, Generic[T]):
+class LegacyCompat(SelfLoadingLegacyEntity, Generic[T]):
     """Wrapper for storing v1 entities in v2's system.
 
     This class wraps a v1 EntityBase and provides serialization/deserialization
@@ -261,6 +268,8 @@ class LegacyCompat(Entity, Generic[T]):
 
     _TYPE_ID = LEGACY_V1_TYPE_ID
 
+    _value: T
+
     def __init__(self, value: T):
         """Create a LegacyCompat wrapper for a v1 entity.
 
@@ -269,7 +278,7 @@ class LegacyCompat(Entity, Generic[T]):
         """
         if not isinstance(value, v1_core.EntityBase):
             raise TypeError(f"LegacyCompat requires a v1 EntityBase, got {type(value).__name__}")
-        self._value = value
+        super().__setattr__("_value", value)
 
     @property
     def value(self) -> T:
@@ -284,7 +293,7 @@ class LegacyCompat(Entity, Generic[T]):
         """
         return v1_core.entity_cid(self._value)
 
-    def _to_fxtr_cbor(self) -> FxtrCbor:
+    def _to_fxtr_cbor(self, scope: entity_ref_scope.FxtrScope) -> FxtrCbor:
         """Serialize the wrapped v1 entity to v2's CBOR format.
 
         This method:
@@ -294,7 +303,6 @@ class LegacyCompat(Entity, Generic[T]):
 
         Child entities are stored as side effects, following the Entity contract.
         """
-        scope = fxtr_scope.ACTIVE_SCOPE.get()
         v1_entity = self._value
 
         # Collect ALL entities in subgraph using post-order traversal.
@@ -320,7 +328,7 @@ class LegacyCompat(Entity, Generic[T]):
 
             # Build and store wrapper for this child
             wrapper: FxtrCbor = {
-                "$fxtr.ctx": fxtr_scope.get_active_context_marker(),
+                "$fxtr.ctx": RawFxtrEntityMarkerID(inner_id=scope.get_context_marker_id()),
                 "$fxtr.type": RawWeakFxtrID(inner_id=scope.track_builtin(self._TYPE_ID)),
                 "data": modified_data,
                 "legacy_cid": bytes(entity_cid),
@@ -333,14 +341,19 @@ class LegacyCompat(Entity, Generic[T]):
         root_modified = walk_and_replace_cids(root_ipld, cid_to_fxtr_id)
 
         return {
-            "$fxtr.ctx": fxtr_scope.get_active_context_marker(),
+            "$fxtr.ctx": RawFxtrEntityMarkerID(inner_id=scope.get_context_marker_id()),
             "$fxtr.type": RawWeakFxtrID(inner_id=scope.track_builtin(self._TYPE_ID)),
             "data": root_modified,
             "legacy_cid": bytes(self.legacy_cid),
         }
 
     @classmethod
-    async def _from_fxtr_cbor(cls, cbor: FxtrCbor, annotated_type: Any | None) -> LegacyCompat[Any]:
+    async def _from_fxtr_cbor(
+        cls,
+        cbor: FxtrCbor,
+        annotated_type: Any | None,
+        scope: entity_ref_scope.FxtrScope,
+    ) -> LegacyCompat[Any]:
         """Deserialize a LegacyCompat entity from v2's CBOR format.
 
         This method:
@@ -352,8 +365,6 @@ class LegacyCompat(Entity, Generic[T]):
 
         Returns an Awaitable because child loading is async.
         """
-
-        scope = fxtr_scope.ACTIVE_SCOPE.get()
 
         assert isinstance(cbor, dict), f"Expected dict, got {type(cbor)}"
         data = cbor["data"]
@@ -367,9 +378,7 @@ class LegacyCompat(Entity, Generic[T]):
         # Load all children, collecting both their CID and their v1 entity
         child_data: dict[FxtrID, tuple[cbrrr.CID, v1_core.EntityBase]] = {}
         for child_id in child_fxtr_ids:
-            child_ref: EntityRef[LegacyCompat[Any]] = EntityRef(
-                child_id, build_converter_for(LegacyCompat)
-            )
+            child_ref: EntityRef[LegacyCompat[Any]] = EntityRef(child_id, LegacyCompat)
             child_compat = await child_ref.load(scope)
             if not isinstance(child_compat, LegacyCompat):
                 raise ValueError(
@@ -421,12 +430,14 @@ class LegacyCompat(Entity, Generic[T]):
             return self.legacy_cid == other.legacy_cid
         return False
 
+    def __setattr__(self, name: str, value: Any) -> None:
+        raise AttributeError("LegacyCompat entities are immutable")
+
     def __hash__(self) -> int:
         return hash(self.legacy_cid)
 
-    def store(self, scope: fxtr_scope.FxtrScope | None = None) -> EntityRef[LegacyCompat[T]]:
-        """Store the entity in the active scope or given scope."""
-        return store_entity(self, as_type=LegacyCompat, scope=scope)
+    # store() is inherited from Entity.store() and delegates to _fxtr_store_impl()
+    # (provided by SelfLoadingLegacyEntity) which calls _to_fxtr_cbor().
 
     @classmethod
     def _get_type_name_for_cache(cls) -> str:
@@ -443,13 +454,32 @@ class LegacyCompat(Entity, Generic[T]):
 # =============================================================================
 
 
-class TransitionalUpgradedEntity(Entity, abc.ABC):
-    """Base class for transitional upgraded entities."""
+class TransitionalUpgradedEntity(Entity):
+    """Base class for transitional upgraded entities.
+
+    These entities are always mixed with DataclassEntity, which provides the actual
+    serialization. This base class provides the shared interface needed by UpgradeCache.
+
+    It is a strict requirement that there be a _unique_ canonical TransitionalUpgradedEntity
+    value for each TransitionalUpgradedEntity class and legacy CID.
+    """
+
+    # Set by DataclassEntity.__init_subclass__ when fxtr_type= is provided
+    _fxtr_known_type_id: ClassVar[FxtrID | None]
 
     @abc.abstractmethod
     def _get_legacy_cid(self) -> cbrrr.CID:
         """Get the legacy CID of the entity."""
         raise NotImplementedError("Not implemented")
+
+    @classmethod
+    def _fxtr_type_id(cls) -> FxtrID:
+        """Get the type ID for the entity (delegates to DataclassEntity's _fxtr_known_type_id)."""
+        type_id = cls._fxtr_known_type_id
+        assert (
+            type_id is not None
+        ), "TransitionalUpgradedEntity subclass must set fxtr_type via DataclassEntity"
+        return type_id
 
     @classmethod
     def _get_type_name_for_cache(cls) -> str:
@@ -466,11 +496,19 @@ class TransitionalUpgradedEntity(Entity, abc.ABC):
 DAG_CBOR_CID_SHARD_OFFSET = 9
 
 
+@dataclasses.dataclass(eq=True, frozen=True)
 class UpgradeCache:
-    """Cache object used to upgrade legacy entities to v2 equivalents."""
+    """Cache object used to upgrade legacy entities to v2 equivalents.
 
-    def __init__(self, cache_namespace: fxtr_context_api.FxtrNamespace):
-        self._cache_namespace = cache_namespace
+    Two UpgradeCaches are equal if they have the same namespace (by identity).
+    """
+
+    cache_namespace: fxtr_context_api.FxtrNamespace
+    check_consistency: bool = False
+
+    # Internal resolution cache used to avoid lookups into the cache namespace. This is OK because
+    # any well-behaved upgrade map will be a deterministic function.
+    _cache_cache: dict[str, FxtrID] | None = dataclasses.field(default=None, compare=False)
 
     def _get_pin_key(
         self, transitional_type_name: str, transitional_type_id: str, cid: cbrrr.CID
@@ -486,21 +524,49 @@ class UpgradeCache:
         Args:
             entity: The entity to save. Must be storeable in the active scope.
         """
+        if self._cache_cache is None:
+            object.__setattr__(self, "_cache_cache", await self.cache_namespace.list_pins())
+        assert self._cache_cache is not None
+
         transitional_type_name = type(entity)._get_type_name_for_cache()
         transitional_type_id = type(entity)._fxtr_type_id().id_string()
-        entity_id = store_entity(entity).ref
         pin_key = self._get_pin_key(
             transitional_type_name, transitional_type_id, entity._get_legacy_cid()
         )
+
+        id_in_cache = self._cache_cache.get(pin_key)
+        if id_in_cache is None:
+            id_in_cache = await self.cache_namespace.try_retrieve(pin_key)
+            if id_in_cache is not None:
+                self._cache_cache[pin_key] = id_in_cache
+
+        if id_in_cache is not None:
+            if self.check_consistency:
+                entity_id = entity.store().entity_id
+                if id_in_cache != entity_id:
+                    raise ValueError(
+                        f"Entity {entity_id} (legacy CID {entity._get_legacy_cid()}) already exists"
+                        f" in cache as {id_in_cache}!"
+                    )
+            # It's already in the cache, no need to store.
+            return
+
+        # Not in cache. Store it and copy it into the cache.
+        entity_id = entity.store().entity_id
         try:
-            await self._cache_namespace.pin(pin_key, entity, overwrite=False)
+            await self.cache_namespace.pin(pin_key, entity_id, overwrite=False)
         except KeyError as exc:
-            # Entity already exists?
-            val = await self._cache_namespace.retrieve(pin_key)
-            if val != entity_id:
-                raise ValueError(
-                    f"Entity {entity_id} (legacy CID {entity._get_legacy_cid()}) already exists in cache as {val}!"
-                ) from exc
+            # Entity already exists! Maybe a race and someone else stored it at the same time.
+            if self.check_consistency:
+                val = await self.cache_namespace.retrieve(pin_key)
+                if val != entity_id:
+                    raise ValueError(
+                        f"Entity {entity_id} (legacy CID {entity._get_legacy_cid()}) already exists"
+                        f" in cache as {val}!"
+                    ) from exc
+            else:
+                # If not checking consistency, ignore the conflict.
+                pass
 
     async def lookup_upgraded[
         T: TransitionalUpgradedEntity | LegacyCompat[Any]
@@ -509,6 +575,6 @@ class UpgradeCache:
         transitional_type_name = as_type.__name__
         transitional_type_id = as_type._fxtr_type_id().id_string()
         pin_key = self._get_pin_key(transitional_type_name, transitional_type_id, legacy_cid)
-        val = await self._cache_namespace.retrieve(pin_key, type=as_type)
+        val = await self.cache_namespace.retrieve(pin_key, type=as_type)
         # Copy the entity out of the namespace's scope into our own active scope.
-        return await val.copy_from(self._cache_namespace.scope)
+        return await val.copy_from(self.cache_namespace.scope)

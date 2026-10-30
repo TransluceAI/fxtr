@@ -1,0 +1,32 @@
+# Entity types shared by the publishing demo's seed + builders + renderers.
+# fxtr2-only (light): built into the builder venv (mkVenv over ../../builders) and
+# resolved by mkEntityFromPython for the Note/Stats `forType` entities.
+#
+# `[tool.uv.sources]` uses the comment-flip convention: relative paths active in
+# the template, pinned git sources activated in the scaffolded workdir copy.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "demo_types"
+version = "0.0.1"
+description = "Entity types (Note, Stats) for the fxtr publishing demo."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+]
+
+[tool.uv.sources]
+fxtr2 = { path = "../../../../../v2", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2 = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2" } # fxtr-lib-sub: active-in-workdir
+fxtr = { path = "../../../../../projects/fxtr_v1", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_v1" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]

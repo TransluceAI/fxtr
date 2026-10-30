@@ -11,7 +11,7 @@ from fxtr.object_model import core
 
 async def main():
     # Load config
-    config_path = Path(__file__).parents[4] / "examples/demo_09_15/user/fxtr.toml"
+    config_path = Path(__file__).parents[4] / "projects/fxtr_v1/examples/demo_09_15/user/fxtr.toml"
     config = fxtrconfig.parse_fxtr_config(config_path)
 
     # Fetch the experiment

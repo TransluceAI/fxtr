@@ -1,0 +1,77 @@
+# Portable subset of fxtr2 for use inside sandboxed environments (eryx/WASM).
+#
+# Builds the same `fxtr2` package name but only includes the modules needed for:
+# - Entity definition, serialization, storage, and scope management
+# - The RPC bridge (cap-ir, JSON transport, fxtr RPC)
+#
+# It intentionally conflicts with the full fxtr2 package — you install one or the
+# other, not both. The host uses the full package; the sandbox uses this one.
+#
+# Build:
+#   cd v2/portable && uv build --wheel
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fxtr2-portable"
+version = "0.0.1a0"
+description = "fxtr2 portable subset — entity system + RPC bridge for sandboxed environments"
+requires-python = ">=3.12"
+dependencies = [
+    "anyio>=4.12.1",
+    # cbor2 6.x ships compiled-only wheels; we need a pure-Python wheel for the
+    # sandbox bundling pipeline. 5.7.1+ are pure-Python-shipped.
+    "cbor2>=5.7.1,<6",
+    "frozendict>=2.4.6",
+    "mashumaro>=3.17",
+]
+
+[[tool.uv.index]]
+name = "mashumaro-prerelease"
+url = "https://soft-crumble-cbe0d1.netlify.app/simple/"
+explicit = true
+
+[tool.uv.sources]
+mashumaro = { index = "mashumaro-prerelease" }
+
+[tool.hatch.build.targets.wheel]
+packages = []
+
+[tool.hatch.build.targets.wheel.force-include]
+# Top-level package init
+"../fxtr2/__init__.py" = "fxtr2/__init__.py"
+
+# RPC (all modules)
+"../fxtr2/rpc" = "fxtr2/rpc"
+
+# Utilities
+"../fxtr2/util" = "fxtr2/util"
+
+# Conversion (all modules — only depends on core)
+"../fxtr2/conversion" = "fxtr2/conversion"
+
+# Services (all modules — pure Python, includes cap_ir_arena.py)
+"../fxtr2/services" = "fxtr2/services"
+
+# Common (output channels / streams — pure Python, depends only on
+# data + conversion + services above)
+"../fxtr2/common" = "fxtr2/common"
+
+# Leases (all modules — pure Python)
+"../fxtr2/leases" = "fxtr2/leases"
+
+# Debug (scope-drain report + its instrumentation — pure Python; the
+# core imports fxtr2.debug.scope_instrumentation at module level, so
+# this package is required, not optional)
+"../fxtr2/debug" = "fxtr2/debug"
+
+# Data layer (portable subset only — fxtr_context_api.py excluded because it pulls
+# in tsv_namespace/sqlite_store which have heavy/C-extension dependencies)
+"../fxtr2/data/entity_core.py" = "fxtr2/data/entity_core.py"
+"../fxtr2/data/abstract_arena.py" = "fxtr2/data/abstract_arena.py"
+"../fxtr2/data/arena_util.py" = "fxtr2/data/arena_util.py"
+"../fxtr2/data/entity_ref_scope.py" = "fxtr2/data/entity_ref_scope.py"
+"../fxtr2/data/memory_arena.py" = "fxtr2/data/memory_arena.py"
+"../fxtr2/data/system_entities.py" = "fxtr2/data/system_entities.py"

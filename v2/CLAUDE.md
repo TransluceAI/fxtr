@@ -14,4 +14,6 @@ When you finish with a plan, in your message back to me, always conclude by noti
 
 Default to using `anyio`'s APIs for async instead of `asyncio`.
 
+Default to using `uv run pytest -n auto` to run tests in parallel when running the full test suite.
+
 When launching servers in the background, _always_ start the server in a separate bash tool call in background mode. Don't use `&` to background a command, this is error prone and makes it difficult to control the background process later.

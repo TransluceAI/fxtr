@@ -1,0 +1,21 @@
+# Demo sandboxed service (echoes its argument back after a delay) — the
+# HOST-IMPORTABLE half of the package. Marker-style, like `presentables/`:
+# no dependencies — fxtr2 is supplied by whichever venv embeds it (the
+# `type_entities/` aggregator on the host, so the flake can build the
+# service type's typeEntity for `renderers/delayed_echo/`; the runtime
+# closure in the run_script sandbox).
+#
+# The wasm spawn environment lives in `sandbox_spawn/pyproject.toml` — a
+# uv project/venv *declaration* (not a code package) that depends on this
+# one, pins the WASI resolution, and declares the `fxtr.service` entry
+# point the spawner reads. The flake builds `fxtr.services.delayed_echo`
+# from `./sandbox_spawn`.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "delayed-echo"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = []

@@ -83,7 +83,7 @@ If two cleanup processes race, the second one will acquire the lock on a moved-a
 Otherwise `rename()` fails with `EXDEV`. A subdirectory or sibling directory works well.
 
 **4. You need a way to detect "initialized"**
-  
+
 Since you release the lock after initialization, subsequent lockers will see a consistent state. But you need an atomic signal that init is complete — a sentinel file created as the last step of initialization works well.
 
 **5. Handle the various "start over" triggers gracefully**

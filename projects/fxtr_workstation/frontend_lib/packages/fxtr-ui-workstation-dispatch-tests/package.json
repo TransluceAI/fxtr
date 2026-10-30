@@ -1,0 +1,21 @@
+{
+	"name": "@fxtr-ui/workstation-dispatch-tests",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"dependencies": {
+		"@fxtr-ui/core": "workspace:*",
+		"@fxtr-ui/react": "workspace:*",
+		"@fxtr-ui/react-dispatch": "workspace:*",
+		"@fxtr-ui/state-util": "workspace:*",
+		"@fxtr-ui/workstation-dispatch": "workspace:*",
+		"jotai": "^2.10.0"
+	},
+	"devDependencies": {
+		"@testing-library/react": "^16.0.0",
+		"@types/react": "^19.0.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0",
+		"vitest": "^3.0.0"
+	}
+}

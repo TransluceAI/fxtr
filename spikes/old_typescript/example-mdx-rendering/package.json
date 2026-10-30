@@ -1,0 +1,29 @@
+{
+	"name": "@fxtr/example-mdx-rendering",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"scripts": {
+		"dev": "tsx src/server.ts",
+		"build": "vite build"
+	},
+	"dependencies": {
+		"@fxtr/core": "workspace:*",
+		"@fxtr/http-client": "workspace:*",
+		"@fxtr/http-server": "workspace:*",
+		"@fxtr/mdx-transform": "workspace:*",
+		"@fxtr/react": "workspace:*",
+		"@hono/node-server": "^1.14.0",
+		"@mdx-js/rollup": "^3.0.0",
+		"hono": "^4.0.0",
+		"react": "^19.0.0",
+		"react-dom": "^19.0.0"
+	},
+	"devDependencies": {
+		"@types/react": "^19.0.0",
+		"@types/react-dom": "^19.0.0",
+		"@vitejs/plugin-react": "^4.0.0",
+		"tsx": "^4.0.0",
+		"vite": "^6.0.0"
+	}
+}

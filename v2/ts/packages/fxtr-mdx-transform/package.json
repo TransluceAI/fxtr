@@ -1,0 +1,24 @@
+{
+	"name": "@fxtr/mdx-transform",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.ts",
+			"types": "./src/index.ts"
+		},
+		"./jsx-runtime": {
+			"import": "./src/jsx-runtime.ts",
+			"types": "./src/jsx-runtime.ts"
+		},
+		"./jsx-dev-runtime": {
+			"import": "./src/jsx-runtime.ts",
+			"types": "./src/jsx-runtime.ts"
+		}
+	},
+	"dependencies": {
+		"@fxtr/core": "workspace:*",
+		"@mdx-js/mdx": "^3.0.0"
+	}
+}

@@ -1,0 +1,56 @@
+# Dependencies explicitly approved to run install/build scripts. Without
+# this, pnpm warns about "Ignored build scripts" on every install.
+onlyBuiltDependencies:
+  - "@biomejs/biome"
+  - esbuild
+  - cbor-extract
+
+packages:
+  - "v2/ts/packages/*"
+  # old_typescript: deprecated TS packages (the original @fxtr/react
+  # substrate + report packages + example apps, and the old
+  # @fxtr-workstation/* panel-viewer prototype) that have been
+  # subsumed by the @fxtr-ui/* frontend_lib packages. Archived under
+  # spikes/old_typescript/ but kept IN the workspace on purpose so
+  # they still install/typecheck/lint and don't silently bitrot. They
+  # can be dropped entirely (this glob + their root tsconfig/vitest
+  # references) once we're sure nothing here is worth resurrecting.
+  - "spikes/old_typescript/*"
+  # fxtr-ui-* foundation: new frontend-lib packages built from scratch
+  # on top of the workstation /client wire (and, later, the HTTP fxtr
+  # namespace). Lives under projects/fxtr_workstation/frontend_lib/ so
+  # the design can stabilize co-located with the workstation that
+  # consumes it; once the surface settles, the framework-agnostic
+  # packages will move into v2/ts/packages/. See
+  # projects/fxtr_workstation/plans/phase0/part3_frontend_ui/overview.md.
+  - "projects/fxtr_workstation/frontend_lib/packages/*"
+  # NOTE: projects/fxtr_report_builder/ts/packages/* is deliberately NOT a
+  # workspace member. The MDX-to-FxtrCbor CLI is self-contained (only
+  # @mdx-js/mdx + cbor-x, no @fxtr-* deps) and is built pure-pnpm-in-nix via
+  # `lib.fxtr.reportBuilderCli` (pnpm.fetchDeps wants a self-contained package +
+  # its own lockfile, not the whole-repo workspace closure). It keeps its own
+  # pnpm-lock.yaml, checked by a dedicated CLI-dir pre-commit hook.
+  # To install its deps locally (needed for the root `pnpm check`, whose
+  # tsconfig references the cli): `pnpm install --ignore-workspace` FROM the
+  # cli dir — a plain `pnpm install` there silently targets this workspace
+  # and leaves the cli's node_modules missing/stale.
+  # fxtr-workstation-demo (consumer-level): the assembly-stage demo
+  # bringing the workstation + agent plugin + agent-plugin-renderer
+  # together. Lives outside frontend_lib/ as a flat consumer app
+  # (Python backend + Vite frontend + sample agent workdir). The
+  # frontend uses workspace:* deps on @fxtr-ui/* packages.
+  - "examples/fxtr_workstation_demo/frontend"
+  # fxtr-experiment-demo: the persistent experiment-backend demo
+  # (fxtr_experiment workflow runner hosted in a workstation). Same
+  # flat consumer-app shape as the workstation demo.
+  - "examples/fxtr_experiment_demo/frontend"
+  # The experiment dashboard renderer (the in-repo, first-class panel
+  # for fxtr_experiment's user capability — see
+  # projects/fxtr_experiment/notes/monitoring_ui.md). In the workspace
+  # for typecheck + vitest; packaged for dynamic dispatch via the repo
+  # nix lib's esbuild slice.
+  - "projects/fxtr_experiment/frontend"
+  # fxtr_http_demo (7a Part 5): the stateless HTTP-backend demo — a Vite
+  # frontend over @fxtr-ui/connector-http + @fxtr-ui/panel-viewer, driven
+  # by the Python backend in the sibling server/ dir.
+  - "examples/fxtr_http_demo/web"

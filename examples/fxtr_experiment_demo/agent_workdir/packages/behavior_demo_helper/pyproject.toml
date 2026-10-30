@@ -1,0 +1,16 @@
+# Marks ``behavior_demo_helper`` as a Python package in the demo's
+# ``packages/`` layout (host-importable via sys.path inserts; the
+# sandbox bridge adds ``src/`` automatically when an agent is driving).
+#
+# The marker half of the behavior scenario's driver service: the
+# wire-stable service type id + protocol the driver-panel renderer
+# dispatches on. No deps (the embedding venv supplies fxtr2); the impl
+# lives in ``examples/fxtr_experiment_demo/behavior/``.
+[project]
+name = "behavior_demo_helper"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import AsyncIterator
 
 import pytest
-from fxtr.object_model import core as v1_core
 
 from fxtr2.data.entity_core import FxtrID
-from fxtr2.data.entity_serdes import EntityRef, store_entity
-from fxtr2.data.fxtr_scope import ACTIVE_SCOPE, FxtrScope
+from fxtr2.data.entity_ref_scope import ACTIVE_SCOPE, EntityRef, FxtrScope
 from fxtr2.legacy_compat import (
     LEGACY_V1_TYPE_ID,
     LegacyCompat,
@@ -17,6 +15,7 @@ from fxtr2.legacy_compat import (
     walk_and_collect_fxtr_ids,
     walk_and_replace_cids,
 )
+from fxtr.object_model import core as v1_core
 
 # =============================================================================
 # V1 Test Entity Classes
@@ -190,7 +189,7 @@ class TestLegacyCompatRoundtrip:
         compat = LegacyCompat(v1_entity)
 
         # Store
-        ref = store_entity(compat)
+        ref = compat.store()
         assert isinstance(ref, EntityRef)
 
         # Load
@@ -209,7 +208,7 @@ class TestLegacyCompatRoundtrip:
         compat = LegacyCompat(parent)
 
         # Store
-        ref = store_entity(compat)
+        ref = compat.store()
 
         # Load
         loaded = await ref.load(compat_scope)
@@ -225,7 +224,7 @@ class TestLegacyCompatRoundtrip:
         entity = V1EntityWithOptionalChild(name="test", child=None)
         compat = LegacyCompat(entity)
 
-        ref = store_entity(compat)
+        ref = compat.store()
         loaded = await ref.load(compat_scope)
 
         assert isinstance(loaded.value, V1EntityWithOptionalChild)
@@ -238,7 +237,7 @@ class TestLegacyCompatRoundtrip:
         entity = V1EntityWithOptionalChild(name="test", child=child)
         compat = LegacyCompat(entity)
 
-        ref = store_entity(compat)
+        ref = compat.store()
         loaded = await ref.load(compat_scope)
 
         assert isinstance(loaded.value, V1EntityWithOptionalChild)
@@ -256,7 +255,7 @@ class TestLegacyCompatRoundtrip:
         entity = V1EntityWithList(name="parent", children=children)
         compat = LegacyCompat(entity)
 
-        ref = store_entity(compat)
+        ref = compat.store()
         loaded = await ref.load(compat_scope)
 
         assert isinstance(loaded.value, V1EntityWithList)
@@ -273,7 +272,7 @@ class TestLegacyCompatRoundtrip:
         outer = NestedV1Entity(name="outer", inner=inner)
         compat = LegacyCompat(outer)
 
-        ref = store_entity(compat)
+        ref = compat.store()
         loaded = await ref.load(compat_scope)
 
         assert isinstance(loaded.value, NestedV1Entity)
@@ -291,8 +290,8 @@ class TestLegacyCompatRoundtrip:
         parent2 = V1EntityWithChild(name="parent2", child=shared)
 
         # Store both
-        ref1 = store_entity(LegacyCompat(parent1))
-        ref2 = store_entity(LegacyCompat(parent2))
+        ref1 = LegacyCompat(parent1).store()
+        ref2 = LegacyCompat(parent2).store()
 
         # Load both
         loaded1 = await ref1.load(compat_scope)
@@ -312,7 +311,7 @@ class TestLegacyCompatCidVerification:
         original_cid = v1_core.entity_cid(v1_entity)
 
         compat = LegacyCompat(v1_entity)
-        ref = store_entity(compat)
+        ref = compat.store()
         loaded = await ref.load(compat_scope)
 
         assert loaded.legacy_cid == original_cid

@@ -1,0 +1,15 @@
+{
+	"name": "@fxtr-ui/panel-viewer-tests",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"dependencies": {
+		"@fxtr-ui/core": "workspace:*",
+		"@fxtr-ui/connector-workstation": "workspace:*",
+		"@fxtr-ui/panel-viewer": "workspace:*",
+		"jotai": "^2.10.0"
+	},
+	"devDependencies": {
+		"vitest": "^3.0.0"
+	}
+}

@@ -1,0 +1,15 @@
+{
+	"name": "@fxtr-ui/core",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.ts",
+			"types": "./src/index.ts"
+		}
+	},
+	"dependencies": {
+		"jotai": "^2.10.0"
+	}
+}

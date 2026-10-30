@@ -1,0 +1,37 @@
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "fxtr_nix_writer"
+version = "0.0.1"
+description = "Lib-internal scaffolding for writing fxtr2 layered file stores from inside nix derivations."
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+    "anyio",
+]
+
+[project.scripts]
+# Invoked inside a derivation by nix/lib/runFxtrWriter.nix.
+fxtr-nix-writer = "fxtr_nix_writer.cli:main"
+
+# fxtr2 is reached by a relative path-dep. Because the flake lives at the
+# repo root, `../../../v2` resolves inside the nix store copy (the
+# `nix_prototype_augment -> ../lib` pattern). fxtr2's own non-PyPI sources
+# (fxtr v1 and the mashumaro fork) are NOT inherited from its pyproject —
+# uv only honors `[tool.uv.sources]` from the workspace root — so they are
+# redeclared here. See design_notes/10_nix_infrastructure.md.
+[tool.uv.sources]
+fxtr2 = { path = "../../v2", editable = true }
+fxtr = { path = "../../projects/fxtr_v1", editable = true }
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+# Build-dep hints for sdists uv2nix builds in the nix sandbox (sdists that
+# under-declare their build backend). Mirrors the spike.
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]

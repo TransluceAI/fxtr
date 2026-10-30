@@ -1,0 +1,39 @@
+/**
+ * Right-click context menu styles.
+ *
+ * Applied to the base-ui ContextMenu.Popup / Item elements rendered by
+ * @fxtr-workstation/core's useEntityContextMenu.
+ */
+
+.fw-context-menu-popup {
+	background: var(--surface-raised);
+	border: 1px solid var(--border);
+	border-radius: var(--radius-card);
+	box-shadow: 0 2px 8px rgba(15, 20, 40, 0.15);
+	padding: var(--sp-2) 0;
+	min-width: 160px;
+	color: var(--text-primary);
+	font-family: var(--font-prose);
+	font-size: var(--text-body-sm);
+	z-index: 1000;
+}
+
+.fw-context-menu-item {
+	padding: var(--sp-3) var(--sp-4);
+	cursor: pointer;
+	color: var(--text-primary);
+	outline: none;
+	user-select: none;
+	transition: background-color 0.08s linear;
+}
+
+.fw-context-menu-item[data-highlighted],
+.fw-context-menu-item:focus,
+.fw-context-menu-item:hover {
+	background-color: var(--surface-sunken);
+}
+
+.fw-context-menu-item[data-disabled] {
+	color: var(--text-muted);
+	cursor: default;
+}

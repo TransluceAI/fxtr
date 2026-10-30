@@ -1,0 +1,31 @@
+{
+	"name": "@fxtr-experiment/dashboard",
+	"version": "0.0.1",
+	"type": "module",
+	"private": true,
+	"exports": {
+		".": {
+			"import": "./src/index.tsx",
+			"types": "./src/index.tsx"
+		}
+	},
+	"peerDependencies": {
+		"react": ">=18"
+	},
+	"dependencies": {
+		"@fxtr-ui/core": "workspace:*",
+		"@fxtr-ui/react": "workspace:*",
+		"@fxtr-ui/react-dispatch": "workspace:*",
+		"@fxtr-ui/state-util": "workspace:*",
+		"@fxtr-ui/workstation-dispatch": "workspace:*",
+		"elkjs": "^0.11.0",
+		"jotai": "^2.10.0",
+		"jotai-effect": "^2.0.0"
+	},
+	"devDependencies": {
+		"@fxtr-ui/connector-http": "workspace:*",
+		"@types/react": "^19.0.0",
+		"react": "^19.0.0",
+		"vitest": "^3.0.0"
+	}
+}

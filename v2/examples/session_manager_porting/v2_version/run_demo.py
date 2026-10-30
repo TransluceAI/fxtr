@@ -4,31 +4,36 @@ This demonstrates migrating from the v1 SessionManager to the v2 TransitionalSes
 See v2/notes/migrating_to_transitional_sm.md for a detailed migration guide.
 """
 
+import argparse
 import logging
 from pathlib import Path
 
 import anyio
 import demo_09_15_user
+
+from fxtr2.data.fxtr_context_api import TsvFxtrNamespace
+from fxtr2.legacy_compat.data import UpgradeCache
+from fxtr2.legacy_compat.runset_conversion import convert_legacy_runset_to_run_cache
+from fxtr2.legacy_compat.transitional_rundata import TaskToRunMap, TaskWithPredecessors
+from fxtr2.legacy_compat.transitional_session_manager import (
+    RunCacheManager,
+    TransitionalSessionManager,
+)
 from fxtr.api import fxtrconfig
 from fxtr.object_model import core as v1_core
 
-from fxtr2.data.fxtr_context_api import GitFxtrNamespace
-from fxtr2.legacy_compat.data import UpgradeCache
-from fxtr2.legacy_compat.transitional_rundata import TaskToRunMap, TaskWithPredecessors
-from fxtr2.legacy_compat.transitional_session_manager import TransitionalSessionManager
 
-
-async def ensure_git_namespace_initialized(
+async def ensure_tsv_namespace_initialized(
     path: Path, name: str, description: str | None = None
 ) -> None:
-    """Initialize a git namespace if it doesn't exist yet."""
-    config_file = path / "fxtr_store.toml"
+    """Initialize a tsv namespace if it doesn't exist yet."""
+    config_file = path / "fxtr_namespace.toml"
     if not config_file.exists():
-        print(f"Initializing git namespace at {path}...")
-        await GitFxtrNamespace(path).create(name=name, description=description)
+        print(f"Initializing tsv namespace at {path}...")
+        await TsvFxtrNamespace(path).create(name=name, description=description)
 
 
-async def main():
+async def main(args: argparse.Namespace) -> None:
 
     logging.basicConfig(
         level=logging.INFO,
@@ -41,12 +46,11 @@ async def main():
     # sqlite_namespace.logger.setLevel(logging.DEBUG)
     # sqlite_ops.logger.setLevel(logging.DEBUG)
     # sqlite_util.logger.setLevel(logging.DEBUG)
-
-    # git_namespace.logger.setLevel(logging.DEBUG)
+    # tsv_namespace.logger.setLevel(logging.DEBUG)
     # sync.logger.setLevel(logging.DEBUG)
     # dirty.logger.setLevel(logging.DEBUG)
     # Load config (same as v1)
-    config_path = Path(__file__).parents[4] / "examples/demo_09_15/user/fxtr.toml"
+    config_path = Path(__file__).parents[4] / "projects/fxtr_v1/examples/demo_09_15/user/fxtr.toml"
     config = fxtrconfig.parse_fxtr_config(config_path)
 
     # Fetch the experiment (same as v1)
@@ -65,36 +69,44 @@ async def main():
     print(f"Found {len(v1_tasks)} v1 tasks")
 
     # Set up storage directories
-    # Using GitFxtrNamespace for version-controlled storage
+    # Using TsvFxtrNamespace for version-controlled storage
     # All three namespaces live in the same git repo (the v2_version folder)
     storage_dir = Path(__file__).parent / "storage"
     run_cache_path = storage_dir / "run_cache"
     upgrade_cache_path = storage_dir / "upgrade_cache"
     user_storage_path = storage_dir / "user_storage"
 
-    # Initialize git namespaces if they don't exist
-    await ensure_git_namespace_initialized(
+    # Path for the small copy demo
+    small_copy_path = storage_dir / "run_cache_small_copy"
+
+    # Initialize tsv namespaces if they don't exist
+    await ensure_tsv_namespace_initialized(
         run_cache_path,
         "run_cache",
         "Stores completed task runs, keyed by task ID. Managed by TransitionalSessionManager.",
     )
-    await ensure_git_namespace_initialized(
+    await ensure_tsv_namespace_initialized(
         upgrade_cache_path,
         "upgrade_cache",
         "Caches v1-to-v2 entity translations (Task -> TaskWithPredecessors, etc.).",
     )
-    await ensure_git_namespace_initialized(
+    await ensure_tsv_namespace_initialized(
         user_storage_path,
         "user_storage",
         "User-controlled storage for pinning entities under friendly names.",
+    )
+    await ensure_tsv_namespace_initialized(
+        small_copy_path,
+        "run_cache_small_copy",
+        "Demo: small subset of runs copied from main cache.",
     )
 
     # Create namespaces and session manager
     # Note: scopes nest automatically through the async with blocks
     async with (
-        GitFxtrNamespace(run_cache_path) as run_cache_ns,
-        GitFxtrNamespace(upgrade_cache_path) as upgrade_cache_ns,
-        GitFxtrNamespace(user_storage_path) as user_ns,
+        TsvFxtrNamespace(run_cache_path) as run_cache_ns,
+        TsvFxtrNamespace(upgrade_cache_path) as upgrade_cache_ns,
+        TsvFxtrNamespace(user_storage_path) as user_ns,
         TransitionalSessionManager.create(
             config=config,
             run_cache_namespace=run_cache_ns,
@@ -104,6 +116,12 @@ async def main():
     ):
         # Activate collection (same as v1)
         await mgr.activate_collection("default")
+
+        # === Optional: Convert v1 runset to v2 format ===
+        if args.convert_v1_runset:
+            print("\n=== Converting v1 runset to v2 format ===")
+            converted_count = await convert_legacy_runset_to_run_cache(config, mgr)
+            print(f"Converted {converted_count} runs from v1 runset")
 
         # === NEW: Upgrade v1 tasks to v2 TaskWithPredecessors ===
         # Tasks must be upgraded in dependency order because upgrade_from()
@@ -122,7 +140,7 @@ async def main():
         print("Materializing first tasks individually")
         for v2_task in v2_tasks[:3]:
             res = await mgr.invoke_task(v2_task)
-            print(f"Task {v2_task.store().ref.summary()} result: {v1_core.entity_cid(res)}")
+            print(f"Task {v2_task.store().entity_id.summary()} result: {v1_core.entity_cid(res)}")
 
         print("Materializing all tasks (should cache)...")
         task_to_run_map = await mgr.materialize_all_tasks(v2_tasks)
@@ -170,7 +188,8 @@ async def main():
         print(f"Original v1 task CID: {v1_collect_task_cid}")
         print(f"Looked up v2 task: {v2_task_ref_from_cache}")
         print(
-            f"Same as our upgraded task? {v2_task_from_cache == v2_collect_task} (refs: {(v2_task_ref_from_cache == v2_collect_task_ref)=})"
+            f"Same as our upgraded task? {v2_task_from_cache == v2_collect_task} (refs:"
+            f" {(v2_task_ref_from_cache == v2_collect_task_ref)=})"
         )
 
         # === Demo: Save results with friendly names in user storage ===
@@ -210,6 +229,49 @@ async def main():
         retrieved_map = await retrieved_map_ref.load()
         print(f"Retrieved run map has {len(retrieved_map.runs)} runs")
 
+        # === Demo: Copy a judge run with predecessors to a small copy namespace ===
+        print("\n=== Demo: Copy judge run with predecessors ===")
+
+        # Find a judge task (they come after the sample tasks)
+        # Structure: idea_gen_task, then sample_tasks (groups), then judge_tasks (groups)
+        num_idea_gen = 1
+        num_sample_tasks = sum(len(g) for g in experiment.sample_tasks)
+        judge_task_index = num_idea_gen + num_sample_tasks  # First judge task
+        judge_task = v2_tasks[judge_task_index]
+        print(
+            f"Selected judge task at index {judge_task_index}: {judge_task.store().entity_id.summary()}"
+        )
+
+        async with TsvFxtrNamespace(small_copy_path) as small_copy_ns:
+            # Create a RunCacheManager for the small copy namespace
+            # IMPORTANT: Use the same upgrade_cache for both managers!
+            small_copy_manager = RunCacheManager(
+                run_cache_namespace=small_copy_ns,
+                upgrade_cache=upgrade_cache,
+            )
+
+            # Copy the judge run with all its predecessors
+            copied_count = await small_copy_manager.copy_runs_from(
+                other=mgr._run_cache_manager,
+                selection=[judge_task],
+                include_predecessors=True,
+            )
+            print(f"Copied {copied_count} runs to small_copy namespace")
+
+            # Verify by listing pins
+            small_copy_pins = await small_copy_ns.list_pins()
+            print(f"Small copy namespace has {len(small_copy_pins)} pins")
+
+            # Verify we can load the judge run from the small copy
+            judge_run = await small_copy_manager.get_run_for_task(judge_task)
+            if judge_run is not None:
+                print(
+                    "Successfully loaded judge run from small copy:"
+                    f" {judge_run.store().entity_id.summary()}"
+                )
+            else:
+                print("ERROR: Could not load judge run from small copy!")
+
         # === Print detailed results ===
         print("\n=== WeirdBehaviorDemoResult Details ===")
         for i, cond in enumerate(result_via_instantiate.conditions):
@@ -218,5 +280,18 @@ async def main():
                 print(f"    {cat}: {count}")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Run the demo_09_15 experiment using the v2 TransitionalSessionManager."
+    )
+    parser.add_argument(
+        "--convert-v1-runset",
+        action="store_true",
+        help="Convert the v1 active runset to v2 format before running tasks.",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    anyio.run(main)
+    args = parse_args()
+    anyio.run(main, args)

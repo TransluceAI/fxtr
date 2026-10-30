@@ -1,0 +1,16 @@
+# Marks ``experiment_notes`` as a Python package in the demo's
+# ``packages/`` layout (host-importable via sys.path inserts; the
+# sandbox bridge adds ``src/`` automatically when an agent is driving).
+#
+# Pure data — no service-side code, no external deps (the embedding
+# venv supplies fxtr2). The demo's pipeline values are ``ExpNote``
+# entities so every cell value renders as something readable in the
+# browser (the workdir's ``renderers/exp_note/`` slice routes the type).
+[project]
+name = "experiment_notes"
+version = "0.0.0"
+requires-python = ">=3.12"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

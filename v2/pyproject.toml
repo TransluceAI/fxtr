@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "fxtr2"
 version = "0.0.1a0"
 description = "A configuration and orchestration system for modular, reproducible experiments"
-requires-python = "==3.12.*"
+requires-python = ">=3.12"
 dependencies = [
     "fxtr",
     "msgspec>=0.20.0",
@@ -24,21 +24,30 @@ dependencies = [
     "aiosqlite>=0.21.0",
     "pandas>=2.3.3",
     "mashumaro>=3.17",
-    "cbor2>=5.7.1",
+    # cbor2 6.x changed the tag_hook signature in a way fxtr2's
+    # entity_core decoder doesn't support; pin to <6 (matching
+    # v2/portable/pyproject.toml).
+    "cbor2>=5.7.1,<6",
     "uvicorn[standard]>=0.38.0",
     "sqlalchemy[asyncio]>=2.0.45",
     "lmdb>=1.7.5",
     "sqlalchemy-boltons>=5.0.0",
+    "tqdm>=4.67.1",
+    "sqlglot>=28.10.1",
+    "httpx>=0.28.0",
+    "hypercorn>=0.17.0",
 ]
 
 [project.scripts]
-fxtr-git-store = "fxtr2.cli.git_store_cli:main"
+fxtr-tsv-ns = "fxtr2.cli.tsv_ns_cli:main"
 
 [dependency-groups]
 dev = [
     "pytest>=8.4.2",
     "pytest-xdist>=3.8.0",
     "pytest-anyio>=0.0.0",
+    "pytest-rerunfailures>=15.0",
+    "pyright>=1.1.0",
 ]
 nb = [
     "jupyterlab",
@@ -54,12 +63,17 @@ prof = [
     "py-spy>=0.4.1",
     "viztracer>=1.1.1",
 ]
+demo = [
+    "thingwatcher",
+]
 
 [tool.uv.sources]
-fxtr = { path = "..", editable = true }
-demo_09_15_defns = { path = "../examples/demo_09_15/lib/blueprint", editable = true }
-demo_09_15_user = { path = "../examples/demo_09_15/user", editable = true }
-demo_09_15 = { path = "../examples/demo_09_15/lib/pyimpl", editable = true }
+fxtr = { path = "../projects/fxtr_v1", editable = true }
+demo_09_15_defns = { path = "../projects/fxtr_v1/examples/demo_09_15/lib/blueprint", editable = true }
+demo_09_15_user = { path = "../projects/fxtr_v1/examples/demo_09_15/user", editable = true }
+demo_09_15 = { path = "../projects/fxtr_v1/examples/demo_09_15/lib/pyimpl", editable = true }
+thingwatcher = { path = "../spikes/thingwatcher", editable = true }
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
 
 [tool.pyright]
 include = [
@@ -82,6 +96,11 @@ force-exclude = '''
 [tool.isort]
 profile = "black"
 line_length = 100
+known_first_party = ["fxtr", "fxtr2"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = [
+    "allow_lease_leak: test intentionally leaks leases; skip the autouse leak-count assertion",
+    "flaky: re-run failing tests up to N times (handled by pytest-rerunfailures)",
+]

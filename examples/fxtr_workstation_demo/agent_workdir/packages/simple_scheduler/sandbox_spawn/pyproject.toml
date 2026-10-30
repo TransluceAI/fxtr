@@ -1,0 +1,62 @@
+# Sandbox-spawn environment for the simple_scheduler service — a *virtual*
+# uv project (`package = false`): not a code package, just the venv
+# declaration the flake's `mkWasmService` builds the guest site-packages
+# from. It depends on the host-importable `simple-scheduler` package one
+# level up (which lands the `simple_scheduler` module in the guest) plus
+# the `simple-tasks` marker (protocols + entities) and the sandbox RPC
+# adapter, and constrains the resolver to WASI/wasm32 (the eryx runtime
+# target) so only pure-python wheels are selected. The `fxtr.service`
+# entry point is declared HERE — `mkWasmService` reads it from this file
+# via `fromTOML`, no installed-dist metadata involved.
+#
+# This split keeps the parent package importable from a full-fxtr2 host
+# venv (it has no wasm-pinned deps of its own), so the impl tests in
+# examples/fxtr_workstation_demo/tests/ can exercise it directly.
+#
+# `[tool.uv.sources]` uses the comment-flip convention (see
+# projects/fxtr_workstation/plans/phase0/part5_nix_workdir/stage3_bundle_and_spawner.md
+# "Test & scaffold workdir setup"): relative paths are the active form,
+# `prepare_workdir_repo` comments them out and activates the pinned git
+# source in the workdir copy. No uv.lock is committed; the
+# harness/scaffold generates it. The intra-workdir path sources carry no
+# markers — they're correct in both forms.
+[project]
+name = "simple-scheduler-sandbox"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "simple-scheduler",
+    "simple-tasks",
+    "fxtr-sandbox-rpc-adapter[fxtr2-portable]",
+]
+
+[project.entry-points."fxtr.service"]
+service = "simple_scheduler:run"
+
+[tool.uv]
+# Virtual root — install the deps (incl. the parent package), don't build
+# this dir itself.
+package = false
+# Constrain the resolver to WASI/wasm32 (the eryx runtime target) so only
+# pure-python wheels are selected.
+environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]
+required-environments = ["sys_platform == 'wasi' and platform_machine == 'wasm32'"]
+
+[tool.uv.sources]
+simple-scheduler = { path = "..", editable = true }
+simple-tasks = { path = "../../simple_tasks", editable = true }
+fxtr-sandbox-rpc-adapter = { path = "../../../../../../projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-rpc-adapter = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_rpc_adapter" } # fxtr-lib-sub: active-in-workdir
+fxtr-sandbox-types = { path = "../../../../../../projects/fxtr_sandboxing/fxtr_sandbox_types", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr-sandbox-types = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "projects/fxtr_sandboxing/fxtr_sandbox_types" } # fxtr-lib-sub: active-in-workdir
+fxtr2-portable = { path = "../../../../../../v2/portable", editable = true } # fxtr-lib-sub: active-in-template
+# fxtr2-portable = { git = "@FXTR_LIB_URL@", rev = "@FXTR_LIB_REV@", subdirectory = "v2/portable" } # fxtr-lib-sub: active-in-workdir
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr-sandbox-rpc-adapter = ["hatchling"]
+fxtr-sandbox-types = ["hatchling"]
+fxtr2-portable = ["hatchling"]

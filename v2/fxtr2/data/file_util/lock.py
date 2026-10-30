@@ -37,7 +37,7 @@ class LockFileNotFoundError(Exception):
     or if the file is deleted while waiting for the lock.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: str | Path):
         self.path = path
         super().__init__(f"Lock file not found: {path}")
 
@@ -48,7 +48,7 @@ class LockNotAcquiredError(Exception):
     This indicates another process holds the lock.
     """
 
-    def __init__(self, path: Path):
+    def __init__(self, path: str | Path):
         self.path = path
         super().__init__(f"Lock not acquired (held by another process): {path}")
 
@@ -58,22 +58,23 @@ class LockNotAcquiredError(Exception):
 # the same process. The threading lock is always acquired/released
 # alongside the flock to ensure both paths respect each other.
 _thread_locks_mutex = threading.Lock()
-_thread_locks: dict[Path, threading.Lock] = {}
+_thread_locks: dict[str, threading.Lock] = {}
 
 
-def _get_thread_lock(path: Path) -> threading.Lock:
+def _get_thread_lock(path: str | Path) -> threading.Lock:
     """Get or create a Python-level threading lock for a path."""
-    # Normalize the path to avoid issues with different representations
-    resolved = path.resolve()
+    # When given a str, use directly (caller guarantees resolved).
+    # When given a Path, resolve and convert to str.
+    key = path if isinstance(path, str) else str(path.resolve())
     with _thread_locks_mutex:
-        if resolved not in _thread_locks:
-            _thread_locks[resolved] = threading.Lock()
-        return _thread_locks[resolved]
+        if key not in _thread_locks:
+            _thread_locks[key] = threading.Lock()
+        return _thread_locks[key]
 
 
 @asynccontextmanager
 async def async_file_lock_acquire(
-    lock_path: Path,
+    lock_path: str | Path,
     create_if_not_exists: bool = True,
     delete_on_release: bool = False,
 ) -> AsyncIterator[int]:
@@ -125,6 +126,7 @@ async def async_file_lock_acquire(
             # Do work...
             # File will be deleted while lock is held, before releasing
     """
+    lock_path_str = lock_path if isinstance(lock_path, str) else str(lock_path)
     thread_lock = _get_thread_lock(lock_path)
 
     fd: int | None = None
@@ -133,7 +135,7 @@ async def async_file_lock_acquire(
         while True:
             if create_if_not_exists:
                 # Ensure parent directory exists
-                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                os.makedirs(os.path.dirname(lock_path_str), exist_ok=True)
 
                 # Open or create the lock file
                 try:
@@ -239,7 +241,7 @@ async def async_file_lock_acquire(
 
 
 @contextmanager
-def sync_file_lock_acquire_nonblocking(lock_path: Path) -> Iterator[int]:
+def sync_file_lock_acquire_nonblocking(lock_path: str | Path) -> Iterator[int]:
     """Attempt non-blocking exclusive lock acquisition.
 
     Opens the file and attempts to acquire an exclusive lock without blocking.
@@ -274,11 +276,14 @@ def sync_file_lock_acquire_nonblocking(lock_path: Path) -> Iterator[int]:
     if not thread_lock.acquire(blocking=False):
         raise LockNotAcquiredError(lock_path)
 
+    thread_lock_held = True
+    fd = None
     try:
         # Open file (must exist)
         fd = os.open(lock_path, os.O_RDWR, 0o644)
     except BaseException:
         thread_lock.release()
+        thread_lock_held = False
         raise
 
     try:
@@ -289,17 +294,21 @@ def sync_file_lock_acquire_nonblocking(lock_path: Path) -> Iterator[int]:
             # Lock is held by another process
             os.close(fd)
             thread_lock.release()
+            thread_lock_held = False
             raise LockNotAcquiredError(lock_path)
 
         yield fd
 
     finally:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_UN)
-        except OSError:
-            pass  # Ignore errors during unlock
-        thread_lock.release()
-        try:
-            os.close(fd)
-        except OSError:
-            pass  # Ignore errors during close
+        if fd is not None:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_UN)
+            except OSError:
+                pass  # Ignore errors during unlock
+        if thread_lock_held:
+            thread_lock.release()
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass  # Ignore errors during close

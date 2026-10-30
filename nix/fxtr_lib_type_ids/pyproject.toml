@@ -1,0 +1,37 @@
+# Stub package re-declaring the workstation / report type-ids that
+# `lib.fxtr.entities` materializes as typeEntity layers. Depends ONLY on fxtr2
+# (the `define_type` machinery), so `mkEntityFromPython` can build those layers
+# from a light venv instead of the heavy `fxtr_workstation_mcp` /
+# `fxtr_report_builder` dependency closures. FxtrIDs are content-addressed, so
+# a `define_type(SAME_NS, SAME_LABEL)` re-declaration is byte-identical to the
+# canonical type. See nix/fxtr_lib_type_ids/src/fxtr_lib_type_ids/__init__.py
+# and projects/fxtr_workstation/plans/phase0/part5_nix_workdir/stage6pre1_builtin_and_lib_entities.md.
+[build-system]
+requires = ["uv_build>=0.11.0,<0.12.0"]
+build-backend = "uv_build"
+
+[project]
+name = "fxtr_lib_type_ids"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fxtr2",
+]
+
+# fxtr2 (+ its own non-PyPI deps) reached by relative path-dep — same depth +
+# convention as nix/fxtr_nix_writer. uv only honors the resolution root's
+# `[tool.uv.sources]`, so fxtr (v1) + mashumaro are redeclared here even though
+# v2 declares them.
+[tool.uv.sources]
+fxtr2 = { path = "../../v2", editable = true }
+fxtr = { path = "../../projects/fxtr_v1", editable = true }
+mashumaro = { git = "https://github.com/danieldjohnson/mashumaro", branch = "push-ppqkwmlmmpnp" }
+
+# Build-dep hints for sdists uv2nix builds in the nix sandbox (they
+# under-declare their build backend). Mirrors nix/fxtr_nix_writer.
+[tool.uv.extra-build-dependencies]
+cbrrr = ["setuptools"]
+sqlitedict = ["setuptools"]
+mashumaro = ["setuptools"]
+fxtr = ["hatchling"]
+fxtr2 = ["hatchling"]
