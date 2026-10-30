@@ -1,0 +1,48 @@
+.loading {
+  padding: 16px;
+  color: #888;
+  font-style: italic;
+  text-align: center;
+}
+
+.error {
+  padding: 12px;
+  background: #2a1a1a;
+  border: 1px solid #633;
+  border-radius: 4px;
+  margin: 8px 0;
+}
+
+.errorHeader {
+  color: #f88;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.errorMessage {
+  margin: 0;
+  padding: 8px;
+  background: #1a1a1a;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #ccc;
+  overflow: auto;
+  max-height: 200px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.fallback {
+  margin-top: 12px;
+  padding: 12px;
+  background: #1a1a2e;
+  border: 1px solid #334;
+  border-radius: 4px;
+}
+
+.fallbackHeader {
+  color: #88f;
+  font-weight: 600;
+  margin-bottom: 8px;
+  font-size: 12px;
+}

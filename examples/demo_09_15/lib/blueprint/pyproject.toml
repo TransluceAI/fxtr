@@ -1,0 +1,13 @@
+
+[project]
+name = "demo_09_15_defns"
+version = "0.0.1"
+description = "Demo 09/15 definition package."
+requires-python = "==3.12.*,!=3.12.5"
+dependencies = [
+    "behaviors",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

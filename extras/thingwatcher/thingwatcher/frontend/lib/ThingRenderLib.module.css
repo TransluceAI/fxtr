@@ -1,0 +1,45 @@
+/**
+ * Styles for ThingWatcherBindings components (NodeRef, ChildNodeView)
+ * These are bundled into the main stylesheet so they're available everywhere.
+ */
+
+.childnodeviewLoading,
+.childnodeviewError {
+  padding: 8px;
+  color: #888;
+  font-style: italic;
+}
+
+.childnodeviewError {
+  color: #f66;
+}
+
+.noderef {
+  display: block;
+  cursor: pointer;
+}
+
+.inlineNoderef {
+  display: inline;
+  cursor: pointer;
+}
+
+.noderefLoading,
+.noderefError,
+.noderefMissing {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #333;
+  color: #888;
+  border-radius: 4px;
+  font-size: 12px;
+}
+
+.noderefError {
+  color: #f66;
+}
+
+.noderefMissing {
+  color: #a88;
+  font-style: italic;
+}

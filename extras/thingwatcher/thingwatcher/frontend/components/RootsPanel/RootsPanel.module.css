@@ -1,0 +1,102 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #16213e;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: #0f3460;
+}
+
+.title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e94560;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.count {
+  padding: 2px 8px;
+  background: #1a4a7a;
+  border-radius: 10px;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+.list {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+
+.empty {
+  padding: 16px;
+  text-align: center;
+  color: #666;
+  font-style: italic;
+}
+
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  margin-bottom: 4px;
+  background: #0f0f23;
+  border-radius: 4px;
+  border-left: 3px solid transparent;
+  cursor: pointer;
+  transition: background 0.15s;
+  overflow: hidden;
+}
+
+.item:hover {
+  background: #1a1a3e;
+}
+
+.item.selected {
+  background: #1a1a3e;
+  border-left-color: #e94560;
+}
+
+.rootName {
+  font-weight: 600;
+  color: #60a5fa;
+  min-width: 80px;
+}
+
+.arrow {
+  color: #555;
+  font-size: 0.8rem;
+}
+
+.thingId {
+  font-weight: 600;
+  color: #eee;
+  min-width: 40px;
+}
+
+.thingType {
+  color: #aaa;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.thingKey {
+  flex: 1;
+  min-width: 0;
+  color: #666;
+  font-size: 0.75rem;
+  font-family: monospace;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

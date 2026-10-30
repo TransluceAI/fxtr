@@ -1,0 +1,31 @@
+{
+  "version": "5",
+  "specifiers": {
+    "npm:@types/react@18": "18.3.27"
+  },
+  "npm": {
+    "@types/prop-types@15.7.15": {
+      "integrity": "sha512-F6bEyamV9jKGAFBEmlQnesRPGOQqS2+Uwi0Em15xenOxHaf2hv6L8YCVn3rPdPJOiJfPiCnLIRyvwVaqMY3MIw=="
+    },
+    "@types/react@18.3.27": {
+      "integrity": "sha512-cisd7gxkzjBKU2GgdYrTdtQx1SORymWyaAFhaxQPK9bYO9ot3Y5OikQRvY0VYQtvwjeQnizCINJAenh/V7MK2w==",
+      "dependencies": [
+        "@types/prop-types",
+        "csstype"
+      ]
+    },
+    "csstype@3.2.3": {
+      "integrity": "sha512-z1HGKcYy2xA8AGQfwrn0PAy+PB7X/GSj3UVJW9qKyn43xWa+gl5nXmU4qqLMRzWVLFC8KusUX8T/0kCiOYpAIQ=="
+    }
+  },
+  "remote": {
+    "https://esm.sh/@twind/core@1.1.3": "9bcaf0c427f0a27f9203aa1ac0b5db3422c6b02b53906c603c8a7ded90662e76",
+    "https://esm.sh/@twind/preset-tailwind@1.1.3": "071a65e94a21640e0866d0743502f19583bc9ad3374dc3573760fc5f09499b60",
+    "https://esm.sh/react-json-view@1.21.3?external=react": "5037b96ce1ee9d3728998bd13c9627754fc3fc279bfbb0f346846665ce0a1242"
+  },
+  "workspace": {
+    "dependencies": [
+      "npm:@types/react@18"
+    ]
+  }
+}

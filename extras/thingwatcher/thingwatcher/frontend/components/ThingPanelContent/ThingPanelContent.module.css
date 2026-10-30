@@ -1,0 +1,250 @@
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+/* Source header with pin button */
+.sourceHeader {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #2a2a4a;
+}
+
+.sourceInfo {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sourceBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(74, 144, 226, 0.15);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #88c0ff;
+}
+
+.secondarySource {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 6px;
+  font-size: 0.75rem;
+  color: #888;
+}
+
+.secondarySource.overridden {
+  color: #666;
+  font-style: italic;
+}
+
+.notPresentBadge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px;
+  background: rgba(239, 68, 68, 0.15);
+  border-radius: 4px;
+  font-size: 0.8rem;
+  color: #f87171;
+}
+
+.pinButton {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid #444;
+  border-radius: 4px;
+  background: transparent;
+  color: #888;
+  cursor: pointer;
+  transition: all 0.15s;
+  flex-shrink: 0;
+}
+
+.pinButton:hover {
+  background: #2a2a4a;
+  color: #aaa;
+  border-color: #555;
+}
+
+.pinButton.pinned {
+  background: rgba(74, 144, 226, 0.2);
+  border-color: #4a90e2;
+  color: #4a90e2;
+}
+
+.pinButton.pinned:hover {
+  background: rgba(74, 144, 226, 0.3);
+}
+
+.section {
+  margin-bottom: 16px;
+}
+
+.section:last-child {
+  margin-bottom: 0;
+}
+
+.sectionTitle {
+  margin: 0 0 8px 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.metaHeader {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.thingType {
+  padding: 2px 8px;
+  background: #1a4a7a;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #eee;
+}
+
+.disappearingBadge {
+  padding: 2px 8px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  color: #ef4444;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shortId {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #eee;
+}
+
+.key {
+  font-size: 0.8rem;
+  color: #888;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.loading,
+.empty,
+.noData {
+  color: #666;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+.notFoundKey {
+  margin-top: 8px;
+  font-size: 0.8rem;
+  font-family: monospace;
+  color: #888;
+  word-break: break-all;
+}
+
+.error {
+  padding: 8px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  border-radius: 4px;
+  color: #ef4444;
+  font-size: 0.85rem;
+}
+
+/* Trigger Records */
+.triggerRecords {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.triggerRecord {
+  padding: 8px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+}
+
+.triggerRecordId {
+  color: #3b82f6;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.triggerRecordPayload {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid #3b82f6;
+}
+
+/* Backlinks */
+.backlinks {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+/* Flexbox row for backlink: NodeRef on left, metadata on right */
+.backlinkRow {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 6px 8px;
+  background: #0f0f23;
+  border-radius: 4px;
+}
+
+/* Container for NodeRef - takes available space */
+.backlinkNodeRef {
+  flex: 1;
+  min-width: 0; /* Allow shrinking */
+}
+
+/* Link metadata (arrow, type, key) */
+.backlinkMeta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.linkArrow {
+  color: #555;
+}
+
+.linkType {
+  padding: 2px 6px;
+  background: #0f3460;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+.linkKey {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #888;
+}

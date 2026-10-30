@@ -1,0 +1,87 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fxtr2"
+version = "0.0.1a0"
+description = "A configuration and orchestration system for modular, reproducible experiments"
+requires-python = "==3.12.*"
+dependencies = [
+    "fxtr",
+    "msgspec>=0.20.0",
+    "cbrrr>=1.0.1",
+    "packaging>=25.0",
+    "anyio>=4.12.1",
+    "tomlkit>=0.12.3",
+    "frozendict>=2.4.6",
+    "starlette>=0.46.2",
+    "typer>=0.15.1",
+    "pqdict>=1.4.1",
+    "duckdb>=1.3.2",
+    "ariadne>=0.26.2",
+    "cattrs>=25.3.0",
+    "aiosqlite>=0.21.0",
+    "pandas>=2.3.3",
+    "mashumaro>=3.17",
+    "cbor2>=5.7.1",
+    "uvicorn[standard]>=0.38.0",
+    "sqlalchemy[asyncio]>=2.0.45",
+    "lmdb>=1.7.5",
+    "sqlalchemy-boltons>=5.0.0",
+]
+
+[project.scripts]
+fxtr-git-store = "fxtr2.cli.git_store_cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.2",
+    "pytest-xdist>=3.8.0",
+    "pytest-anyio>=0.0.0",
+]
+nb = [
+    "jupyterlab",
+    "treescope",
+    "dotenv"
+]
+example_session_manager_porting = [
+    "demo_09_15_defns",
+    "demo_09_15_user",
+    "demo_09_15",
+]
+prof = [
+    "py-spy>=0.4.1",
+    "viztracer>=1.1.1",
+]
+
+[tool.uv.sources]
+fxtr = { path = "..", editable = true }
+demo_09_15_defns = { path = "../examples/demo_09_15/lib/blueprint", editable = true }
+demo_09_15_user = { path = "../examples/demo_09_15/user", editable = true }
+demo_09_15 = { path = "../examples/demo_09_15/lib/pyimpl", editable = true }
+
+[tool.pyright]
+include = [
+    "fxtr2",
+]
+reportMissingTypeStubs = false
+venvPath = "."
+venv = ".venv"
+
+[tool.black]
+line-length = 100
+target-version = ['py310']
+force-exclude = '''
+# force-exclude can be used to exclude from formatting even when run by VSCode.
+# A regex preceded with ^/ will apply only to files and directories
+# in the root of the project.
+^\/external\/.*
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

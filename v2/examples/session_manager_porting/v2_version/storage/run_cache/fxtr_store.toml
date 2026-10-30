@@ -1,0 +1,2 @@
+name = "run_cache"
+description = "Stores completed task runs, keyed by task ID. Managed by TransitionalSessionManager."

@@ -1,0 +1,3 @@
+{
+  "extends": "../../../../../picoview/frontend_lib/tsconfig.json"
+}

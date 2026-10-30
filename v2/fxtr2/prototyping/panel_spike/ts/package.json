@@ -1,0 +1,23 @@
+{
+  "name": "panel-spike",
+  "version": "1.0.0",
+  "description": "Panel + tooltip interactive workstation spike",
+  "main": "main.tsx",
+  "scripts": {
+    "build": "esbuild main.tsx --bundle --loader:.tsx=tsx --loader:.ts=ts --format=esm --outfile=dist/main.js"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.0.0-alpha",
+    "dockview": "^1.0.0",
+    "lucide-react": "^0.562.0",
+    "react": "^18.0.0",
+    "react-dom": "^18.0.0",
+    "react-reverse-portal": "^2.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^18.0.0",
+    "@types/react-dom": "^18.0.0",
+    "esbuild": "^0.19.0",
+    "typescript": "^5.0.0"
+  }
+}

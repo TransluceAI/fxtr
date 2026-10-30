@@ -1,0 +1,111 @@
+.container {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  background: #1a1a2e;
+  color: #eee;
+}
+
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 16px;
+  background: #16213e;
+  border-bottom: 1px solid #0f3460;
+  flex-shrink: 0;
+}
+
+.headerLeft {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.sidebarToggle {
+  background: transparent;
+  border: 1px solid #444;
+  color: #888;
+  cursor: pointer;
+  padding: 4px 8px;
+  font-size: 12px;
+  border-radius: 4px;
+}
+
+.sidebarToggle:hover {
+  background: #333;
+  color: #fff;
+  border-color: #666;
+}
+
+.title {
+  margin: 0;
+  font-size: 1.2rem;
+  font-weight: 600;
+  color: #e94560;
+}
+
+.tickInfo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.9rem;
+  color: #aaa;
+}
+
+.liveBadge {
+  background: #22c55e;
+  color: #000;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.offlineBadge {
+  color: #ef4444;
+  border: 1px solid #ef4444;
+  background: transparent;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+}
+
+.graphArea {
+  flex: 1;
+  min-width: 0;
+  border-right: 1px solid #0f3460;
+}
+
+.sidebar {
+  width: 350px;
+  display: flex;
+  flex-direction: column;
+  background: #16213e;
+  flex-shrink: 0;
+}
+
+.panelTop {
+  flex: 1;
+  min-height: 200px;
+  border-bottom: 1px solid #0f3460;
+  overflow: hidden;
+}
+
+.panelBottom {
+  flex: 1;
+  min-height: 200px;
+  overflow: hidden;
+}
+
+.timelineArea {
+  flex-shrink: 0;
+}

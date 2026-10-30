@@ -1,0 +1,18 @@
+{
+  "$schema": "https://deno.land/x/deno/cli/schemas/config-file.v1.json",
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "jsxImportSource": "react",
+    "strict": true,
+    "lib": ["dom", "dom.iterable", "esnext"]
+  },
+  "imports": {
+    "react": "npm:@types/react@^18",
+    "thingwatcher-bindings": "../../thingwatcher/thingwatcher-bindings.d.ts"
+  },
+  "lint": {
+    "rules": {
+      "exclude": ["no-import-prefix"]
+    }
+  }
+}

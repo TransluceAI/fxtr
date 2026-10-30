@@ -1,0 +1,58 @@
+/**
+ * Styles for hover preview cards
+ */
+
+/* Hover popup card */
+.hoverPopup {
+  background: #1a1a1a;
+  border: 2px solid #555;
+  border-radius: 4px;
+  padding: 8px;
+  max-width: 300px;
+  z-index: 1000;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+
+/* Loading state */
+.loadingPreview {
+  color: #888;
+  font-size: 12px;
+  padding: 4px;
+}
+
+/* Backlinks section */
+.backlinksSection {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.sectionHeader {
+  color: #888;
+  font-size: 11px;
+}
+
+.emptyBacklinks {
+  color: #666;
+  font-style: italic;
+  font-size: 12px;
+}
+
+.backlinksList {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backlinkItem {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.linkType {
+  color: #888;
+  font-size: 11px;
+  min-width: 60px;
+  flex-shrink: 0;
+}

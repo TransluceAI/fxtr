@@ -1,0 +1,33 @@
+
+[project]
+name = "demo_09_15_user"
+version = "0.0.1"
+description = "Demo 09/15 user package."
+requires-python = "==3.12.*,!=3.12.5"
+dependencies = [
+    "fxtr", "demo_09_15_defns"
+]
+
+[dependency-groups]
+pyimpl = [
+  "demo_09_15", "openai==1.108.0"
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["demo_09_15_user"]
+
+[tool.uv]
+constraint-dependencies = ["picoview", "luce_lib"]
+
+
+[tool.uv.sources]
+demo_09_15_defns = { path = "../lib/blueprint", editable = true }
+demo_09_15 = { path = "../lib/pyimpl", editable = true }
+fxtr = { path = "../../..", editable = true }
+behaviors = { path = "../../../../behaviors", editable = true }
+picoview = { path = "../../../../picoview", editable = true }
+luce_lib = { path = "../../../../luce_lib", editable = true }

@@ -1,0 +1,95 @@
+.container {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: #0f0f23;
+}
+
+.empty {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  color: #666;
+  font-size: 1.1rem;
+  text-align: center;
+}
+
+/* ThingNode wrapper - handles change state and selection styling */
+.thingNode {
+  border-radius: 6px;
+  cursor: grab !important;
+}
+
+/* Fallback node - simple colored square with shortId */
+.fallbackNode {
+  width: 40px;
+  height: 40px;
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.thingNodeLabel {
+  color: #fff;
+  font-size: 10px;
+  font-weight: 500;
+  text-shadow: 0 0 3px rgba(0, 0, 0, 0.5);
+}
+
+/* Invisible handles - just for edge connection points */
+.handle {
+  width: 1px !important;
+  height: 1px !important;
+  min-width: 1px !important;
+  min-height: 1px !important;
+  background: transparent !important;
+  border: none !important;
+}
+
+/* Change state borders */
+.added {
+  border: 3px solid #22c55e;
+}
+
+.modified {
+  border: 3px solid #eab308;
+}
+
+.disappearing {
+  border: 2px dashed #ef4444;
+}
+
+.addedDisappearing,
+.modifiedDisappearing {
+  border: 2px dashed #a855f7;
+}
+
+/* Selection - uses box-shadow so it can combine with change state border */
+.selected {
+  box-shadow: 0 0 0 3px #fff;
+}
+
+/* Transient nodes (only selection or breadcrumb marks) - reduced opacity */
+/* Indicates which things will disappear if user navigates away */
+.transient {
+  opacity: 0.6;
+}
+
+/* Drag hint tooltip - shown when Alt held and hovering over node */
+.dragHint {
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  background: rgba(0, 0, 0, 0.85);
+  color: white;
+  font-size: 11px;
+  border-radius: 4px;
+  white-space: nowrap;
+  pointer-events: none;
+  z-index: 10;
+}

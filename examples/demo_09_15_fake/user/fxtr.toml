@@ -1,0 +1,41 @@
+[author]
+name = "Daniel Johnson"
+email = "daniel@transluce.org"
+
+[blueprint.sources.default]
+module = "demo_09_15_fake_user"
+
+[blueprint.sources.demo_09_15_fake_defns]
+module = "demo_09_15_fake_defns"
+
+[data]
+active = "../data_gitignore/"
+# TODO: add additional stores that we can look up when loading data? like, remote stores
+# can start by making them directories and eventually make them servers (?)
+
+[resolver]
+# Whether to allow executing untrusted code outside of docker.
+# (Currently required since we don't actually support docker yet)
+trust_impl_code = true
+# How to provide Python implementations. (Only UV supported for now.)
+default_py_provider = "uv"
+
+
+# Configuration for secrets resolver.
+[resolver.secrets]
+use_env_file = true
+
+# Configuration for the UV Python provider.
+[provider.uv]
+# Directory where virtual environments will be created.
+virtual_env_dir = "../data_gitignore/tmp_venvs"
+# Packages that will be "tunneled" from the environment where the CLI runs into the environment
+# where the job runs, by automatically adding them to the [tool.uv.sources] table. Useful for
+# testing packages that are not actually on PyPI or on an external index.
+dynamic_source_packages = ["fxtr"]
+# Packages that will be sourced relative to this file.
+local_source_packages = {demo_09_15_fake = "../lib/pyimpl"}
+
+# Anything under provider.uv.custom_uv_config will be added to the [tool.uv] table in the
+# pyproject.toml file for the environments provided by this provider.
+[provider.uv.custom_uv_config]

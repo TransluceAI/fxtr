@@ -1,0 +1,337 @@
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: #16213e;
+}
+
+.header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background: #0f3460;
+}
+
+.title {
+  margin: 0;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #e94560;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.thingType {
+  padding: 2px 8px;
+  background: #1a4a7a;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  color: #eee;
+}
+
+.content {
+  flex: 1;
+  overflow: auto;
+  padding: 12px;
+}
+
+.section {
+  margin-bottom: 16px;
+}
+
+.section:last-child {
+  margin-bottom: 0;
+}
+
+.sectionTitle {
+  margin: 0 0 8px 0;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #888;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.shortId {
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #eee;
+}
+
+.key {
+  font-size: 0.8rem;
+  color: #888;
+  font-family: monospace;
+  word-break: break-all;
+}
+
+.loading,
+.empty,
+.noData {
+  color: #666;
+  font-style: italic;
+  font-size: 0.9rem;
+}
+
+/* Trigger form */
+.triggerForm {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.payloadInput {
+  width: 100%;
+  padding: 8px;
+  background: #0f0f23;
+  border: 1px solid #0f3460;
+  border-radius: 4px;
+  color: #eee;
+  font-family: monospace;
+  font-size: 0.85rem;
+  resize: vertical;
+}
+
+.payloadInput::placeholder {
+  color: #555;
+}
+
+.triggerButton {
+  padding: 8px 16px;
+  background: #e94560;
+  border: none;
+  border-radius: 4px;
+  color: #fff;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.triggerButton:hover:not(:disabled) {
+  background: #d63850;
+}
+
+.triggerButton:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.success {
+  padding: 8px;
+  background: rgba(34, 197, 94, 0.2);
+  border: 1px solid #22c55e;
+  border-radius: 4px;
+  color: #22c55e;
+  font-size: 0.85rem;
+}
+
+.error {
+  padding: 8px;
+  background: rgba(239, 68, 68, 0.2);
+  border: 1px solid #ef4444;
+  border-radius: 4px;
+  color: #ef4444;
+  font-size: 0.85rem;
+}
+
+/* JSON Tree styles */
+.dataTree {
+  font-family: monospace;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
+.tree {
+  display: inline;
+}
+
+.treeChildren {
+  padding-left: 16px;
+}
+
+.treeItem {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.toggle {
+  cursor: pointer;
+  color: #666;
+  user-select: none;
+  width: 12px;
+  display: inline-block;
+}
+
+.toggle:hover {
+  color: #aaa;
+}
+
+.collapsed {
+  color: #666;
+  cursor: pointer;
+  font-style: italic;
+}
+
+.collapsed:hover {
+  color: #aaa;
+}
+
+.key {
+  color: #9cdcfe;
+}
+
+.arrayIndex {
+  color: #666;
+}
+
+.comma {
+  color: #666;
+}
+
+.valueBracket {
+  color: #d4d4d4;
+}
+
+.valueString {
+  color: #ce9178;
+}
+
+.valueNumber {
+  color: #b5cea8;
+}
+
+.valueBool {
+  color: #569cd6;
+}
+
+.valueNull,
+.valueUndefined {
+  color: #569cd6;
+  font-style: italic;
+}
+
+.valueUnknown {
+  color: #dcdcaa;
+}
+
+/* Links */
+.links {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.link {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0f0f23;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.link:hover {
+  background: #1a1a3e;
+}
+
+.linkType {
+  padding: 2px 6px;
+  background: #0f3460;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: #aaa;
+}
+
+.linkKey {
+  font-size: 0.75rem;
+  font-family: monospace;
+  color: #888;
+}
+
+.linkArrow {
+  color: #555;
+}
+
+.linkTarget {
+  color: #eee;
+  font-size: 0.9rem;
+}
+
+.linkTargetType {
+  color: #666;
+  font-size: 0.8rem;
+}
+
+/* Trigger Records */
+.triggerRecords {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.triggerRecord {
+  padding: 8px;
+  background: rgba(59, 130, 246, 0.15);
+  border: 1px solid #3b82f6;
+  border-radius: 4px;
+}
+
+.triggerRecordId {
+  color: #3b82f6;
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.triggerRecordPayload {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid #3b82f6;
+}
+
+/* Custom renderer container */
+.customRenderer {
+  padding: 8px 0;
+}
+
+/* Backlinks */
+.backlinks {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.backlink {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #0f0f23;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.backlink:hover {
+  background: #1a1a3e;
+}
+
+.backlinkSource {
+  color: #88c0ff;
+  font-size: 0.9rem;
+}
+
+.backlinkSourceType {
+  color: #666;
+  font-size: 0.8rem;
+}
