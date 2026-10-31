@@ -1,0 +1,70 @@
+/* The controls' own styles (controls.tsx), over the shell's design tokens. Private to the kit. */
+
+.stats { display: flex; flex-wrap: wrap; gap: 8px 28px; margin: 8px 0 12px; }
+.stat { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.stat dt { font-size: var(--text-xs); color: var(--fg-dim); }
+.stat dd { display: flex; align-items: baseline; gap: 6px; margin: 0; }
+.statValue { font-size: var(--text-lg); font-weight: 600; font-variant-numeric: tabular-nums; }
+.statNote { font-size: var(--text-xs); color: var(--fg-dim); }
+
+/* Joined buttons in one bordered box, like the shell's view dropdowns; the chosen one shaded. */
+.segmented {
+  display: inline-flex;
+  flex: none;
+  padding: 1px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.segmented button {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.segmented button:hover { background: var(--hover); color: var(--fg); }
+.segmented button[aria-checked="true"] { background: var(--hover-strong); color: var(--fg); }
+.segmented button:focus-visible { outline: 2px solid var(--select-line); outline-offset: -1px; }
+
+.select { display: inline-flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-dim); }
+.select select {
+  max-width: 240px;
+  padding: 2px 4px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  font: inherit;
+  color: var(--fg);
+}
+.select select:hover { border-color: var(--fg-dim); }
+.select select:focus-visible { outline: 2px solid var(--select-line); outline-offset: -1px; }
+
+.detail {
+  margin: 8px 0;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  font-size: var(--text-md);
+}
+.detailHead { display: flex; align-items: baseline; gap: 8px; margin-bottom: 6px; }
+.detailTitle { flex: 1; min-width: 0; font-weight: 600; }
+.close {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.close:hover { background: var(--hover-strong); color: var(--fg); }
+.close path { stroke: currentColor; stroke-width: 1.5; stroke-linecap: round; }

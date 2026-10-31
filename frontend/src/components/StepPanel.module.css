@@ -1,0 +1,42 @@
+/* The renderer dropdown and info button, pushed to the head's end before the close. */
+.controls { display: inline-flex; align-items: center; gap: 6px; margin-left: auto; }
+.controls + :global(.detail-close) { margin-left: 0; }
+.pending {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+}
+.pending-label { color: var(--fg-dim); }
+.pending-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-family: var(--font-mono);
+  cursor: pointer;
+}
+.pending-key:hover { border-color: var(--fg-dim); }
+/* A pending key where it cannot be picked: its glyph and value, unboxed. */
+/* In an invocation's output: which of its rows the panel's bindings leave, and Show all. */
+.narrowed { display: flex; align-items: baseline; gap: 8px; color: var(--fg-dim); font-size: var(--text-xs); font-family: var(--font-mono); }
+.show-all {
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--fg);
+  font: inherit;
+  font-family: var(--font-sans);
+  cursor: pointer;
+}
+.show-all:hover { border-color: var(--fg-dim); }

@@ -1,0 +1,154 @@
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-alt);
+}
+.body { display: flex; flex: 1; min-height: 0; }
+/* The left rail: the job picker above the minimap. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 168px;
+  min-width: 168px;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+  overflow: hidden;
+}
+/* Scrolls the workspace sideways while the window leaves it less than its least width. */
+.workspace-scroll { flex: 1; min-width: 0; overflow-x: auto; overflow-y: hidden; }
+/* The panels, and over them (in the trace) the scroller holding the level. */
+.workspace { position: relative; height: 100%; }
+.panels { width: 100%; height: 100%; }
+.panels > [data-panel] { min-width: 0; }
+/* Above the trace's overlay, so the divider can be dragged whether or not a pane is open. */
+.workspace-handle { position: relative; z-index: 3; }
+.card-area { width: 100%; height: 100%; }
+.flowchart-mode {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.flowchart-split { width: 100%; height: 100%; min-width: 0; min-height: 0; }
+.flowchart-split > [data-panel] { min-width: 0; min-height: 0; }
+.flowchart-controls {
+  position: absolute;
+  z-index: 10;
+  top: 0;
+  left: 0;
+  width: 168px;
+  max-height: 62%;
+  overflow: auto;
+  border: 0;
+  border-right: 1px solid var(--line-strong);
+  border-bottom: 1px solid var(--line-strong);
+  border-radius: 0 0 9px 0;
+  background: color-mix(in srgb, var(--bg) 96%, transparent);
+  box-shadow: var(--shadow-lg);
+}
+.flowchart-handle {
+  position: relative;
+  z-index: 5;
+  flex: 0 0 5px;
+  width: 100%;
+  height: 5px;
+  cursor: row-resize;
+  background: linear-gradient(to bottom, transparent 2px, var(--line-strong) 2px, var(--line-strong) 3px, transparent 3px);
+}
+.flowchart-handle:hover,
+.flowchart-handle[data-resize-handle-state='drag'] {
+  background: var(--line-strong);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+.flowchart-toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 3px 6px 5px 10px;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.flowchart-card-scroll {
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  background: var(--bg-alt);
+}
+.flowchart-card {
+  width: 100%;
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+  padding: 0;
+}
+.scroll {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  /* Never narrower than the trace is laid out: a narrower column leaves the rest under the
+     detail view. */
+  width: max(var(--card-width, 72%), var(--trace-content-min, 0px));
+  min-width: 0;
+  overflow: auto;
+}
+.level-column { width: 100%; }
+/* The slice control at the top right of the trace, over the workspace: its right edge 12px left
+   of where the detail view starts on screen (and of the trace's scrollbar) (so columns slid over the trace push it left), and
+   never further left than 12px from the trace's left edge, where it stays (over the columns) as
+   they slide on. The level leaves room for it at its top (`.has-slice-bar`). */
+.slice-overlay {
+  position: absolute;
+  z-index: 6;
+  top: 10px;
+  left: 12px;
+  right: calc(100% - var(--detail-left, 72%) + var(--slide, 0px) + var(--scrollbar-width, 0px) + 12px);
+  min-width: max-content;
+  display: flex;
+  justify-content: flex-end;
+  pointer-events: none;
+}
+.slice-overlay > * { pointer-events: auto; }
+/* Holds the running-step indicator at the top of the trace in the same way, under the slice
+   control's panel. */
+.running-bar { position: sticky; z-index: 25; top: 0; height: 0; }
+.flowchart-slice { position: absolute; z-index: 10; top: 10px; right: 12px; }
+/* A trace whose column is dragged narrower than it: dimmed, still scrollable, and inert, so a
+   click anywhere on it reaches the scroller, which widens the column again. */
+.scroll.is-collapsed { cursor: pointer; opacity: 0.6; }
+.scroll.is-collapsed .level-column { pointer-events: none; }
+/* The detail view laid over a collapsed trace, or its columns slid over it: above the trace and
+   the divider too, which the columns would otherwise have drawn over them and taking their drags. */
+.is-over-trace { position: relative; z-index: 4; box-shadow: var(--shadow-xl); }
+/* A card in the trace, with the id the scroll anchor and the minimap find it by. */
+.card-row { position: relative; }
+.level {
+  position: relative;
+  width: min(1400px, 100%);
+  min-height: 100%;
+  margin: 0 auto;
+  padding: 18px 12px 48px;
+}
+.level.has-slice-bar { padding-top: 46px; }
+.cards {
+  position: relative;
+  z-index: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.detail-pane {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  background: var(--bg-alt);
+}

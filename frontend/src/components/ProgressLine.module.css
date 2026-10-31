@@ -1,0 +1,38 @@
+.line {
+  display: flex;
+  height: 3px;
+  overflow: hidden;
+  background: var(--progress-track);
+  pointer-events: none;
+}
+.line > span { position: relative; flex: none; height: 100%; overflow: hidden; }
+.done { background: var(--progress-done); }
+.failed { background: var(--danger); }
+.running { background: var(--progress-running); }
+
+/* A band of sheen crossing the done part once, from off its left end to off its right. */
+.sweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent, var(--progress-sheen), transparent) no-repeat;
+  background-size: 30% 100%;
+  background-position: -80% 0;
+  animation: sweep 0.85s ease-in-out forwards;
+}
+@keyframes sweep {
+  from { background-position: -80% 0; }
+  to { background-position: 180% 0; }
+}
+
+.track-svg { fill: var(--progress-track); }
+.done-svg { fill: var(--progress-done); }
+.failed-svg { fill: var(--danger); }
+.running-svg { fill: var(--progress-running); }
+.sweep-svg { animation: sweep-svg 0.85s ease-in-out forwards; }
+@keyframes sweep-svg {
+  to { transform: translateX(var(--travel)); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sweep, .sweep-svg { animation: none; }
+}

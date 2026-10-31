@@ -1,0 +1,226 @@
+// The results overview of `{{workflow}}`: an `InvocationPanel` renderer keyed on the root
+// workflow's registered name, which the viewer offers in place of the run's trace. A small example
+// of a view that fits the viewer (fxtr's guide, Designing views, has the rules):
+//
+// - colours, type sizes, and lines from the viewer's design tokens and fxtr-view-kit's `layout`,
+//   so the view follows the viewer's theme;
+// - a chart drawn at its frame's measured width (`ChartFrame`), its marks pressable from the
+//   keyboard as well as the pointer (`pressable`), a tooltip on hover and focus alike;
+// - every mark leading to its entity: pressing a bar opens the greeting as its link would
+//   (`useEntityLinks`), and the bar of the greeting a pane shows is ringed while it does;
+// - the reader's one choice, the order, kept in the panel's storage (`useStoredState`), so it
+//   survives the panel remounting;
+// - the run in progress or failed shown as such, and greetings counted while they load.
+//
+// A root workflow's overview is always handed its one run, so it reads that spawn's record
+// directly. A view of a step or child workflow mapped over a dim is handed every spawn, and must
+// show several as well as one.
+
+import { useState } from "react";
+import {
+  EntityDataError,
+  EntityLink,
+  idKey,
+  isEntityID,
+  rowsOf,
+  unwrap,
+  useEntity,
+  useEntityLinks,
+  useInvocation,
+  type ArrayData,
+  type EntityData,
+  type EntityID,
+  type InvocationPanelProps,
+  type StorageAtom,
+} from "fxtr-view";
+import {
+  ChartFrame,
+  InvocationHead,
+  InvocationOutcome,
+  LoadEach,
+  Segmented,
+  Stat,
+  Stats,
+  excerpt,
+  formatNumber,
+  layout,
+  pressable,
+  seriesColor,
+  useStoredState,
+  type ChartTooltip,
+} from "fxtr-view-kit";
+import { GREETING, type GreetingData } from "./greeting";
+import styles from "./overview.module.css";
+
+/** One greeting as the overview draws it. */
+interface Row {
+  readonly id: EntityID<GreetingData>;
+  readonly guest: string;
+  readonly text: string;
+  readonly length: number;
+}
+
+type Order = "guest" | "length";
+
+const ORDERS = [
+  { value: "guest", label: "guest" },
+  { value: "length", label: "length" },
+] as const;
+
+function parseGreeting(data: EntityData): GreetingData {
+  if (data.$type !== GREETING) throw new EntityDataError(`expected a ${GREETING}, got ${data.$type}`);
+  return data as GreetingData;
+}
+
+/** The overview of the run: its head, then its greetings, or the run's state while it has no
+ *  output. */
+export function OverviewPanel({ invocations, storage }: InvocationPanelProps) {
+  const [run] = invocations;
+  if (invocations.length !== 1 || run === undefined)
+    throw new Error(`a results overview is handed its run's one invocation, not ${invocations.length}`);
+  const invocation = unwrap(useInvocation(run.ref));
+  return (
+    <div className={layout.panel}>
+      <InvocationHead kind="workflow" name={invocation.name} />
+      {invocation.output ? <Greetings output={invocation.output} storage={storage} /> : <InvocationOutcome invocation={invocation} />}
+    </div>
+  );
+}
+
+/** Every greeting the run returned, loaded at once and shown as they arrive. */
+function Greetings({ output, storage }: { output: EntityID<ArrayData>; storage: StorageAtom }) {
+  const ids = rowsOf(unwrap(useEntity(output))).flatMap(({ value }) =>
+    isEntityID(value) ? [value as EntityID<GreetingData>] : [],
+  );
+  const [order, setOrder] = useStoredState<Order>(storage, "order", "guest", (value): value is Order =>
+    value === "guest" || value === "length",
+  );
+  return (
+    <LoadEach ids={ids} parse={parseGreeting}>
+      {(loaded, pending) => {
+        const rows = ids.flatMap((id) => {
+          const greeting = loaded.get(idKey(id));
+          return greeting ? [{ id, guest: greeting.guest, text: greeting.text, length: greeting.text.length }] : [];
+        });
+        rows.sort(order === "length" ? (a, b) => b.length - a.length : (a, b) => a.guest.localeCompare(b.guest));
+        const mean = rows.reduce((sum, row) => sum + row.length, 0) / rows.length;
+        return (
+          <>
+            <Stats>
+              <Stat label="greetings" value={formatNumber(rows.length)} note={pending > 0 ? `${pending} loading` : undefined} />
+              <Stat label="mean length" value={formatNumber(rows.length > 0 ? mean : null, 1)} note="characters" />
+            </Stats>
+            <div className={styles.sectionHead}>
+              <h3 className={layout.subtitle}>greeting length</h3>
+              <Segmented label="order" options={ORDERS} value={order} onChange={setOrder} />
+            </div>
+            <p className={layout.muted}>Characters per greeting. Press a bar to open its greeting.</p>
+            {rows.length > 0 ? <LengthChart rows={rows} /> : <p className={layout.empty}>no greetings yet</p>}
+            <h3 className={layout.subtitle}>greetings</h3>
+            <table className={layout.table}>
+              <thead>
+                <tr>
+                  <th>guest</th>
+                  <th>greeting</th>
+                  <th>text</th>
+                  <th className={layout.num}>length</th>
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((row) => (
+                  <tr key={idKey(row.id)}>
+                    <td>{row.guest}</td>
+                    <td><EntityLink id={row.id} /></td>
+                    <td>{row.text}</td>
+                    <td className={layout.num}>{formatNumber(row.length)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </>
+        );
+      }}
+    </LoadEach>
+  );
+}
+
+const LABEL_WIDTH = 72;
+const VALUE_WIDTH = 32;
+const ROW_HEIGHT = 22;
+const BAR_HEIGHT = 12;
+const AXIS_HEIGHT = 20;
+/** One series, so the first series colour, and no legend: the section's heading names it. */
+const BAR_STYLE = { fill: seriesColor(0) };
+
+/** Round tick values from 0 to at least `max`, about `count` of them. */
+function ticks(max: number, count = 4): number[] {
+  const rough = Math.max(max, 1) / count;
+  const magnitude = 10 ** Math.floor(Math.log10(rough));
+  const step = [1, 2, 5, 10].map((m) => m * magnitude).find((s) => s >= rough) ?? rough;
+  const intervals = Math.max(1, Math.ceil(max / step));
+  return Array.from({ length: intervals + 1 }, (_, i) => i * step);
+}
+
+/** One bar per greeting, its guest beside it and its length at its end, over a characters axis. */
+function LengthChart({ rows }: { rows: readonly Row[] }) {
+  const links = useEntityLinks();
+  const [tooltip, setTooltip] = useState<ChartTooltip | null>(null);
+  const axis = ticks(Math.max(...rows.map((row) => row.length)));
+  const top = axis[axis.length - 1] ?? 1;
+  const height = rows.length * ROW_HEIGHT + AXIS_HEIGHT;
+  return (
+    <ChartFrame label="greeting length by guest" tooltip={tooltip}>
+      {(width) => {
+        const plot = Math.max(width - LABEL_WIDTH - VALUE_WIDTH, 40);
+        const x = (value: number) => LABEL_WIDTH + (value / top) * plot;
+        const bottom = rows.length * ROW_HEIGHT;
+        return (
+          <svg width={width} height={height} className={styles.chart}>
+            <g className={layout.grid}>
+              {axis.map((value) => <line key={value} x1={x(value)} x2={x(value)} y1={0} y2={bottom} />)}
+            </g>
+            {rows.map((row, i) => {
+              const y = i * ROW_HEIGHT + (ROW_HEIGHT - BAR_HEIGHT) / 2;
+              const show = () => setTooltip({
+                x: x(row.length),
+                y: y + BAR_HEIGHT / 2,
+                content: <><b>{row.guest}</b> · {formatNumber(row.length)} characters<br />{excerpt(row.text, 80)}</>,
+              });
+              return (
+                <g key={idKey(row.id)}>
+                  <text x={LABEL_WIDTH - 8} y={y + BAR_HEIGHT / 2} textAnchor="end" dominantBaseline="central" className={styles.guest}>
+                    {row.guest}
+                  </text>
+                  <rect
+                    x={LABEL_WIDTH}
+                    y={y}
+                    width={Math.max(x(row.length) - LABEL_WIDTH, 1)}
+                    height={BAR_HEIGHT}
+                    rx={2}
+                    style={BAR_STYLE}
+                    className={layout.mark}
+                    data-open={links.isOpen(row.id)}
+                    {...pressable(() => links.open(row.id), `${row.guest}: ${row.length} characters`)}
+                    onPointerEnter={show}
+                    onPointerLeave={() => setTooltip(null)}
+                    onFocus={show}
+                    onBlur={() => setTooltip(null)}
+                  />
+                  <text x={x(row.length) + 4} y={y + BAR_HEIGHT / 2} dominantBaseline="central" className={layout.chartLabel}>
+                    {formatNumber(row.length)}
+                  </text>
+                </g>
+              );
+            })}
+            <g className={layout.axis} transform={`translate(0, ${bottom})`}>
+              <line x1={LABEL_WIDTH} x2={x(top)} y1={0} y2={0} />
+              {axis.map((value) => (
+                <text key={value} x={x(value)} y={14} textAnchor="middle">{formatNumber(value)}</text>
+              ))}
+            </g>
+          </svg>
+        );
+      }}
+    </ChartFrame>
+  );
+}

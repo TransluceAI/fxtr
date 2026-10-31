@@ -1,23 +1,27 @@
 {
-	"private": true,
-	"type": "module",
-	"packageManager": "pnpm@10.12.2",
-	"scripts": {
-		"build": "tsc --build",
-		"check": "tsc --build --force",
-		"test": "vitest run",
-		"test:watch": "vitest",
-		"lint": "biome check v2/ts/packages/ projects/fxtr_workstation/frontend_lib/packages/ projects/fxtr_experiment/frontend/ examples/fxtr_workstation_demo/frontend/ examples/fxtr_experiment_demo/frontend/ examples/fxtr_http_demo/web/ spikes/old_typescript/",
-		"lint:fix": "biome check --write v2/ts/packages/ projects/fxtr_workstation/frontend_lib/packages/ projects/fxtr_experiment/frontend/ examples/fxtr_workstation_demo/frontend/ examples/fxtr_experiment_demo/frontend/ examples/fxtr_http_demo/web/ spikes/old_typescript/",
-		"format": "biome format --write v2/ts/packages/ projects/fxtr_workstation/frontend_lib/packages/ projects/fxtr_experiment/frontend/ examples/fxtr_workstation_demo/frontend/ examples/fxtr_experiment_demo/frontend/ examples/fxtr_http_demo/web/ spikes/old_typescript/"
-	},
-	"devDependencies": {
-		"@biomejs/biome": "^1.9.0",
-		"@types/node": "^25.5.0",
-		"@types/react-dom": "^19.2.3",
-		"esbuild": "^0.28.0",
-		"jsdom": "^29.0.1",
-		"typescript": "^5.7.0",
-		"vitest": "^3.0.0"
-	}
+  "name": "fxtr-workspace",
+  "private": true,
+  "description": "The pnpm workspace root: the reusable TypeScript libraries in ts/ and the experiment viewer in frontend/.",
+  "scripts": {
+    "typecheck": "pnpm -r typecheck",
+    "test": "pnpm test:skills && pnpm -r test",
+    "test:skills": "node --test scripts/skills/*.test.mjs",
+    "sync:plugin": "node scripts/skills/sync.mjs",
+    "build:dist": "pnpm --filter fxtr-ide build && uv build --package fxtr"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "packageManager": "pnpm@10.12.2",
+  "devDependencies": {
+    "github-slugger": "^2.0.0",
+    "mdast-util-to-string": "^4.0.0",
+    "remark": "^15.0.1",
+    "remark-frontmatter": "^5.0.0",
+    "remark-gfm": "^4.0.1",
+    "remark-mdx": "^3.1.1",
+    "smol-toml": "^1.9.0",
+    "unist-util-visit": "^5.1.0",
+    "yaml": "^2.9.1"
+  }
 }

@@ -1,0 +1,6 @@
+# A project-local boundary: installs here never join an enclosing workspace.
+packages:
+  - "."
+
+onlyBuiltDependencies:
+  - esbuild

@@ -1,0 +1,60 @@
+/* The replay section above the theme row, headed the way that row is lettered. */
+.replay {
+  flex: none;
+  border-top: 1px solid var(--line);
+}
+/* A div while the replay is on, and the button starting it while it is off. */
+.head {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 6px 5px 10px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+button.head { padding-right: 8px; cursor: pointer; }
+button.head:hover { background: var(--hover); color: var(--fg); }
+.dev {
+  margin-left: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--mapped-bg);
+  color: var(--mapped-fg);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+}
+.body { padding: 0 8px 7px 6px; }
+.transport { display: flex; align-items: center; gap: 4px; }
+.slider { flex: 1; min-width: 0; margin: 0; accent-color: var(--select-accent); }
+.percent {
+  width: 30px;
+  flex: none;
+  text-align: right;
+  font-size: var(--text-xs);
+  font-variant-numeric: tabular-nums;
+  color: var(--fg-dim);
+}
+.options { display: flex; align-items: center; justify-content: space-between; margin: 4px 0 0 20px; }
+.speeds { display: flex; gap: 2px; }
+.option, .fail {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 6px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.option:hover, .fail:hover { background: var(--hover-strong); color: var(--fg); }
+.option[aria-pressed='true'] { background: var(--hover-strong); color: var(--fg); }
+.fail[aria-pressed='true'] { background: var(--danger-bg); color: var(--danger); }

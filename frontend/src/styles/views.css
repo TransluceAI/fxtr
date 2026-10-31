@@ -1,0 +1,27 @@
+/*
+ * This shell's own view styles: fxtr-view's class names (cids, fallbacks, faults) and the frame of
+ * an opened entity. Renderer packages style themselves, with CSS Modules their components import,
+ * so nothing about a renderer package belongs here. Everything reads the tokens in tokens.css.
+ * This shell's own link behavior is styled in views/EntityLinkImpl.module.css.
+ */
+
+/* ── Cids: the short run stands out, the common prefix and the tail recede ── */
+.fxtr-view-cid { font-family: var(--font-mono); }
+.fxtr-view-cid-prefix, .fxtr-view-cid-rest { color: var(--fg-dim); }
+.fxtr-view-cid-short { color: var(--fg); font-weight: 600; }
+
+/* ── fxtr-view fallbacks and faults ── */
+.fxtr-view-loading, .fxtr-view-no-match { color: var(--fg-dim); font-size: var(--text-sm); }
+.fxtr-view-error { color: var(--mapped-fg); font-size: var(--text-sm); }
+.fxtr-view-fault {
+  margin: 6px 0;
+  padding: 8px;
+  border-radius: 3px;
+  background: var(--mapped-bg);
+  color: var(--mapped-fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+/* ── An opened entity. Positioned for the renderer info button in its corner (views/RendererInfo). ── */
+.view-panel { position: relative; font-size: var(--text-md); line-height: 1.45; }

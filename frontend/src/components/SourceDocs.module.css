@@ -1,0 +1,28 @@
+.code {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin-top: 10px;
+}
+.reference { display: flex; align-items: center; gap: 7px; min-width: 0; max-width: 100%; }
+.kind { flex: none; width: 72px; color: var(--fg-dim); font-size: var(--text-xs); }
+.ref { flex: 0 1 auto; min-width: 0; }
+.ref svg { flex: none; }
+.location {
+  display: flex;
+  min-width: 0;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+.dir { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.file { flex: none; }
+/* Never cut: the directory gives way first. */
+.commit { flex: none; white-space: pre; opacity: 0.8; }
+
+/* Lit as an entity link is: while the browsing panel after its view shows the code, and faintly
+   while a pinned panel does. */
+:global(.chip).ref.is-open { background: var(--select-bg); border-color: var(--select-line); color: var(--select-fg); }
+:global(.chip).ref.is-pinned { border-color: var(--select-line); border-style: dashed; }

@@ -1,0 +1,8 @@
+/* The example's own styles, over the shell's design tokens: what its renderers show beyond the
+   kit's shared layout (a rubric's criteria, the refinement rounds, a grade's score). */
+
+.criteria { margin: 6px 0; padding-left: 18px; }
+.rounds { display: flex; flex-direction: column; gap: 10px; margin: 8px 0; padding: 0; list-style: none; }
+.round { padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); }
+.roundHead { margin-bottom: 4px; color: var(--fg-dim); }
+.score { font-variant-numeric: tabular-nums; text-align: right; }

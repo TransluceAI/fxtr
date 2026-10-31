@@ -1,0 +1,10 @@
+.cid {
+  margin-bottom: 10px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  overflow-wrap: anywhere;
+}
+
+/* Why a panel shows nothing. */
+.problem { color: var(--fg-dim); font-size: var(--text-sm); }

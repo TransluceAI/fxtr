@@ -1,0 +1,32 @@
+// Renderers for the experiment's Greeting (`src/{{package}}/experiment.py`): a panel and an inline
+// link. `GreetingData` mirrors the entity's stored form; nothing checks it at runtime. The shared
+// looks come from fxtr-view-kit; styles of the package's own would be a CSS Module beside this
+// file (`greeting.module.css`, imported as `styles`).
+
+import { unwrap, useEntity, type EntityData, type EntityID, type EntityViewProps } from "fxtr-view";
+import { Kind, layout } from "fxtr-view-kit";
+
+export const GREETING = "{{package}}.Greeting";
+
+/** A greeting for one guest. */
+export interface GreetingData extends EntityData {
+  readonly $type: typeof GREETING;
+  readonly guest: string;
+  readonly text: string;
+}
+
+export function GreetingPanel({ id }: EntityViewProps) {
+  const greeting = unwrap(useEntity(id as EntityID<GreetingData>));
+  return (
+    <div className={layout.panel}>
+      <div className={layout.kindLine}><Kind>Greeting</Kind></div>
+      <h2 className={layout.title}>{greeting.guest}</h2>
+      <p className={layout.prose}>{greeting.text}</p>
+    </div>
+  );
+}
+
+export function GreetingInlineLink({ id }: EntityViewProps) {
+  const greeting = unwrap(useEntity(id as EntityID<GreetingData>));
+  return <span className={layout.link}><Kind>Greeting</Kind> {greeting.guest}</span>;
+}

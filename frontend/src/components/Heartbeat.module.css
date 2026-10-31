@@ -1,0 +1,11 @@
+.heartbeat { display: grid; gap: 1px; }
+.heartbeat svg { display: block; overflow: hidden; }
+.baseline { stroke: var(--line-strong); }
+.done { fill: var(--progress-done); }
+.failed { fill: var(--danger); }
+.caption {
+  display: flex;
+  justify-content: space-between;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+}

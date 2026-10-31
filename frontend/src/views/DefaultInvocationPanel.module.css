@@ -1,0 +1,75 @@
+.panel { display: flex; flex-direction: column; gap: 16px; }
+.section { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--text-sm);
+  font-weight: 600;
+  color: var(--fg);
+}
+.type { font-family: var(--font-mono); font-size: var(--text-xs); font-weight: 400; color: var(--fg-dim); }
+.dim { color: var(--fg-dim); font-size: var(--text-sm); }
+.error {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.sketch { margin: 0; }
+.bar {
+  display: inline-block;
+  width: 60%;
+  height: 0.9em;
+  border-radius: 3px;
+  background: var(--line);
+  vertical-align: middle;
+}
+.inputs { display: flex; flex-direction: column; border-top: 1px solid var(--line); }
+.input { border-bottom: 1px solid var(--line); min-width: 0; }
+.input-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 2px;
+  border: 0;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.input-head:hover { background: var(--hover); }
+.chevron { flex: none; align-self: center; color: var(--fg-dim); transition: transform 0.12s; }
+.chevron.is-open { transform: rotate(90deg); }
+.input-name { font-family: var(--font-mono); font-size: var(--text-sm); }
+.summary {
+  margin-left: auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg-dim);
+  font-size: var(--text-xs);
+}
+.input-value { padding: 4px 0 10px 20px; min-width: 0; }
+/* The status line and, under it, the provenance as fine print. */
+.about { display: flex; flex-direction: column; gap: 4px; padding-bottom: 10px; border-bottom: 1px solid var(--line); color: var(--fg-dim); font-size: var(--text-xs); }
+.openTrace {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: none;
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.openTrace:hover { background: var(--hover-strong); }

@@ -1,0 +1,29 @@
+"""Launch the experiment (:mod:`{{package}}.experiment`).
+
+``uv run python launch.py`` runs it as a job of this project and prints the greetings. The client
+locates the project from this file, connects to the database ``fxtr.local.toml`` names, pins the
+checkout's commit, checks the venv against ``uv.lock``, and runs the job here until it stops.
+A launcher can pass any inputs, where ``fxtr run`` takes only scalars and project arrays.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from fxtr.core.entities import FxtrEntityStorage
+from fxtr.entity_defns.array import Array
+from fxtr.project.running import launch_cli
+from {{package}}.experiment import Greeting, greet_everyone
+
+INPUTS = {"salutation": Array.scalar("Hello", str)}
+
+
+async def print_greetings(storage: FxtrEntityStorage, result: Array[Any]) -> None:
+    """Print every greeting the result references, loaded from ``storage``."""
+    for _key, greeting_id in result.items():
+        greeting = await storage.load(greeting_id, as_type=Greeting)
+        print(greeting.text)
+
+
+if __name__ == "__main__":
+    launch_cli(greet_everyone, INPUTS, anchor=__file__, on_result=print_greetings)

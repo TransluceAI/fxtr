@@ -1,0 +1,23 @@
+// The bundle's entry: what this project contributes to the viewer. `fxtr view` builds it into
+// dist/ and serves it, rebuilding it as it changes (`fxtr views build` builds it without the
+// viewer); each renderer is for a slot, an entity type (or a step or workflow's name), and has an
+// id unique in the viewer.
+
+import type { ViewBundle } from "fxtr-view";
+{{#example}}
+import { EntityInlineLink, EntityPanel, InvocationPanel, renderer } from "fxtr-view";
+import { GREETING, GreetingInlineLink, GreetingPanel } from "./greeting";
+import { OverviewPanel } from "./overview";
+{{/example}}
+
+const bundle: ViewBundle = {
+  renderers: [
+{{#example}}
+    renderer(EntityPanel, GREETING, "{{views_package}}.GreetingPanel", GreetingPanel),
+    renderer(EntityInlineLink, GREETING, "{{views_package}}.GreetingInlineLink", GreetingInlineLink),
+    renderer(InvocationPanel, "{{workflow}}", "{{views_package}}.Overview", OverviewPanel),
+{{/example}}
+  ],
+};
+
+export default bundle;

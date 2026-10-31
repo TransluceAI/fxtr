@@ -1,0 +1,47 @@
+/* The cbor-tree views' styles, over the shell's design tokens. */
+
+/* No rules of their own: they name the element, for tests. */
+.link {}
+.panel {}
+
+.header { margin-bottom: 10px; }
+.type { font-size: var(--text-base); font-weight: 600; overflow-wrap: anywhere; }
+.linkType { font-weight: 600; }
+.linkCid { font-family: var(--font-mono); color: var(--fg-dim); }
+ul.map, ul.list {
+  list-style: none;
+  margin: 0;
+  padding-left: 10px;
+  border-left: 1px solid var(--line);
+}
+ul.map li, ul.list li { padding: 1px 0; font-family: var(--font-mono); font-size: var(--text-sm); }
+ul.list > li + li { border-top: 1px dashed var(--line); }
+/* The root's rows sit flush in their panel. */
+ul.root { padding-left: 0; border-left: 0; }
+.key { margin-right: 6px; color: var(--fg-dim); }
+.key::after { content: ":"; }
+.str { color: var(--replica-fg); white-space: pre-wrap; overflow-wrap: anywhere; }
+.num { color: var(--mapped-fg); }
+.null { color: var(--fg-dim); }
+.bytes { color: var(--select-fg); }
+.toggle {
+  padding: 0 3px;
+  border: 0;
+  background: none;
+  color: var(--fg-dim);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  cursor: pointer;
+}
+.toggle:hover { color: var(--fg); }
+/* A list's or map's size as text (`CompactValue`). */
+.summary { padding: 0 3px; color: var(--fg-dim); font-family: var(--font-mono); font-size: var(--text-sm); }
+
+/* The cbor-tree hover preview: type, cid, the first fields. */
+.preview .header { margin-bottom: 6px; }
+.preview .type { font-size: var(--text-md); }
+.previewFields { margin: 0; font-family: var(--font-mono); }
+.previewField { display: flex; gap: 6px; padding: 1px 0; }
+.previewField dt { flex: 0 0 auto; color: var(--fg-dim); }
+.previewField dd { margin: 0; min-width: 0; overflow-wrap: anywhere; }
+.previewMore { margin-top: 3px; color: var(--fg-dim); }

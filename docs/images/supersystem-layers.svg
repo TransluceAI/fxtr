@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="738" height="255.25" viewBox="11 55.375 738 255.25" font-family="Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif" role="img" aria-label="You write the science; the supersystem supplies every layer around it">
+<title>You write the science; the supersystem supplies every layer around it</title>
+<rect x="24" y="56" width="712" height="56" rx="8" fill="none" stroke="#c3c2b7" stroke-width="1.25"/>
+<text x="44" y="78" font-size="13" fill="#111111" font-weight="600">Studio + Hub</text>
+<text x="44" y="96" font-size="13" fill="#111111">Store, run, view, and share projects written with fxtr and behaviors</text>
+<text x="716" y="88" font-size="11.5" fill="#52514e" text-anchor="end">like Databricks</text>
+<rect x="24" y="122" width="712" height="56" rx="8" fill="#2a78d6" fill-opacity="0.12" stroke="#2a78d6" stroke-width="2"/>
+<text x="44" y="144" font-size="13" fill="#111111" font-weight="600">Your experiment</text>
+<text x="44" y="162" font-size="13" fill="#111111">The data model, the experiment logic, and the visualizations</text>
+<text x="716" y="154" font-size="11.5" fill="#111111" font-weight="600" text-anchor="end">written by you and your agents</text>
+<rect x="24" y="188" width="712" height="56" rx="8" fill="none" stroke="#c3c2b7" stroke-width="1.25"/>
+<text x="44" y="210" font-size="13" fill="#111111" font-weight="600">behaviors</text>
+<text x="44" y="228" font-size="13" fill="#111111">Ready-made model APIs, chat rollouts, user simulators, judges</text>
+<text x="716" y="220" font-size="11.5" fill="#52514e" text-anchor="end">like Spark’s MLlib</text>
+<rect x="24" y="254" width="712" height="56" rx="8" fill="none" stroke="#c3c2b7" stroke-width="1.25"/>
+<text x="44" y="276" font-size="13" fill="#111111" font-weight="600">fxtr</text>
+<text x="44" y="294" font-size="13" fill="#111111">Modular computation and data management, purpose-built for AI science</text>
+<text x="716" y="286" font-size="11.5" fill="#52514e" text-anchor="end">like Spark or Ray, plus DVC</text>
+</svg>

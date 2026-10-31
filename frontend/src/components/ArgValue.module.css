@@ -1,0 +1,89 @@
+.literal { font-family: var(--font-mono); font-size: var(--text-sm); }
+
+/*
+ * Argument chips name every key column of the upstream step, always in neutral text: dim-kind
+ * colour only ever describes the card it is drawn on, and the chip says nothing of how this step
+ * maps over them (its hover preview does).
+ */
+.keys {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 1ch;
+  white-space: pre;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+/* One dim of the keys, with the bracket or comma it rides with. */
+.dim { display: inline-flex; align-items: center; }
+
+/* A linked step's docs, shown against the step you are reading rather than instead of it. */
+.preview {
+  z-index: 50;
+  width: 320px;
+  max-width: min(320px, calc(100vw - 24px));
+  max-height: 260px;
+  overflow-y: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+.preview-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--line);
+}
+.preview-name {
+  font-family: var(--font-mono);
+  font-size: var(--text-md);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.mapping {
+  margin-top: 8px;
+  padding-top: 7px;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  color: var(--fg-dim);
+}
+.preview-shape { color: var(--fg-dim); }
+
+/* An argument expression: chips for the steps read, with the operations between them as code. */
+.expr { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 2px; }
+/* A chip short of room wraps: its keys, and each dim within them, break the line at their narrowest (a zero basis held
+   up by `min-width: min-content`) and grow back to their natural width (`max-content`) as room
+   allows. Past that the keys wrap onto further lines, between dims, and a name with no break
+   anywhere breaks. Its lines have a fixed height so the radius can be exactly half a one-line
+   chip's height (half a line, plus the 3px padding and 1px border of `.chip`): one line is a pill,
+   several a rounded box. Scoped under `.expr` to outrank the global `.chip`, whose `border-radius`
+   and `font` (which resets `line-height`) would otherwise win on load order. Its items sit at the
+   top, so a wrapped chip's icon and name stay on its first line; the icon (`KIND_ICON_SIZE`, 12px)
+   is centred on that line. */
+.expr .chip {
+  --chip-line: 14px;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  max-width: 100%;
+  line-height: var(--chip-line);
+  border-radius: calc(var(--chip-line) / 2 + 4px);
+  text-align: left;
+}
+.expr .chip > .keys,
+.keys > .dim {
+  flex: 1 1 0;
+  min-width: min-content;
+  max-width: max-content;
+}
+.chip-name { min-width: 0; overflow-wrap: anywhere; }
+.expr .literal { white-space: pre; color: var(--fg-dim); }
+.kind-icon { flex: none; color: var(--fg-dim); }
+.expr .chip > .kind-icon { margin-top: calc((var(--chip-line) - 12px) / 2); }
+.preview-state { margin-left: auto; font-size: var(--text-xs); color: var(--fg-dim); white-space: nowrap; }

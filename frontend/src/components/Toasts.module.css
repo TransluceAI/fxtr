@@ -1,0 +1,61 @@
+/* A toast: a floating card. sonner positions and animates it (see Toasts.tsx); this is its look. */
+.toast {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  width: var(--width);
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: var(--shadow-xl);
+  color: var(--fg);
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+}
+/* Toasts stacked behind the front one show only their edge. */
+.toast[data-expanded='false'][data-front='false'] > * { opacity: 0; }
+
+.icon { display: flex; flex: none; padding-top: 2px; color: var(--fg-dim); }
+
+.content { display: flex; flex: 1; flex-direction: column; gap: 3px; min-width: 0; }
+.title { font-weight: 600; line-height: 1.4; }
+.description { color: var(--fg-dim); font-size: var(--text-md); line-height: 1.45; }
+.description code { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg); }
+
+.action {
+  flex: none;
+  align-self: center;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--button-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: 500;
+  cursor: pointer;
+}
+.action:hover { background: var(--button-hover); }
+
+/* The close button sits on the card's corner, shown while the card is hovered or it has focus. */
+.close {
+  position: absolute;
+  top: 0;
+  left: 0;
+  display: grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  border: 1px solid var(--line-strong);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg-dim);
+  transform: translate(-35%, -35%);
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 150ms;
+}
+.toast:hover .close, .close:focus-visible { opacity: 1; }
+.close:hover { background: var(--muted-bg); color: var(--fg); }

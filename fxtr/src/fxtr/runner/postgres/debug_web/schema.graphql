@@ -1,0 +1,325 @@
+## The debug viewer's GraphQL schema.
+##
+## Read-only. Cid is a DASL CID string; JSON is an arbitrary structure (array types, node params,
+## array keys); Base64 is base64-encoded DRISL (DAG-CBOR) bytes the client decodes itself.
+
+scalar Cid
+scalar DateTime
+scalar JSON
+scalar Base64
+
+type Query {
+  "A page of current completed output. Filters and sort apply to the entire selected output."
+  outputPage(source: OutputSource!, offset: Int! = 0, first: Int! = 25, filters: [ColumnFilter!], sort: OutputSort, last: Boolean! = false): OutputPage!
+  "A page of a run's invocations the selection picks out (only those in `state`, given one), each with its result's row count and, when every invocation produces one row, that row's value. Filters and the sort are over `key:<dim>`, `state:`, `rows:` and the value columns; ties keep key order."
+  invocationPage(jobId: ID!, pathname: String!, nodeId: String!, selection: JSON!, offset: Int! = 0, first: Int! = 25, filters: [ColumnFilter!], sort: OutputSort, state: String, last: Boolean! = false): InvocationPage!
+  "The distinct keys a dim takes in a source's current output, read from its arrays (for dims no spawn key records)."
+  outputDimValues(source: OutputSource!, dim: String!, search: String! = "", offset: Int! = 0, first: Int! = 25): DimValuePage!
+  "Type tags only, in a single bounded request; never loads entity bodies."
+  entityMetas(cids: [String!]!): [EntityMeta!]!
+  "Bounded job summaries, with no step descriptions or logs."
+  jobSummaries(first: Int! = 25, after: String, search: String! = ""): JobPage!
+  "A lightweight lookup independent of job-picker pagination."
+  jobSummary(id: ID!): JobSummary
+  "Workflow graph and aggregate status, without output data or spawn lists."
+  levelOverview(jobId: ID!, pathname: String!): LevelOverview
+  "A bounded page of matching invocations, selected by typed dimension keys."
+  runPage(jobId: ID!, pathname: String!, nodeId: String!, selection: JSON!, first: Int! = 25, after: String, state: String, unfinished: Boolean! = false, offset: Int): RunPage!
+  "A searchable page of dimension values with selection compatibility and status counts."
+  keyPage(jobId: ID!, pathname: String!, nodeId: String!, dim: String!, selection: JSON!, search: String! = "", first: Int! = 25, after: String, offset: Int): KeyPage!
+  "Every job, newest first (shallow: id/workflow/root/state only)."
+  jobs: [Job!]!
+  "One job: its overview, job attempts, and shallow invocation/step lists."
+  job(id: ID!): Job
+  "One workflow invocation, with everything recorded about it."
+  invocation(jobId: ID!, pathname: String!): Invocation
+  "An opaque string that changes whenever invocation(jobId, pathname) would change (spawn states included); null if there is no such invocation. For cheap polling."
+  invocationVersion(jobId: ID!, pathname: String!): String
+  "One step the job requested, with its state and attempt."
+  step(jobId: ID!, cacheKey: String!): StepPin
+  "The mutable global step cache."
+  stepCache: [CacheEntry!]!
+  "An Array entity destructured for rendering; cells are raw CBOR. limit caps the rows returned (for previews); rowCount is always the total."
+  array(cid: String!, limit: Int): ArrayView
+  "An entity's type tag; its bytes come from GET /entity/{cid}."
+  entity(cid: String!): EntityMeta
+}
+
+enum JobState { running succeeded stopped }
+
+type Job {
+  id: ID!
+  workflowName: String!
+  root: String!
+  createdAt: DateTime!
+  state: JobState!
+  "Stopped with at least one failed invocation or step."
+  failed: Boolean!
+  jobAttempts: [JobAttempt!]!
+  "Shallow list for the job view; open one via invocation(jobId, pathname) for the full detail."
+  invocations: [InvocationSummary!]!
+  "Shallow list for the job view; open one via step(jobId, cacheKey) for the full detail."
+  steps: [StepSummary!]!
+  resultCid: Cid
+}
+
+"A row in a job's invocation list (the full invocation is fetched separately)."
+type InvocationSummary {
+  pathname: String!
+  workflowName: String!
+  state: String!
+}
+
+"A row in a job's step list (the full step is fetched separately)."
+type StepSummary {
+  cacheKey: String!
+  stepName: String!
+  state: StepState!
+}
+
+type JobAttempt {
+  id: ID!
+  "Its position among the job's job attempts, from 1, in creation order."
+  seq: Int!
+  state: String!
+  reason: String
+  "The process running it."
+  owner: String!
+  "When its owner last refreshed the lease."
+  heartbeatAt: DateTime!
+  "Whether the lease is fresh (heartbeaten recently, not evicted). Display only: a stale lease changes nothing by itself, but a resume of the job may take it over."
+  leaseFresh: Boolean!
+  "When its work was taken away from it, if it was."
+  evictedAt: DateTime
+  "Why it was evicted, for evictedAt."
+  evictedReason: String
+  createdAt: DateTime!
+  settledAt: DateTime
+}
+
+type Invocation {
+  "Globally unique: jobId/pathname."
+  id: ID!
+  pathname: String!
+  workflowName: String!
+  cacheKeyPrefix: String!
+  state: String!
+  error: AttemptError
+  reason: String
+  resultCid: Cid
+  "The code that produced the result, as the ledger records it with the result; null until it has one."
+  provenance: Provenance
+  nodes: [Node!]!
+  spawns: [Spawn!]!
+  attempts: [Attempt!]!
+}
+
+type Node {
+  "Globally unique: jobId/pathname/identity (a node identity repeats across invocations)."
+  id: ID!
+  identity: Cid!
+  kind: String!
+  name: String
+  type: JSON!
+  params: JSON!
+  inputs: [NodeInput!]!
+  "The stored value, for leaves (inputs, source arrays, results); an array Cid."
+  valueCid: Cid
+}
+
+type NodeInput {
+  "An argument name, a stack key, or \"input\"."
+  label: JSON!
+  identity: Cid!
+}
+
+type Spawn {
+  nodeIdentity: Cid!
+  "The spawn's joint key: the map_over dim values (in map_over order) then the replica dim values."
+  key: JSON!
+  "For a run_child_workflow node: the child invocation's pathname (links into invocations)."
+  childPathname: String
+  "For a run_step node: the cache key (links into steps and the step cache)."
+  stepCacheKey: String
+  "The array the spawned invocation/step produced, if it has one yet (an array Cid)."
+  resultCid: Cid
+  "The spawned target's derived state: the child invocation's state, or the step's StepState."
+  state: String!
+}
+
+type Attempt {
+  id: ID!
+  kind: String!
+  state: String!
+  error: AttemptError
+  reason: String
+  stoppedOn: [Cid!]
+  resultCid: Cid
+  "When the attempt started running."
+  startedAt: DateTime!
+  "The job attempt whose process runs (ran) it."
+  ownerJobAttemptId: ID!
+  "The code it ran: its owner job attempt's."
+  provenance: Provenance!
+  finishedAt: DateTime
+  events: [Event!]!
+  logs: [LogLine!]!
+}
+
+"Which code ran: the pin a job attempt's process took, which every attempt it owned ran at."
+type Provenance {
+  "The job whose job attempt it was: for a step result reused from the cache, the job that produced it."
+  jobId: ID!
+  jobAttemptId: ID!
+  "The pinned commit (hex)."
+  commit: String!
+  "The commit's tree (hex)."
+  tree: String!
+  "Whether fxtr made the commit from uncommitted (staged) changes, so it exists only under fxtr's pin ref."
+  ephemeral: Boolean!
+  "The project root within the repository, as a POSIX path (\".\" for the repository root)."
+  projectPath: String!
+  "Whether the process checked its environment against the project and found no problem."
+  environmentVerified: Boolean!
+}
+
+type AttemptError {
+  typeName: String!
+  message: String!
+  traceback: String!
+}
+
+type Event {
+  seq: Int!
+  kind: String!
+  identity: Cid!
+  at: DateTime!
+}
+
+type LogLine {
+  seq: Int!
+  message: String!
+  at: DateTime!
+}
+
+enum StepState { queued running completed failed conflict stopped }
+
+type StepPin {
+  "Globally unique: jobId/cacheKey."
+  id: ID!
+  cacheKey: String!
+  stepName: String!
+  requestCid: Cid!
+  state: StepState!
+  resultCid: Cid
+  "The code that produced the bound step result (for a cache hit, another job's job attempt), as the ledger records it; null until bound."
+  provenance: Provenance
+  attempt: Attempt
+  logs: [LogLine!]!
+}
+
+type CacheEntry {
+  "Globally unique: the cache key."
+  id: ID!
+  cacheKey: String!
+  requestCid: Cid!
+  stepName: String!
+  "The attempt behind the entry: its current one, or the one that produced the step result it offers if this database ran it."
+  attempt: Attempt
+  "The entry's state: its current attempt's (running, failed, abandoned), or completed when it offers a step result."
+  state: String!
+  "The code behind the entry: the current attempt's, or the step result's producer's."
+  provenance: Provenance!
+}
+
+type ArrayView {
+  cid: Cid!
+  "The array's type (dims and value schema) as JSON."
+  type: JSON!
+  "Total number of rows, regardless of any `limit` on `rows`."
+  rowCount: Int!
+  rows: [ArrayRow!]!
+}
+
+type ArrayRow {
+  "The row's key values, in dim order."
+  key: JSON!
+  "The row's value as base64-encoded DRISL bytes."
+  value: Base64!
+}
+
+type EntityMeta {
+  cid: Cid!
+  typeTag: String!
+}
+
+"Exactly one array CID or a complete run identity; selection is only valid for a run."
+input OutputSource {
+  cid: String
+  jobId: ID
+  pathname: String
+  nodeId: String
+  selection: JSON
+}
+enum SortDirection { asc desc }
+input OutputSort { key: String!, direction: SortDirection! }
+input ColumnFilter { key: String!, text: String! }
+type OutputPage { type: JSON, rows: [ArrayRow!]!, total: Int, offset: Int!, hasMore: Boolean! }
+"A run's invocation with what it produced: its result's row count (null without one) and, when every invocation produces one row, that row's value as base64 DRISL."
+type InvocationRow { spawn: Spawn!, rowCount: Int, value: Base64 }
+type InvocationPage { items: [InvocationRow!]!, total: Int!, offset: Int! }
+type JobSummary { id: ID!, workflowName: String!, root: String!, createdAt: DateTime!, state: JobState!, failed: Boolean! }
+type JobPage { items: [JobSummary!]!, next: String }
+type RunPage { items: [Spawn!]!, total: Int!, offset: Int, next: String }
+type StateCounts { queued: Int!, running: Int!, completed: Int!, failed: Int!, interrupted: Int!, conflict: Int!, stopped: Int! }
+type KeyItem { value: JSON!, compatible: Boolean!, counts: StateCounts! }
+type KeyPage { items: [KeyItem!]!, total: Int!, offset: Int, next: String }
+type DimValue { value: JSON!, compatible: Boolean! }
+type DimValuePage { items: [DimValue!]!, total: Int!, offset: Int! }
+"A workflow graph and aggregate progress; contains no spawn lists, logs, events, or output rows."
+type LevelOverview {
+  pathname: String!
+  workflowName: String!
+  state: String!
+  resultCid: Cid
+  error: AttemptError
+  startedAt: DateTime
+  finishedAt: DateTime
+  nodes: [OverviewNode!]!
+  attemptCount: Int!
+  "The code version the latest attempt ran (its owner job attempt's), as a CID: what code links and docs follow. Null before an attempt."
+  codeVersion: Cid
+  returnedNode: Cid
+  awaitingNode: Cid
+  version: String!
+  "The database's time when the overview was read, the clock its timestamps are on."
+  asOf: DateTime!
+}
+"When a run's invocations ran, counting only attempts this job ran (a result bound from another job's cache took no time here)."
+type RunActivity {
+  firstStartedAt: DateTime
+  lastFinishedAt: DateTime
+  "How many invocations this job finished, completed or failed."
+  finished: Int!
+  "When the longest-running invocation still running started, whoever runs it."
+  oldestRunningSince: DateTime
+}
+"A run's failed invocations sharing an error type, with one of their messages."
+type FailureGroup { typeName: String!, message: String!, count: Int! }
+type OverviewNode {
+  version: String!
+  identity: Cid!
+  kind: String!
+  name: String
+  type: JSON!
+  params: JSON!
+  inputs: [NodeInput!]!
+  valueCid: Cid
+  mapOver: [String!]!
+  replicaDims: [String!]!
+  counts: StateCounts
+  "Null for a node that was not run."
+  activity: RunActivity
+  "Most frequent first; null for a node that was not run."
+  failures: [FailureGroup!]
+}

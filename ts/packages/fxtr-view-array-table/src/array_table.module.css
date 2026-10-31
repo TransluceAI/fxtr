@@ -1,0 +1,22 @@
+/* The Array table's styles, over the shell's design tokens. */
+
+.header { margin-bottom: 8px; font-family: var(--font-mono); font-size: var(--text-sm); }
+.dims { font-weight: 600; }
+.schema, .count { color: var(--fg-dim); }
+.count::before { content: "· "; }
+.table { border-collapse: collapse; font-size: var(--text-sm); }
+.table th, .table td {
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  text-align: left;
+  vertical-align: top;
+}
+.table th { background: var(--bg-alt); color: var(--fg-dim); font-weight: 500; }
+.table th.dimCol, .table td.dimCol {
+  background: var(--muted-bg);
+  font-family: var(--font-mono);
+}
+.field, .null, .empty { color: var(--fg-dim); }
+.num { font-family: var(--font-mono); }
+.bytes { color: var(--select-fg); font-family: var(--font-mono); }
+.link { font-family: var(--font-mono); }

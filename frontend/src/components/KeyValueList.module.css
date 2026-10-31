@@ -1,0 +1,85 @@
+.list { min-width: 0; }
+/* A list filling its container: the values scroll in whatever height is left. */
+.list.fill { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.list.fill .values { flex: 1; min-height: 0; }
+.values { overflow-y: auto; }
+/* The search box, or while a value is picked the clear cell in its place, at one height. */
+.head-row { display: flex; flex: none; align-items: center; height: 27px; border-bottom: 1px solid var(--line); background: var(--bg); }
+.head-row.is-picked { background: var(--bg-alt); }
+.search { flex: 1; width: 100%; min-width: 0; height: 100%; padding: 5px 9px; border: 0; background: transparent; color: var(--fg); font: inherit; font-size: var(--text-xs); }
+.loading { display: inline-flex; width: 12px; flex: none; margin-right: 6px; }
+.loading svg { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+/* Outside the values' scroller, so it stays put as they scroll. */
+.clear-cell {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  height: 100%;
+  padding: 5px 9px;
+  border: 0;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  text-align: left;
+  cursor: pointer;
+}
+.head-row.is-picked:hover { background: var(--select-hover); }
+.clear-cell:hover { color: var(--fg); }
+.value {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+  height: 27px;
+  overflow: hidden;
+  padding: 5px 9px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--fg);
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.value-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The last row when more values match than were read: searching finds the rest. */
+.more { height: 27px; padding: 5px 9px; color: var(--fg-faint); font-size: var(--text-xs); font-style: italic; white-space: nowrap; }
+.value:hover { background: var(--select-hover); }
+.value.is-selected { background: var(--picked-bg); color: var(--picked-fg); font-weight: 600; }
+.value.is-unavailable { color: var(--fg-faint); background: var(--bg-alt); cursor: default; }
+.value.is-unavailable.is-choosable { cursor: pointer; }
+.value.is-unavailable.is-choosable:hover { background: var(--select-hover); }
+.value.is-unavailable.is-choosable.is-selected { background: var(--picked-bg); color: var(--picked-fg); }
+.float {
+  position: fixed;
+  z-index: 100;
+  width: max-content;
+  max-width: calc(100vw - 16px);
+  height: 27px;
+  overflow: hidden;
+  padding: 5px 9px;
+  border: 1px solid var(--line-strong);
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  color: var(--fg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.float.is-selected { background: var(--picked-bg); color: var(--picked-fg); font-weight: 600; }
+.float.is-unavailable { background: var(--bg-alt); color: var(--fg-faint); }
+/* A pick that is a selection (what an open panel shows), not a slice: selection blue. */
+.value.is-selection, .value.is-unavailable.is-choosable.is-selection, .float.is-selection {
+  background: var(--select-bg-strong);
+  color: var(--select-accent);
+}

@@ -1,0 +1,223 @@
+/*
+ * Shared vocabulary used by several components, kept global on purpose: a component that needs
+ * one of these writes the class name directly. Anything owned by one component lives in that
+ * component's CSS module instead.
+ */
+
+/* A small uppercase heading over a group of fields. */
+.eyebrow {
+  margin: 0 0 9px;
+  font-size: var(--text-xs);
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+
+/* A borderless button that shows only its icon until hovered. */
+.icon-button {
+  display: flex;
+  flex: none;
+  padding: 2px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.icon-button:hover { background: var(--hover-strong); color: var(--fg); }
+
+/* A resize handle: 5px to grab, 1px drawn. */
+.handle {
+  flex: 0 0 5px;
+  width: 5px;
+  cursor: col-resize;
+  background: linear-gradient(to right, transparent 2px, var(--line) 2px, var(--line) 3px, transparent 3px);
+}
+.handle:hover, .handle[data-resize-handle-state='drag'] {
+  background: var(--line-strong);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+/* The horizontal counterpart of `.handle`: 5px to grab, 1px drawn. */
+.row-handle {
+  flex: 0 0 5px;
+  height: 5px;
+  cursor: row-resize;
+  background: linear-gradient(to bottom, transparent 2px, var(--line) 2px, var(--line) 3px, transparent 3px);
+}
+.row-handle:hover, .row-handle[data-resize-handle-state='drag'] {
+  background: var(--line-strong);
+  box-shadow: 0 0 0 1px var(--line-strong);
+}
+
+.detail-none { font-size: var(--text-md); color: var(--fg-dim); }
+
+.code-method { font-family: var(--font-mono); font-size: var(--text-sm); }
+
+/* Key/value pairs: a dim label column beside its value. */
+.kv { margin: 0; }
+.kv-pair { display: flex; gap: 8px; padding: 2px 0; }
+.kv dt { width: 70px; flex: none; color: var(--fg-dim); font-size: var(--text-sm); }
+.kv dd { margin: 0; font-size: var(--text-md); }
+/* Key fields sit against the same shading the table header uses. */
+.kv-key dt { color: var(--fg); }
+/* Argument names are identifiers, and long enough that the narrower key column truncates them. */
+.kv-args dt { width: 96px; font-family: var(--font-mono); color: var(--fg-dim); }
+.kv-args .kv-pair { align-items: baseline; padding: 3px 0; }
+.kv-args dd { min-width: 0; }
+/* Labels above values, for wide structured values. */
+.kv-stacked .kv-pair { flex-direction: column; gap: 2px; padding: 6px 0; }
+.kv-stacked dt { width: auto; }
+
+/* The fxtr schema of a field, muted beside its name. */
+.kv-schema {
+  margin-left: 6px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--line-strong);
+}
+.kv dt .kv-schema { display: block; margin-left: 0; }
+
+/* A bordered box holding a structured value or a grid; a container may let it bleed to its edges. */
+.value-box {}
+
+/* A pill naming a step or a code location; a link or a button. */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg);
+  text-decoration: none;
+  cursor: pointer;
+}
+.chip:hover { background: var(--muted-bg); }
+
+.markdown { font-size: var(--text-md); line-height: 1.5; }
+.markdown p { margin: 0 0 8px; }
+.markdown ul { margin: 0 0 8px; padding-left: 18px; }
+.markdown li { margin: 2px 0; }
+.markdown code {
+  padding: 1px 3px;
+  border-radius: 2px;
+  background: var(--muted-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+.markdown h1, .markdown h2, .markdown h3 { margin: 0 0 6px; font-size: var(--text-md); }
+/* The last block's trailing margin would read as uneven padding at the container's foot. */
+.markdown > :last-child { margin-bottom: 0; }
+
+/* Radix popover skin. */
+.popover {
+  z-index: 50;
+  min-width: 210px;
+  padding: 8px 10px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+.popover-arrow { fill: var(--bg); }
+/* A hover preview (`HoverPreview`) lets the pointer through, it and the wrapper Radix positions it
+   in, so the pointer on it is on what is behind it, and leaving the trigger closes it. */
+.hover-preview, [data-radix-popper-content-wrapper]:has(> .hover-preview) { pointer-events: none; }
+
+/* The right pane's vocabulary: a head line, then a scrolling body. */
+.detail {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--bg-alt);
+}
+.detail-head {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+.detail-title { font-family: inherit; font-size: var(--text-base); color: var(--fg); }
+.detail-kind {
+  padding: 1px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+/* A node kind as its icon and word (KindLabel): the same type as .detail-kind, without the pill. */
+.kind-label {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.detail-close { margin-left: auto; }
+.detail-scroll { flex: 1; overflow: auto; padding: 12px; }
+.detail-scroll-flush { padding: 0; }
+
+/* New things fade in once: cards, key values, and rows not in the previous render of a level. */
+@keyframes arrive {
+  from { opacity: 0; background-color: var(--select-tint); }
+  to { opacity: 1; }
+}
+.arrive { animation: arrive 600ms ease-out; }
+
+/* The backdrop of something running (the running-step indicator, a running minimap row): light
+   45° stripes sliding one tile sideways per period. A backdrop element of its own, so what it sits
+   behind keeps its own animations. */
+.hatch {
+  background-color: var(--bg);
+  background-image: linear-gradient(
+    45deg,
+    var(--muted-bg) 25%, var(--bg) 25%, var(--bg) 50%,
+    var(--muted-bg) 50%, var(--muted-bg) 75%, var(--bg) 75%
+  );
+  background-size: 16px 16px;
+  animation: hatch 1s linear infinite;
+}
+@keyframes hatch {
+  to { background-position: 16px 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .arrive, .hatch { animation: none; }
+}
+/* Page controls stay outside the scrolling grid. */
+.paged-table { display: flex; flex-direction: column; min-height: 0; min-width: 0; height: 100%; }
+.paged-table > :first-child { flex: 1; min-height: 0; }
+.paged-table-footer { display: flex; align-items: center; flex: none; min-height: 28px; padding: 0 6px; border-top: 1px solid var(--line); background: var(--bg); }
+.paged-table-footer .pagination { margin-left: auto; }
+.pagination { display: flex; align-items: center; justify-content: flex-end; gap: 2px; padding: 3px 4px; color: var(--fg-dim); font-size: var(--text-xs); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.pagination-range { margin-right: 5px; }
+.pagination-position { box-sizing: content-box; min-width: 1ch; max-width: 12ch; padding: 2px 1px; border: 0; border-bottom: 1px dotted var(--line-strong); border-radius: 2px; background: transparent; color: inherit; font: inherit; font-variant-numeric: tabular-nums; text-align: right; }
+.pagination-position:hover:not(:disabled) { background: var(--hover); }
+.pagination-position:focus { outline: 1px solid var(--select-line); background: var(--bg); color: var(--fg); }
+.pagination-total { opacity: .65; }
+.pagination button { display: grid; place-items: center; flex: none; width: 22px; height: 22px; padding: 0; border: 0; border-radius: 4px; background: transparent; color: inherit; cursor: pointer; }
+.pagination button:hover:not(:disabled) { background: var(--hover); color: var(--fg); }
+.pagination button:disabled { opacity: .25; cursor: default; }
+.pagination[aria-busy="true"] .pagination-range { opacity: .5; }
+.pagination-loading { display: grid; place-items: center; margin-right: 4px; }
+.pagination-loading svg { animation: pagination-spin .8s linear infinite; }
+@keyframes pagination-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .pagination-loading svg { animation: none; } }

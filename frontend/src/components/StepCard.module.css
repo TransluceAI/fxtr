@@ -1,0 +1,169 @@
+.card {
+  /* The card's border colour, which its table's floated values continue (CardTable). */
+  --card-border: var(--card-line);
+  position: relative;
+  overflow: visible;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+}
+/* Lit up by a hovered chip naming this node: the glow fades in, then pulses while it stays lit.
+   Raised so the next card does not cover the glow's lower edge. */
+.card.is-spotlit {
+  --card-border: var(--select-line);
+  z-index: 2;
+  box-shadow: 0 0 0 1px var(--spotlight-ring), 0 0 10px 1px var(--spotlight-glow);
+  animation:
+    spotlight-in var(--spotlight-fade) ease-out,
+    spotlight-pulse var(--spotlight-period) ease-in-out var(--spotlight-fade) infinite;
+}
+@keyframes spotlight-in {
+  from { box-shadow: var(--shadow-sm); }
+}
+@keyframes spotlight-pulse {
+  50% { box-shadow: 0 0 0 2px var(--spotlight-ring), 0 0 16px 3px var(--spotlight-glow); }
+}
+/* A card jumped to from a chip: the spotlight's ring and glow, over the card's border, held for a
+   moment and then faded out. */
+.jump-glow {
+  position: absolute;
+  z-index: 3;
+  inset: -1px;
+  border: 1px solid var(--select-line);
+  border-radius: inherit;
+  box-shadow: 0 0 0 1px var(--spotlight-ring), 0 0 14px 2px var(--spotlight-glow);
+  opacity: 0;
+  pointer-events: none;
+  animation: jump-glow 1.8s ease-in;
+}
+@keyframes jump-glow {
+  0%, 25% { opacity: 1; }
+  100% { opacity: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card.is-spotlit { animation: none; }
+  .jump-glow { animation-duration: 1ms; }
+}
+.card.is-edge-to-edge {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+.card.is-edge-to-edge .head,
+.card.is-edge-to-edge .table { border-radius: 0; }
+/* While its table's values float past the card's foot, the card continues into them: the bottom
+   corners they meet square (the left, and the right when they span the table), theirs round. */
+.card:has([data-values-open]) { border-bottom-left-radius: 0; }
+.card:has([data-values-open]) .table { border-bottom-left-radius: 0; }
+.card:has([data-values-open="full"]) { border-bottom-right-radius: 0; }
+.card:has([data-values-open="full"]) .table { border-bottom-right-radius: 0; }
+.head {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+  border-bottom: 1px solid var(--line);
+  border-radius: 7px 7px 0 0;
+  background: var(--card-head-bg);
+}
+/* A running card's head, hatched edge to edge: behind the head's content, which the negative
+   z-index keeps it under inside the head's stacking context. */
+.head-hatch { position: absolute; z-index: -1; inset: 0; border-radius: inherit; pointer-events: none; }
+/* Over the hatch, the head's muted text (kind, status, buttons) is drawn in ink, so it stays legible. */
+.head.is-running { --fg-dim: var(--fg); --fg-faint: var(--fg); }
+/* A card that is nothing but its head. */
+.head:last-child { border-bottom: 0; border-radius: 7px; }
+.select {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+}
+.title { font-size: var(--text-lg); font-weight: 600; }
+/* The run's progress line, over the head's bottom border. */
+.head-line { position: absolute; z-index: 1; right: 0; bottom: -1px; left: 0; }
+.unexpanded {
+  padding: 10px 14px;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+/* A button filling the head's height at its right end: the panel button, a child's open. */
+.head-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--line);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.head-button:last-child { border-top-right-radius: 7px; }
+.head-button:hover { background: var(--hover); color: var(--fg); }
+.head-button.is-selected { background: var(--select-bg); color: var(--select-accent); }
+
+/* The docs, then the args below them. */
+.section {
+  min-width: 0;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--line);
+}
+.section:last-child { border-bottom: 0; }
+.method { display: flex; gap: 0.6ch; margin-bottom: 8px; }
+.methodName { flex: none; }
+.returnType {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--fg-dim);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.table {
+  position: relative;
+  border-top: 1px solid var(--card-line);
+  border-radius: 0 0 7px 7px;
+  background: var(--bg);
+  overflow: visible;
+}
+
+/* The segmented control choosing what the card lists: floated just above the table's top edge at
+   its right, in front of whatever is there (the args), taking no room of its own; under the sticky
+   head and the key values a header floats. */
+.modes {
+  position: absolute;
+  z-index: 5;
+  right: 8px;
+  bottom: calc(100% + 4px);
+  display: flex;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--muted-bg);
+  box-shadow: var(--shadow-sm);
+}
+.mode {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--fg-dim);
+  font: inherit;
+  font-size: var(--text-xs);
+  cursor: pointer;
+}
+.mode:hover { color: var(--fg); }
+.mode.is-on { background: var(--bg); box-shadow: var(--shadow-sm); color: var(--fg); }

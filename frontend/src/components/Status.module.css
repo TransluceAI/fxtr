@@ -1,0 +1,16 @@
+.loading { padding: 18px; color: var(--fg-dim); font-size: var(--text-sm); }
+.problem {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  max-width: 520px;
+  margin: 24px;
+  padding: 12px 14px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--bg);
+}
+.problem-title { font-size: var(--text-xs); letter-spacing: 0.1em; text-transform: uppercase; color: var(--fg-dim); }
+.problem-message { font-family: var(--font-mono); font-size: var(--text-sm); overflow-wrap: anywhere; }
+.problem-hint { font-size: var(--text-xs); color: var(--fg-dim); }

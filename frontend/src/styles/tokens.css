@@ -1,0 +1,162 @@
+/*
+ * Design tokens: the only place a colour, font, or type size is written as a literal.
+ *
+ * Every colour is `light-dark(<light>, <dark>)`, which resolves by the `color-scheme` of the element
+ * reading it. The page follows the system's preference unless the rail's theme toggle has set
+ * `data-theme` on <html> (lib/theme.ts); an element that sets its own `color-scheme` gets that
+ * theme's values for everything inside it.
+ */
+
+:root {
+  color-scheme: light dark;
+
+  --font-sans: ui-sans-serif, system-ui, -apple-system, "Helvetica Neue", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  /* Type scale. The UI is dense, so most text sits at sm or below. */
+  --text-2xs: 9px;
+  --text-xs: 10px;
+  --text-sm: 11px;
+  --text-md: 12px;
+  --text-base: 13px;
+  --text-lg: 14px;
+
+  /* Surfaces and lines. */
+  --bg: light-dark(#ffffff, #1b1b1a);
+  --bg-alt: light-dark(#fafafa, #131312);
+  --muted-bg: light-dark(#eeeeee, #2a2a28);
+  --muted-hover: light-dark(#e7e7e4, #323230);
+  --line: light-dark(#e6e6e6, #2e2e2c);
+  --line-strong: light-dark(#d0d0d0, #454542);
+  --line-soft: light-dark(#f0f0ee, #252523);
+  --card-line: light-dark(rgba(190, 190, 184, 0.8), rgba(92, 92, 88, 0.8));
+  --card-bg: light-dark(rgba(255, 255, 255, 0.8), rgba(27, 27, 26, 0.8));
+  --card-head-bg: light-dark(rgba(255, 255, 255, 0.97), rgba(27, 27, 26, 0.97));
+  --scrollbar-thumb: light-dark(rgba(155, 155, 155, 0.5), rgba(120, 120, 120, 0.5));
+
+  /* Text. */
+  --fg: light-dark(#1c1c1c, #e4e4e1);
+  --fg-dim: light-dark(#8a8a8a, #8e8e8a);
+  --fg-faint: light-dark(#b8b8b3, #5c5c58);
+
+  /* Translucent hover and overlay washes, laid over whatever is beneath. */
+  --hover: light-dark(rgba(0, 0, 0, 0.03), rgba(255, 255, 255, 0.04));
+  --hover-strong: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.08));
+  --overlay: light-dark(rgba(0, 0, 0, 0.25), rgba(0, 0, 0, 0.5));
+
+  /* Selection blue, from a faint tint up to the saturated accent. */
+  --select-accent: light-dark(#2563eb, #4f8cf7);
+  --select-fg: light-dark(#174f9d, #9cc2ff);
+  --select-tint: light-dark(#f1f6ff, #172131);
+  --select-bg: light-dark(#e8f0fe, #1c2a42);
+  --select-bg-strong: light-dark(#dce9fb, #223453);
+  --select-badge-bg: light-dark(#d6e5fa, #26395a);
+  --select-line: light-dark(#8eb5ec, #3f6aad);
+  --select-line-soft: light-dark(#9cbce9, #36598f);
+  --select-hover: light-dark(rgba(37, 99, 235, 0.06), rgba(79, 140, 247, 0.08));
+  --select-ring: light-dark(rgba(37, 99, 235, 0.1), rgba(79, 140, 247, 0.18));
+  /* A card lit up by a chip naming it (and its minimap row): a ring and a glow that fade in, then
+     pulse on one shared pace while the chip stays hovered. */
+  --spotlight-ring: light-dark(rgba(37, 99, 235, 0.35), rgba(79, 140, 247, 0.45));
+  --spotlight-glow: light-dark(rgba(37, 99, 235, 0.22), rgba(79, 140, 247, 0.32));
+  --spotlight-fade: 150ms;
+  --spotlight-period: 1.8s;
+
+  /* A pinned panel: the wash over its head and its pin. Violet, a hue nothing else here uses. */
+  --pinned-bg: light-dark(#f3f0fd, #2a2342);
+  --pinned-fg: light-dark(#6d4fd6, #a993f5);
+
+  /* A key picked in a card's key table. Grey on purpose: blue is reserved for what the right pane shows. */
+  --picked-bg: light-dark(#e4e4e1, #353532);
+  --picked-fg: light-dark(#3a3a37, #d6d6d2);
+
+  /* Solid neutral buttons. */
+  --button-bg: light-dark(#d8d8d4, #3a3a37);
+  --button-fg: light-dark(#5f5f5b, #b4b4af);
+  --button-hover: light-dark(#cececa, #45453f);
+
+  /* Dim kinds: mapped-over dims are warm, replica dims green, everything else neutral. */
+  --mapped-bg: light-dark(#fff0dc, #3a2a17);
+  --mapped-fg: light-dark(#8a4b18, #e7a466);
+  --mapped-dim: light-dark(#c98245, #b87840);
+  --replica-bg: light-dark(#e8f5ec, #173022);
+  --replica-fg: light-dark(#17803d, #5fcf86);
+  --other-dim: light-dark(#9a9a95, #75756f);
+
+  /* Chat messages, tinted by the speaker's role. */
+  --role-user-bg: light-dark(#f3f3f1, #252523);
+  --role-assistant-bg: light-dark(#edf4ff, #18233a);
+  --role-tool-bg: light-dark(#ecf7ef, #16291d);
+  --role-system-bg: light-dark(#fdeff2, #33191f);
+
+  /* Run state (StateGlyph, progress bars): shape carries the state, colour only failure. */
+  --danger: light-dark(#c93434, #f06363);
+  --danger-bg: light-dark(#fdecec, #3b1c1c);
+  --state-ink: light-dark(#1c1c1c, #e4e4e1);
+  --state-done: light-dark(#a2a29e, #6f6f6b);
+  --state-quiet: light-dark(#b4b4af, #5f5f5b);
+  /* A run's progress line (ProgressLine) and the hover card's legend and heartbeat, in greys like
+     a video player's: finished dark, in flight light, the rest the track; failed is --danger. The
+     sheen sweeps the finished part when a poll brings new finishes. */
+  --progress-done: light-dark(#63635f, #b4b4af);
+  --progress-running: light-dark(#c4c4bf, #55554f);
+  --progress-track: light-dark(#ecece9, #2a2a28);
+  --progress-sheen: light-dark(rgba(255, 255, 255, 0.95), rgba(255, 255, 255, 0.7));
+
+  /* Chart colours: a default palette for the data in renderers' charts. Categorical slots are
+     assigned in order (series 1 is `--chart-1`) and never cycled; the order is what keeps
+     neighbouring series apart under colour-blindness, checked against --bg and --bg-alt in both
+     themes (adjacent pairs, and every pair among the first three). The sequential scale runs
+     from near nothing (`-0`) to the most (`-1`), and the diverging one from `-neg` through a grey
+     `-mid` to `-pos`; a renderer mixes along them with `color-mix(in oklab, ...)`, as
+     fxtr-view-kit's `sequentialFill` and `divergingFill` do. */
+  --chart-1: light-dark(#2a78d6, #3987e5);
+  --chart-2: light-dark(#e0602c, #d95926);
+  --chart-3: light-dark(#13936a, #199e70);
+  --chart-4: light-dark(#b57f00, #c98500);
+  --chart-5: light-dark(#d2588a, #d55181);
+  --chart-6: light-dark(#2b8a1e, #2f9a2f);
+  --chart-7: light-dark(#7a5bd0, #9085e9);
+  --chart-8: light-dark(#d63e3e, #e66767);
+  --chart-seq-0: light-dark(#e3eefb, #1d2735);
+  --chart-seq-1: light-dark(#104281, #9ec5f4);
+  --chart-div-neg: light-dark(#8a2b29, #f3aca5);
+  --chart-div-mid: light-dark(#f0efec, #383835);
+  --chart-div-pos: light-dark(#184f95, #9ec5f4);
+
+  --minimap-card-bg: light-dark(#ffffff, #222221);
+  /* The part of the card column scrolled into view, drawn over the minimap's rows. */
+  --minimap-viewport-bg: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.06));
+  --minimap-viewport-line: light-dark(rgba(0, 0, 0, 0.22), rgba(255, 255, 255, 0.25));
+  --edge: light-dark(#000000, #d8d8d4);
+
+  /* A single shadow, for `filter: drop-shadow()`. */
+  --shadow-xs: 0 1px 1px light-dark(rgba(0, 0, 0, 0.04), rgba(0, 0, 0, 0.3));
+  --shadow-sm: 0 1px 2px light-dark(rgba(0, 0, 0, 0.025), rgba(0, 0, 0, 0.3));
+  --shadow-md: 0 2px 7px light-dark(rgba(0, 0, 0, 0.14), rgba(0, 0, 0, 0.5));
+  --shadow-lg: 0 4px 14px light-dark(rgba(0, 0, 0, 0.1), rgba(0, 0, 0, 0.45));
+  --shadow-xl: 0 8px 32px light-dark(rgba(0, 0, 0, 0.16), rgba(0, 0, 0, 0.55));
+
+  font-family: var(--font-sans);
+  font-size: var(--text-base);
+  color: var(--fg);
+}
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+* {
+  box-sizing: border-box;
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+/* Default scrollbars for every scrolling surface, including renderer content. */
+*::-webkit-scrollbar { width: 6px; height: 6px; }
+*::-webkit-scrollbar-track, *::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background-color: var(--scrollbar-thumb);
+  border-radius: 20px;
+}
+
+html, body, #root { height: 100%; margin: 0; }
+body { background: var(--bg); }

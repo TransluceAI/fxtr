@@ -1,1 +1,0 @@
-export { ThingContextMenu } from './ThingContextMenu';

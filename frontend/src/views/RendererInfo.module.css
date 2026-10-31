@@ -1,0 +1,10 @@
+/* At the end of a renderer's row in a view dropdown, faint until the row is highlighted. */
+.trigger { display: inline-flex; flex: none; margin-left: auto; padding: 2px; color: var(--fg-faint); cursor: help; }
+[data-highlighted] > .trigger, .trigger:hover { color: var(--fg-dim); }
+
+.info { max-width: 380px; font-size: var(--text-sm); }
+.fields { margin: 0; }
+.field { display: flex; gap: 8px; padding: 1px 0; }
+.field dt { flex: 0 0 4.5em; color: var(--fg-dim); }
+.field dd { margin: 0; min-width: 0; font-family: var(--font-mono); overflow-wrap: anywhere; }
+.name { font-weight: 600; }

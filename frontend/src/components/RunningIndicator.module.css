@@ -1,0 +1,38 @@
+/* A pill centred over the trace, over the shared running hatch (`.hatch`). */
+.indicator {
+  position: absolute;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  max-width: min(360px, 80%);
+  padding: 6px 16px 8px 11px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: 999px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg);
+  font: inherit;
+  font-size: var(--text-base);
+  font-weight: 600;
+  cursor: pointer;
+  animation: appear 200ms ease-out;
+}
+.indicator:hover { border-color: var(--fg-dim); }
+.is-above { top: 10px; transform: translateX(-50%); }
+/* `top` is the viewport's height, set inline; the pill hangs above it. */
+.is-below { margin-top: -12px; transform: translate(-50%, -100%); }
+.backdrop { position: absolute; inset: 0; }
+.arrow { position: relative; flex: none; }
+.name { position: relative; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* Along the pill's foot, edge to edge; the pill's rounded ends clip it. */
+.line { position: absolute; left: 0; right: 0; bottom: 0; }
+
+@keyframes appear {
+  from { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .indicator { animation: none; }
+}

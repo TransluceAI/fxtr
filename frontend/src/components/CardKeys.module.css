@@ -1,0 +1,23 @@
+.keys { border-top: 1px solid var(--line); }
+.error { padding: 6px 12px; font-size: var(--text-sm); }
+.none { padding: 8px 12px; border-top: 1px solid var(--line); color: var(--fg-dim); font-size: var(--text-sm); }
+/* A column per invocation dim, as wide as a card table's key column or wider, side by side. */
+.columns { display: flex; overflow-x: auto; }
+.column { flex: 0 1 220px; min-width: 120px; border-right: 1px solid var(--line); }
+.column:last-child { border-right: 0; }
+.head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  box-sizing: border-box;
+  padding: 5px 9px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+.count { font-weight: 400; opacity: 0.65; }
+.head.dim-mapped { background: var(--mapped-bg); color: var(--mapped-fg); }
+.head.dim-replica { background: var(--replica-bg); color: var(--replica-fg); }
+.head.dim-other { background: var(--muted-bg); }

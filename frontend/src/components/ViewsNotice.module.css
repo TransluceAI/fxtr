@@ -1,0 +1,22 @@
+.notice {
+  margin: 8px 10px;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+}
+.title { font-size: var(--text-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim); }
+.notice[role='alert'] { border-color: var(--danger); background: var(--danger-bg); }
+.notice[role='alert'] .title { color: var(--danger); font-size: var(--text-sm); font-weight: 600; }
+.message { margin-top: 3px; font-family: var(--font-mono); font-size: var(--text-xs); overflow-wrap: anywhere; }
+/* A failed build's error and the end of its output, as the terminal shows them. */
+.output {
+  margin-top: 3px;
+  max-height: 16em;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  /* Unwrapped, so a code frame's caret stays under the column it points at. */
+  white-space: pre;
+}
+.status { margin: 6px 10px; font-size: var(--text-xs); color: var(--fg-dim); }

@@ -1,0 +1,43 @@
+{
+  "name": "fxtr-ide",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "typecheck": "tsc -b",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ipld/dag-cbor": "^9.2.7",
+    "@radix-ui/react-dialog": "^1.1.23",
+    "@radix-ui/react-hover-card": "^1.1.23",
+    "@radix-ui/react-popover": "^1.1.23",
+    "@radix-ui/react-select": "^2.3.7",
+    "dompurify": "^3.4.15",
+    "fxtr-view": "workspace:*",
+    "fxtr-view-cbor-tree": "workspace:*",
+    "fxtr-view-default-renderers": "workspace:*",
+    "fxtr-view-shell-util": "workspace:*",
+    "jotai": "^2.10.0",
+    "lucide-react": "^1.40.0",
+    "marked": "^18.0.11",
+    "multiformats": "^13.4.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^3.0.2",
+    "sonner": "^2.0.8"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.0.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.4.1",
+    "jsdom": "^25.0.1",
+    "typescript": "^5.8.3",
+    "vite": "^6.3.5",
+    "vitest": "^2.1.9"
+  }
+}

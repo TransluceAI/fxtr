@@ -1,0 +1,121 @@
+{
+  "$schema": "https://mintlify.com/docs.json",
+  "theme": "mint",
+  "name": "Transluce",
+  "description": "Documentation for the Transluce platform: fxtr for durable, inspectable experiments, and behaviors for evaluating AI models.",
+  "colors": {
+    "primary": "#2F5BEA",
+    "light": "#7C9BFF",
+    "dark": "#1E3FB0"
+  },
+  "logo": {
+    "light": "/logo/light.svg",
+    "dark": "/logo/dark.svg",
+    "href": "https://docs.transluce.ai"
+  },
+  "favicon": "/favicon.svg",
+  "integrations": {
+    "posthog": {
+      "apiKey": "phc_kS25RNRJszpGcehmv4pyX5WiPDDR892G3eGM2CTM7pib"
+    }
+  },
+  "redirects": [
+    {
+      "source": "/fxtr/quickstart",
+      "destination": "/fxtr/installation"
+    },
+    {
+      "source": "/fxtr/introduction",
+      "destination": "/fxtr"
+    },
+    {
+      "source": "/fxtr/concepts",
+      "destination": "/fxtr/concepts/overview"
+    },
+    {
+      "source": "/fxtr/guides/language-models",
+      "destination": "/behaviors/guides/language-models"
+    },
+    {
+      "source": "/fxtr/concepts/steps-and-workflows",
+      "destination": "/fxtr/concepts/workflows-and-steps"
+    },
+    {
+      "source": "/fxtr/concepts/arrays",
+      "destination": "/fxtr/concepts/arrays-and-parallel-computations"
+    },
+    {
+      "source": "/fxtr/concepts/mapping",
+      "destination": "/fxtr/concepts/arrays-and-parallel-computations"
+    },
+    {
+      "source": "/fxtr/concepts/caching",
+      "destination": "/fxtr/concepts/managing-the-step-cache"
+    },
+    {
+      "source": "/fxtr/guides/input-data",
+      "destination": "/fxtr/guides/importing-external-datasets"
+    },
+    {
+      "source": "/fxtr/guides/viewing-results",
+      "destination": "/fxtr/guides/running-and-viewing-jobs"
+    },
+    {
+      "source": "/fxtr/guides/running-jobs",
+      "destination": "/fxtr/guides/running-and-viewing-jobs"
+    }
+  ],
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Home",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": ["index"]
+          }
+        ]
+      },
+      {
+        "tab": "fxtr",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["fxtr/index", "fxtr/installation", "fxtr/first-experiment"]
+          },
+          {
+            "group": "Concepts",
+            "pages": [
+              "fxtr/concepts/overview",
+              "fxtr/concepts/workflows-and-steps",
+              "fxtr/concepts/arrays-and-parallel-computations",
+              "fxtr/concepts/entities-and-custom-types",
+              "fxtr/concepts/managing-the-step-cache",
+              "fxtr/concepts/visualization-and-custom-renderers"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "fxtr/guides/running-and-viewing-jobs",
+              "fxtr/guides/importing-external-datasets"
+            ]
+          },
+          {
+            "group": "Reference",
+            "pages": ["fxtr/reference/cli"]
+          }
+        ]
+      },
+      {
+        "tab": "behaviors",
+        "groups": [
+          {
+            "group": "Get started",
+            "pages": ["behaviors/index"]
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -1,0 +1,128 @@
+[
+  {
+    "name": "float large fixed",
+    "cbor": "+0QVrx14tYxA",
+    "summary": "100000000000000000000",
+    "preview": "100000000000000000000",
+    "search": "100000000000000000000"
+  },
+  {
+    "name": "float small exponent",
+    "cbor": "+z561/KavK9I",
+    "summary": "1e-7",
+    "preview": "1e-7",
+    "search": "1e-7"
+  },
+  {
+    "name": "float small fixed",
+    "cbor": "+z6wxvegte2N",
+    "summary": "0.000001",
+    "preview": "0.000001",
+    "search": "0.000001"
+  },
+  {
+    "name": "float large exponent",
+    "cbor": "+0RLGuTW4u9Q",
+    "summary": "1e+21",
+    "preview": "1e+21",
+    "search": "1e+21"
+  },
+  {
+    "name": "float integral",
+    "cbor": "+0BFAAAAAAAA",
+    "summary": "42",
+    "preview": "42",
+    "search": "42"
+  },
+  {
+    "name": "float negative zero",
+    "cbor": "+4AAAAAAAAAA",
+    "summary": "0",
+    "preview": "0",
+    "search": "0"
+  },
+  {
+    "name": "float negative exponent",
+    "cbor": "+75K1/KavK9I",
+    "summary": "-1.25e-8",
+    "preview": "-1.25e-8",
+    "search": "-1.25e-8"
+  },
+  {
+    "name": "float fractional",
+    "cbor": "+z/zwMpCjFn7",
+    "summary": "1.2345678901234567",
+    "preview": "1.2345678901234567",
+    "search": "1.2345678901234567"
+  },
+  {
+    "name": "float subnormal",
+    "cbor": "+wAAAAAAAAAB",
+    "summary": "5e-324",
+    "preview": "5e-324",
+    "search": "5e-324"
+  },
+  {
+    "name": "exact integer",
+    "cbor": "GxAAAAAAAAAB",
+    "summary": "1152921504606846977",
+    "preview": "1152921504606846977",
+    "search": "1152921504606846977"
+  },
+  {
+    "name": "null",
+    "cbor": "9g==",
+    "summary": "—",
+    "preview": "null",
+    "search": "—"
+  },
+  {
+    "name": "boolean",
+    "cbor": "9Q==",
+    "summary": "true",
+    "preview": "true",
+    "search": "true"
+  },
+  {
+    "name": "unicode string",
+    "cbor": "aUEKImNhZsOpIg==",
+    "summary": "A\n\"café\"",
+    "preview": "\"A\\n\\\"café\\\"\"",
+    "search": "a\n\"café\""
+  },
+  {
+    "name": "bytes",
+    "cbor": "RDEyMzQ=",
+    "summary": "4 bytes",
+    "preview": "4 bytes",
+    "search": "4 bytes"
+  },
+  {
+    "name": "entity",
+    "cbor": "2CpYJQABcRIgrXIJ1Bol7jSgblnjaESpPWXi5X5Htbljk08GmbKCPMs=",
+    "summary": "<fnoie5ig>",
+    "preview": "<fnoie5ig>",
+    "search": "<fnoie5ig>"
+  },
+  {
+    "name": "nested numbers",
+    "cbor": "g/tEFa8deLWMQPs+etfymryvSPuAAAAAAAAAAA==",
+    "summary": "3 items",
+    "preview": "[100000000000000000000, 1e-7, 0]",
+    "search": "3 items [100000000000000000000, 1e-7, 0]"
+  },
+  {
+    "name": "property order",
+    "cbor": "pGEyA2FhAWIwMQRiMTAC",
+    "summary": "{4 fields}",
+    "preview": "{\"2\": 3, \"10\": 2, \"a\": 1, \"01\": 4}",
+    "search": "{4 fields} {\"2\": 3, \"10\": 2, \"a\": 1, \"01\": 4}"
+  },
+  {
+    "name": "nested values",
+    "cbor": "oWF4hPb12CpYJQABcRIgrXIJ1Bol7jSgblnjaESpPWXi5X5Htbljk08GmbKCPMtCMTI=",
+    "summary": "{1 field}",
+    "preview": "{\"x\": [null, true, <fnoie5ig>, 2 bytes]}",
+    "search": "{1 field} {\"x\": [null, true, <fnoie5ig>, 2 bytes]}"
+  }
+]

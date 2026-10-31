@@ -1,0 +1,96 @@
+/* `DataTable`'s styles, over the shell's design tokens. */
+
+.wrap { margin: 6px 0; }
+/* Scrolls both ways: the header sticks to its top, and columns widened past the box scroll
+   sideways. */
+.scroll { overflow: auto; border: 1px solid var(--line); border-radius: 3px; }
+/* Separate borders, since a collapsed border does not travel with a sticky header. */
+.table { width: 100%; table-layout: fixed; border-collapse: separate; border-spacing: 0; font-size: var(--text-md); }
+.table thead { position: sticky; top: 0; z-index: 1; }
+.table thead th {
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg-alt);
+  font-weight: 400;
+  text-align: left;
+}
+.table td {
+  padding: 3px 8px;
+  border-bottom: 1px solid var(--line-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
+}
+.table tbody tr:last-child td { border-bottom: 0; }
+.table td[data-numeric] { text-align: right; font-variant-numeric: tabular-nums; }
+.table .filler { padding: 0; }
+
+.head { position: relative; display: flex; align-items: center; height: 24px; }
+th[data-numeric] .head { flex-direction: row-reverse; }
+.sort {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  text-align: left;
+}
+button.sort { cursor: pointer; }
+button.sort:hover { color: var(--fg); }
+th[data-numeric] .sort { flex-direction: row-reverse; }
+.label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* An unsorted column's arrows show only on hover, taking no room until then. */
+.sortIcon { display: none; flex: none; fill: none; stroke: currentColor; stroke-width: 1.4; }
+.sortIcon[data-on], button.sort:hover .sortIcon, button.sort:focus-visible .sortIcon { display: block; }
+.sortIcon[data-on] { color: var(--fg); }
+/* Likewise the filter button, which stays while its filter is set. */
+.filterButton {
+  display: none;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  margin: 0 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: transparent;
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.filterButton svg { fill: currentColor; }
+.filterButton:hover { background: var(--hover-strong); color: var(--fg); }
+th:hover .filterButton, .filterButton:focus-visible, .filterButton[data-on] { display: flex; }
+.filterButton[data-on] { color: var(--select-accent); }
+/* Inside the column's right edge, so the last column's grip never widens the table. */
+.grip { position: absolute; top: 0; right: 0; width: 5px; height: 100%; cursor: col-resize; touch-action: none; }
+.grip:hover { background: var(--line-strong); }
+
+.filterRow th { padding: 3px 4px; }
+.filterInput {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 2px 5px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: var(--bg);
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg);
+}
+
+.table tbody tr[data-clickable] { cursor: pointer; }
+.table tbody tr[data-clickable]:hover td { background: var(--hover); }
+.table tbody tr[data-selected] td { background: var(--select-tint); }
+.table tbody tr[data-selected] td:first-child { box-shadow: inset 3px 0 0 var(--select-accent); }
+.table td.empty { color: var(--fg-dim); text-align: center; }
+.count { margin: 3px 0 0; font-size: var(--text-xs); color: var(--fg-dim); }

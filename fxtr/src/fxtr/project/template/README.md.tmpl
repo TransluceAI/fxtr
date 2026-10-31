@@ -1,0 +1,179 @@
+# {{project_name}}
+
+A fxtr project: steps and workflows in `src/{{package}}/`, run as jobs on a Postgres database and
+watched in the experiment viewer.
+{{#published}}
+It depends on fxtr {{fxtr_version}} or later.
+{{/published}}
+{{^published}}
+It depends on the fxtr checkout at `{{fxtr_checkout}}`.
+{{/published}}
+{{#in_checkout}}
+The checkout's `docs/fxtr/reference/project-configuration.mdx` explains each part of this layout.
+{{/in_checkout}}
+{{^in_checkout}}
+[Project configuration](https://docs.transluce.ai/fxtr/reference/project-configuration) explains
+each part of this layout.
+
+Coding agents learn fxtr from its skills, which carry a copy of that documentation.
+Install the fxtr plugin in Claude Code:
+
+```
+/plugin marketplace add TransluceAI/claude-code-plugins
+/plugin install fxtr@transluce-plugins
+```
+
+or in Codex, from a terminal:
+
+```bash
+codex plugin marketplace add TransluceAI/codex-plugins
+codex plugin add fxtr@transluce-plugins
+```
+{{/in_checkout}}
+
+## Install dependencies
+
+Install the project's Python dependencies and create its `uv.lock`:
+
+```bash
+uv sync
+```
+
+## Set up renderers
+
+`views/` is the project's renderer package (`[tool.fxtr.views]`). Register renderers in
+`views/src/bundle.ts` to customize how the viewer shows your data. {{#published}}With Node 22
+or later and pnpm 10 installed,{{/published}}{{^published}}Follow the JavaScript setup in the fxtr
+checkout's `README.md` to select Node, then{{/published}} install dependencies with
+`pnpm install` in `views/`. `uv run fxtr view` builds the renderers when it starts and rebuilds
+them whenever you change them, and the open viewer shows each build without a reload. To build
+them without the viewer:
+
+```bash
+uv run fxtr views build
+```
+
+`views/pnpm-workspace.yaml` gives this package its own installation and lockfile{{#in_checkout}},
+even inside the fxtr checkout{{/in_checkout}}. Commit `views/pnpm-lock.yaml` along with the project
+before launching jobs.
+{{#vendored}}
+
+`views/vendor/fxtr/` is a copy of the fxtr TypeScript packages the renderers use, made from the
+fxtr this project was created with; commit it with the project. After upgrading fxtr, refresh it
+and reinstall:
+
+```bash
+uv run fxtr views vendor
+(cd views && pnpm install) && uv run fxtr views build
+```
+{{/vendored}}
+
+## Configure the database
+
+{{#published}}
+Jobs run on a Postgres database. To run one locally with Docker:
+
+```bash
+docker run -d --name fxtr-postgres -p 55433:5432 \
+  -e POSTGRES_USER=fxtr -e POSTGRES_PASSWORD=fxtr -e POSTGRES_DB=fxtr postgres:16
+```
+
+Then say where this machine reaches it:
+{{/published}}
+{{^published}}
+Say where this machine reaches the project's database. The server that `postgres_env/` in the
+fxtr checkout runs is reached this way:
+{{/published}}
+
+```bash
+uv run fxtr init --database-url postgresql+asyncpg://fxtr:fxtr@localhost:55433/fxtr
+```
+
+## Add API keys
+
+Put the API keys of the model providers your experiments call, such as `ANTHROPIC_API_KEY` and
+`OPENAI_API_KEY`, in `.env`. Every launch, `fxtr run`, and `fxtr resume` reads it into the
+environment, overriding variables set in your shell (an empty value sets nothing). `.env` is
+gitignored: never commit it, and never put keys in experiment inputs or entities, which the
+database stores.
+{{^example}}
+
+## Write your first experiment
+
+This project starts without experiment code or a launcher. Define your steps and workflows in
+`src/{{package}}/`, add their module names to `[tool.fxtr] modules` in `pyproject.toml`, and
+write a launcher at the project root. Commit your code before launching: every job records
+the commit it runs, and checks that the venv matches `uv.lock`.
+
+[Your first experiment](https://docs.transluce.ai/fxtr/first-experiment) walks you through
+designing and running an experiment of your own in this project, with your coding agent as a
+guide.
+{{/example}}
+{{#example}}
+
+## Run the example
+
+This project includes a complete greeting experiment in `src/{{package}}/experiment.py`.
+Its `launch.py` runs it as a Postgres job and prints greetings for Ada, Alan, and Grace.
+
+```bash
+git add . && git commit -m "A new fxtr project"
+uv run python launch.py
+uv run fxtr run {{workflow}} --input salutation=Hello   # the same, by the workflow's name
+uv run fxtr jobs list
+```
+
+A launch pins the code it runs, so it refuses uncommitted changes, and checks that the venv matches
+`uv.lock` (`uv sync`). The `fxtr run` command accepts `--allow-staged` to pin staged changes.
+
+Steps are cached by where they are in the job (`root/greet[guest:"Ada"]`), across jobs: the second
+launch above reuses the first's greetings. A job asking one of those keys for something else (another
+salutation or registered step name) stops on a *cache conflict* at the key; its status says how to
+list, clear, or overwrite the conflicts. To rerun such a launch and replace the old results:
+
+```bash
+uv run fxtr run {{workflow}} --input salutation=Hi --overwrite-cache-conflicts
+```
+
+Changing only a step's implementation does not invalidate its cached result; clear the affected
+entries or choose a new cache namespace to rerun it:
+
+```bash
+uv run fxtr cache clear root/greet
+```
+
+`uv run fxtr --help` lists the rest (`resume`, `jobs`, `cache`).
+{{/example}}
+
+## Watching jobs
+
+{{#published}}
+`uv run fxtr view` serves the experiment viewer with this project's jobs and opens it in a
+browser. Keep it running: each launch shows its job in the viewer's open tabs, or in a new tab
+when none is open.
+{{/published}}
+{{^published}}
+Build the viewer once in the fxtr checkout (`cd {{fxtr_checkout}} && pnpm install && pnpm --filter
+fxtr-ide build`), then `uv run fxtr view` serves it with this project's jobs and opens it in a
+browser. Keep it running: each launch shows its job in the viewer's open tabs, or in a new tab
+when none is open.
+{{/published}}
+
+## Layout
+
+```
+pyproject.toml        the project, and [tool.fxtr]: the modules that register its steps and workflows
+.env                  API keys, read into the environment of each launch; gitignored
+{{#example}}
+launch.py             calls launch_cli with its defaults to run a Postgres job
+{{/example}}
+src/{{package}}/
+    __init__.py       the Python package
+{{#example}}
+    experiment.py     the entity type, the step, and the workflow
+{{/example}}
+views/                the renderer package: src/bundle.ts is what it contributes to the viewer
+{{#vendored}}
+    vendor/fxtr/      the fxtr TypeScript packages it links, copied by `fxtr views vendor`
+{{/vendored}}
+```

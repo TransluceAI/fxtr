@@ -1,0 +1,13 @@
+.glyph { flex: none; overflow: visible; }
+.reserve { display: inline-block; flex: none; }
+.ink { color: var(--state-ink); }
+.quiet { color: var(--state-quiet); }
+.done { color: var(--state-done); }
+.danger { color: var(--danger); }
+.muted { opacity: 0.3; }
+/* A run's ring behind its progress arc. */
+.track { opacity: 0.3; }
+/* A running glyph's spinner, at the pace of the table's. */
+.spinner { animation: glyph-spin 0.9s linear infinite; }
+@keyframes glyph-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }

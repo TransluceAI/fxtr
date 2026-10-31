@@ -1,0 +1,231 @@
+.panel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--line);
+}
+.title { font-size: var(--text-base); }
+.meta { font-size: var(--text-sm); color: var(--fg-dim); }
+/* The gear sits after the type, so the type cannot push it off the head. */
+.type {
+  margin-left: auto;
+  max-width: 45%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.popover-title { margin-bottom: 5px; }
+.check-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 0;
+  font-size: var(--text-md);
+  cursor: pointer;
+}
+.check-row input { margin: 0; }
+.scroll { position: relative; flex: 1; overflow: auto; }
+/* Where the column being resized snaps back to (`defaultWidths`), down the whole table. */
+.snap-guide {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  width: 0;
+  border-left: 1px dashed var(--select-line);
+  pointer-events: none;
+}
+/* A table with one row shows the item itself, so the panel borrows the detail layout. */
+
+.table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.table thead th {
+  position: sticky;
+  top: 0;
+  padding: 0;
+  border-bottom: 1px solid var(--line);
+  font-weight: 400;
+}
+.th-inner { position: relative; display: flex; align-items: center; height: 24px; }
+.th-sort {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 4px 0 12px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  text-align: left;
+  cursor: pointer;
+}
+.th-sort.is-static { cursor: default; }
+.th-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* The header row alone (`hideRows`): its bottom rule, whose collapsed half would lie past the
+   table and give the scroller a few pixels to scroll, is left to what holds the table (a card's
+   border), and the scroller scrolls only sideways. */
+.scroll.is-head-only { overflow-y: hidden; }
+.table.is-head-only thead th { border-bottom: 0; }
+/* A value column's header showing the table's one value under its name (`headerValues`), two
+   lines like a key column's header: the name's row on top, the value below it, each 16-18px. */
+.th-inner.has-value { height: 38px; align-items: flex-start; }
+.th-inner.has-value .th-sort { height: 18px; padding-top: 3px; box-sizing: content-box; }
+.th-inner.has-value .th-filter { margin-top: 3px; }
+.th-value-line {
+  position: absolute;
+  top: 21px;
+  left: 12px;
+  right: 6px;
+  display: flex;
+  align-items: center;
+  height: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 14px;
+  color: var(--fg);
+}
+/* The column's type there while it has no one value, faint like a key column's unpicked kind. */
+.th-value-line.is-type { opacity: 0.45; }
+/* An entity link there is a chip slimmed to the line's height, so it stays below the name. */
+.th-inner .th-value-line :global(.chip) { box-sizing: border-box; height: 16px; padding-top: 0; padding-bottom: 0; line-height: 14px; }
+/* A header label with nothing to click: padded and coloured like `.th-sort`'s. */
+/* Shown only on hover (or focus) and taking no room until then, so the label has it; a filter
+   that is on, or whose popover is open (its anchor), stays. Scoped under `.th-inner` to outrank
+   `.icon-button`'s display, whichever stylesheet loads last. */
+.th-inner .th-filter { display: none; margin-right: 4px; color: var(--fg-dim); }
+th:hover .th-inner .th-filter, th:has(:focus-visible) .th-inner .th-filter,
+.th-inner .th-filter[data-state="open"], .th-inner .th-filter.is-on { display: flex; }
+.th-inner .th-filter.is-on { color: var(--fg); }
+/* Inside its column's right edge: past it, the last column's grip would widen the table past its
+   scroller whenever the columns fill it exactly. */
+.th-grip {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 5px;
+  height: 100%;
+  cursor: col-resize;
+  touch-action: none;
+}
+.th-grip:hover { background: var(--line-strong); }
+.filter-input {
+  width: 100%;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  font: inherit;
+  font-size: var(--text-md);
+}
+/* A key column's header standing for its dim's values (`keyHeader`): two lines, all of it but
+   the sort button a toggle. */
+.th-inner.is-key-header { height: 38px; align-items: stretch; }
+.th-key-toggle {
+  flex: 1;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.th-key-toggle:hover { filter: brightness(0.97); }
+.th-key-toggle:focus-visible { outline: 2px solid var(--line-strong); outline-offset: -2px; }
+/* Like a value header's filter button: no room taken until hover or focus, unless sorted on. */
+.th-inner .th-sort-icon { display: none; align-self: center; margin-right: 4px; color: var(--fg-dim); }
+th:hover .th-inner .th-sort-icon, th:has(:focus-visible) .th-inner .th-sort-icon, .th-inner .th-sort-icon.is-on { display: flex; }
+/* A key header's colours by its dim's kind, also as `--dim-bg` / `--dim-fg` for what its content
+   draws (a card table's sliced value, inverted). */
+.th-key.dim-other { --dim-bg: var(--muted-bg); --dim-fg: var(--fg); background: var(--muted-bg); }
+.th-key.dim-mapped { --dim-bg: var(--mapped-bg); --dim-fg: var(--mapped-fg); background: var(--mapped-bg); }
+.th-key.dim-mapped .th-sort { color: var(--mapped-fg); }
+.th-key.dim-replica { --dim-bg: var(--replica-bg); --dim-fg: var(--replica-fg); background: var(--replica-bg); }
+.th-key.dim-replica .th-sort { color: var(--replica-fg); }
+.th-key.dim-mapped .th-key-toggle, .th-key.dim-mapped .th-sort-icon { color: var(--mapped-fg); }
+.th-key.dim-replica .th-key-toggle, .th-key.dim-replica .th-sort-icon { color: var(--replica-fg); }
+.th-value { background: var(--bg-alt); }
+.th-expand { padding: 0; }
+/* The column menu at the right end of the header row, when the table has no head line. */
+.th-expand .columns-button { margin: 0 auto; }
+
+.table.is-selectable tbody tr { cursor: pointer; }
+.table.is-selectable tbody tr:hover { background: var(--hover); }
+/* While the platform's primary modifier is held, the rows a modifier click activates show as clickable
+   (`lib/modifierClick.ts`), their keys, which the click acts on, brought up to full contrast. */
+:global(:root[data-modifier-held]) .table.is-activatable tbody tr[data-row] { cursor: pointer; }
+:global(:root[data-modifier-held]) .table.is-activatable tbody tr[data-row]:hover { background: var(--hover-strong); }
+:global(:root[data-modifier-held]) .table.is-activatable tbody tr[data-row]:hover .td-key { color: var(--fg); }
+.table td {
+  padding: 5px 12px;
+  max-width: 0;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.td-numeric { text-align: right; font-variant-numeric: tabular-nums; }
+.td-key {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+/* Container previews use the same compact type as the dimension keys. */
+.td-complex {
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+}
+.cell-summary { display: flex; align-items: center; gap: 6px; }
+.cell-preview { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* The count keeps its width while the contents use the remaining space. */
+.cell-count {
+  flex: none;
+  padding: 1px 4px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-variant-numeric: tabular-nums;
+  line-height: 1.15;
+}
+/* Scoped under `.table` to outrank `.table td`'s padding, which would leave the button no room. */
+.table td.td-expand { padding: 0 2px; text-align: right; }
+/* Show expansion on hover, selection, or keyboard focus. */
+.row-expand { display: inline-flex; color: transparent; }
+tr:hover .row-expand, tr:focus-within .row-expand { color: var(--fg-dim); }
+/* Empty rows holding a short page to a full page's height: no rules, and nothing to pick. */
+.table tbody tr.pad-row, .table.is-selectable tbody tr.pad-row:hover { background: transparent; cursor: default; }
+.table tbody tr.pad-row td { border-bottom-color: transparent; }
+.empty { color: var(--fg-dim); font-size: var(--text-sm); }
+/* A failed invocation's error, from its row's value columns to its end. */
+.table td.td-failure { background: var(--danger-bg); color: var(--danger); }
+tr:hover .td-failure .row-expand, tr:focus-within .td-failure .row-expand { color: var(--danger); }
+
+/* The slack column after sized columns (`gridColumns`). */
+.table td.filler { padding: 0; }
+/* A row picked in a panel opened from this view (`LevelState.selected`): tinted, with a bar at its
+   left edge, among the rows it was picked from. */
+.table tbody tr[data-selected] > td { background: var(--select-tint); }
+.table tbody tr[data-selected] > td:first-child { box-shadow: inset 3px 0 0 var(--select-accent); }
+/* A row's invocation, in its trailing cell: a spinner while it runs, red once it failed. */
+.invocation-mark { display: inline-flex; color: var(--fg-dim); }
+.invocation-mark.is-failed { color: var(--danger); }
+.spinner { animation: invocation-spin 0.9s linear infinite; }
+@keyframes invocation-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+/* A cell describing the data rather than holding it (an invocation's row count). */
+.table td.td-describes { color: var(--fg-dim); font-style: italic; }
+/* Focusable so `j`/`k` reach it once clicked; the lit row shows where they step from. */
+.panel:focus { outline: none; }

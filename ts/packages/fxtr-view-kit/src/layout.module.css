@@ -1,0 +1,56 @@
+/* Shared layout, exported by the kit as `layout`: looks a renderer applies to elements it writes
+   itself (`className={layout.panel}`), over the shell's design tokens. */
+
+/* A renderer's root, one per kind of view. `panel`, `link`, and `preview` have no rules of their
+   own: they name the element, for tests. */
+.panel {}
+.card { font-size: var(--text-md); }
+.link {}
+.preview {}
+
+.kindLine { margin-bottom: 3px; }
+.title { margin: 0 0 8px; font-size: var(--text-lg); }
+.subtitle { margin: 14px 0 6px; font-size: var(--text-xs); letter-spacing: 0.08em; text-transform: uppercase; color: var(--fg-dim); }
+.header { margin-bottom: 8px; color: var(--fg-dim); }
+.fieldsLine { margin: 4px 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.prose { margin: 6px 0; white-space: pre-wrap; line-height: 1.5; }
+.muted { margin: 4px 0; color: var(--fg-dim); }
+.empty { color: var(--fg-dim); }
+
+/* A table in the density of the shell's own: dim headers over a rule, rows between hairlines, no
+   vertical rules. `num` on a cell holding a number. */
+.table { width: 100%; border-collapse: collapse; font-size: var(--text-md); }
+.table th {
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--line);
+  font-size: var(--text-sm);
+  font-weight: 400;
+  color: var(--fg-dim);
+  text-align: left;
+  white-space: nowrap;
+}
+.table td { padding: 4px 10px; border-bottom: 1px solid var(--line-soft); vertical-align: baseline; }
+.table tbody tr:hover { background: var(--hover); }
+.num { text-align: right; font-variant-numeric: tabular-nums; }
+.table th.num { text-align: right; }
+
+/* A chart's SVG parts: an axis (`<g className={layout.axis}>`: its line, ticks, and labels), the
+   grid lines behind the marks, and a label set directly beside the data. */
+.axis { font-size: var(--text-xs); }
+.axis text { fill: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.axis line, .axis path { stroke: var(--line-strong); fill: none; }
+.grid line, .grid path { stroke: var(--line); fill: none; }
+.chartLabel { font-size: var(--text-xs); fill: var(--fg); font-variant-numeric: tabular-nums; }
+
+/* A mark a reader can press (with fxtr-view-kit's `pressable`): an SVG shape (`mark`) rings with
+   its stroke, an HTML element (`cellMark`) with an inset shadow. Hover and keyboard focus ring it
+   faintly; `data-open="true"` (the shell shows the entity it stands for:
+   `useEntityLinks().isOpen`) and `data-picked="true"` (the view's own pick) ring it in ink, which
+   shows on a mark of any colour. `faded` recedes the marks outside a focus. */
+.mark { cursor: pointer; outline: none; }
+.mark:hover, .mark:focus-visible { stroke: var(--fg-dim); stroke-width: 1.5px; }
+.mark[data-open="true"], .mark[data-picked="true"] { stroke: var(--fg); stroke-width: 2px; }
+.cellMark { cursor: pointer; outline: none; }
+.cellMark:hover, .cellMark:focus-visible { box-shadow: inset 0 0 0 1.5px var(--fg-dim); }
+.cellMark[data-open="true"], .cellMark[data-picked="true"] { box-shadow: inset 0 0 0 2px var(--fg); }
+.faded { opacity: 0.2; }

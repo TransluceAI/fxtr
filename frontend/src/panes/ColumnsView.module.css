@@ -1,0 +1,137 @@
+.root { position: relative; width: 100%; height: 100%; }
+/* As large as the detail view, unmoved by the slide: what the columns' width and height are read
+   from. */
+.sentinel { position: absolute; inset: 0; pointer-events: none; }
+/* The columns' window: its right edge at the detail view's, its left edge moved left over the
+   trace by the slide. */
+.frame {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  overflow: hidden;
+  background: var(--bg-alt);
+}
+.frame.is-sliding { box-shadow: var(--shadow-xl); border-left: 1px solid var(--line-strong); }
+.strip { position: relative; display: flex; height: 100%; }
+.column {
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  --column-pad-top: 10px;
+  padding: var(--column-pad-top) 5px 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+/* The space between two panels (`PANEL_GAP`); a boundary to drag while it is resizable. */
+.row-gap { flex: none; height: 10px; }
+.row-gap.is-resizable { cursor: row-resize; touch-action: none; }
+.row-gap.is-resizable:hover, .row-gap.is-resizable:active {
+  background: linear-gradient(to bottom, transparent 4px, var(--line-strong) 4px, var(--line-strong) 6px, transparent 6px);
+}
+/* A panel: a rounded card. Clipped (to its rounded corners) without being a scroll container, so
+   in `grow` sizing its head can stick to the column's top. */
+.card {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  overflow: clip;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  background: var(--bg-alt);
+  box-shadow: var(--shadow-sm, 0 1px 3px rgb(0 0 0 / 0.08));
+}
+/* The panel's contents are written to fill a box; in a card they take their own height instead. */
+.card-body { display: flex; flex-direction: column; min-height: 0; }
+.card-body :global(.detail) { height: auto; min-height: 0; }
+.card-body :global(.paged-table) { height: auto; }
+.card-body :global(.table-panel) { height: auto; }
+.card-body :global(.detail-head) { flex: none; }
+
+/* `grow` sizing: nothing shrinks, so the column scrolls rather than anything inside a panel. */
+.grow .card-body,
+.grow .card-body :global(.detail),
+.grow .card-body :global(.detail-scroll),
+.grow .card-body :global(.paged-table),
+.grow .card-body :global(.paged-table) > :first-child,
+.grow .card-body :global(.table-scroll) { flex: none; }
+/* The head stays at the column's top while the panel's body scrolls past under it. A sticky box
+   keeps clear of its scroller's padding, so the head's offset cancels the column's top padding and
+   it sticks flush with the column's top edge. The head paints its own opaque background
+   (`PanelHead`), which hides the body under it. */
+.grow .card-body :global(.detail-head) {
+  position: sticky;
+  z-index: 2;
+  top: calc(-1 * var(--column-pad-top));
+}
+
+/* `fit` sizing: a capped card (`max-height`) shrinks its content's scrollers, which scroll. */
+.fit .card-body,
+.fit .card-body :global(.detail),
+.fit .card-body :global(.detail-scroll),
+.fit .card-body :global(.paged-table),
+.fit .card-body :global(.paged-table) > :first-child,
+.fit .card-body :global(.table-scroll) { flex: 0 1 auto; min-height: 0; }
+.card.is-flash { animation: flash 0.9s ease-out; }
+@keyframes flash {
+  0% { box-shadow: 0 0 0 3px var(--select-line); }
+  100% { box-shadow: 0 0 0 3px transparent; }
+}
+.empty {
+  padding: 24px 18px;
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}
+.scrollbar {
+  position: absolute;
+  z-index: 3;
+  right: 0;
+  bottom: 2px;
+  left: 0;
+  height: 8px;
+}
+.thumb {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--fg-dim) 45%, transparent);
+  cursor: grab;
+}
+.thumb:hover { background: var(--fg-dim); }
+/* Where a link would open, over everything. */
+.highlight { position: fixed; z-index: 1000; pointer-events: none; }
+.hline, .vline {
+  border-radius: 3px;
+  background: var(--select-line);
+  box-shadow: 0 0 8px 2px color-mix(in srgb, var(--select-line) 70%, transparent),
+    0 0 18px 4px color-mix(in srgb, var(--select-line) 35%, transparent);
+}
+.outline {
+  border: 4px solid var(--select-line);
+  border-radius: 10px;
+  box-sizing: border-box;
+  box-shadow: 0 0 10px 2px color-mix(in srgb, var(--select-line) 60%, transparent),
+    inset 0 0 10px 1px color-mix(in srgb, var(--select-line) 35%, transparent);
+}
+/* The boundary at a column's right edge, over the gap between columns. */
+.resize-handle {
+  position: absolute;
+  z-index: 2;
+  top: 0;
+  bottom: 0;
+  width: 8px;
+  margin-left: -4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.resize-handle:hover, .resize-handle:active {
+  background: linear-gradient(to right, transparent 3px, var(--line-strong) 3px, var(--line-strong) 5px, transparent 5px);
+}
+/* With Alt held, hovering any panel's close button lights every one: Alt-click closes them all. */
+:global(:root[data-alt-held]) .root:has(:global(.detail-close):hover) :global(.detail-close) {
+  background: var(--hover-strong);
+  color: var(--fg);
+}

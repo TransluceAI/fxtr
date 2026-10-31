@@ -1,0 +1,24 @@
+.text { font-size: var(--text-md); line-height: 1.45; white-space: pre-wrap; overflow-wrap: anywhere; }
+.tree {
+  padding: 8px;
+  overflow-x: hidden;
+  background: var(--bg);
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+/* Inside a pane, only the vertical axis scrolls, against a max height. */
+.tree.is-clamped { overflow-y: auto; max-height: 320px; }
+.struct { margin: 0; }
+.entry { display: flex; gap: 8px; padding: 1px 0; }
+.entry > dt { flex: none; max-width: 40%; font-family: var(--font-mono); color: var(--fg-dim); overflow-wrap: anywhere; }
+.entry > dd { flex: 1; min-width: 0; margin: 0; }
+/* Nested structures indent under their key. */
+.entry > dd > .struct, .entry > dd > .list { margin-top: 2px; padding-left: 10px; border-left: 1px solid var(--line); }
+.list { margin: 0; padding-left: 22px; }
+.list > li { padding: 1px 0; }
+.list > li::marker { color: var(--fg-faint); font-family: var(--font-mono); font-size: var(--text-xs); }
+.string { white-space: pre-wrap; overflow-wrap: anywhere; }
+.scalar { font-family: var(--font-mono); }
+.bytes { font-family: var(--font-mono); font-size: var(--text-sm); color: var(--fg-dim); }

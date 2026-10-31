@@ -1,0 +1,38 @@
+.custom { display: flex; }
+.menu { display: flex; flex-direction: column; padding: 4px 0; font-family: var(--font-sans); }
+.item {
+  padding: 4px 12px;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: var(--text-sm);
+  text-align: left;
+  white-space: nowrap;
+  color: var(--fg);
+  cursor: pointer;
+}
+.item:hover { background: var(--muted-bg); }
+/* A panel shows the view: the selection blue, as the head's button is lit. */
+.item.is-shown { color: var(--select-fg); font-weight: 600; }
+/* The views button's second segment, beside the current view's: the count and the chevron. A short
+   divider in place of the full-height line between head buttons, so the two read as one control. */
+.more.more { position: relative; gap: 3px; padding: 0 8px; border-left: 0; }
+.more.more::before {
+  content: "";
+  position: absolute;
+  top: 28%;
+  bottom: 28%;
+  left: 0;
+  width: 1px;
+  background: var(--line-strong);
+}
+.count {
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--muted-bg);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 14px;
+  font-variant-numeric: tabular-nums;
+  color: var(--button-fg);
+}

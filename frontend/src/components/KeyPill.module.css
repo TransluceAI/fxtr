@@ -1,0 +1,33 @@
+/* Matches a mapped key column's header (.th-key.dim-mapped in TablePanel.module.css), sized to
+   sit in a line of text. A label longer than the pill runs on under its right padding, where the fade covers it: a label
+   that fits ends before the padding, so the fade is over nothing. */
+.pill {
+  --pill-bg: var(--mapped-bg);
+  --pill-fg: var(--mapped-fg);
+  position: relative;
+  display: inline-grid;
+  max-width: 16ch;
+  overflow: hidden;
+  vertical-align: bottom;
+  padding: 0 5px 0 4px;
+  border-radius: 3px;
+  background: var(--pill-bg);
+  color: var(--pill-fg);
+  font-family: var(--font-sans);
+  font-size: inherit;
+  font-weight: 400;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+.pill::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: 5px;
+  background: linear-gradient(to right, transparent, var(--pill-bg));
+  pointer-events: none;
+}
+/* Narrower than its text when the track is: the text overflows into the padding, clipped there. */
+.label { min-width: 0; }

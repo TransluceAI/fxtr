@@ -1,0 +1,3 @@
+# Copy to fxtr.local.toml and adjust for this machine.
+database_url = "postgresql+asyncpg://fxtr:fxtr@localhost:55433/fxtr"
+schema = "fxtr_behavior_rollouts"

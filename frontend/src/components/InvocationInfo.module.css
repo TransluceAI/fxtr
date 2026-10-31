@@ -1,0 +1,15 @@
+.info { display: flex; flex-direction: column; gap: 6px; max-width: 420px; font-size: var(--text-sm); }
+.status { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.error {
+  color: var(--danger);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.facts { margin: 0; }
+.fact { display: flex; gap: 8px; padding: 1px 0; }
+.fact dt { flex: 0 0 5.5em; color: var(--fg-dim); }
+.fact dd { margin: 0; min-width: 0; overflow-wrap: anywhere; user-select: text; }
+.fact a { color: inherit; }
+.mono { font-family: var(--font-mono); font-size: var(--text-xs); }

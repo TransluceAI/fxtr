@@ -1,0 +1,16 @@
+/* Site-wide styles. Mintlify loads every .css file in this directory on every page. The
+   component class names (`tabs`, `accordion`, ...) and data-component-part attributes are the
+   ones Mintlify documents for custom styling; they may change with platform updates. */
+
+/* Draw a box around tabbed content, so the end of a tab's panel is visible. The container is
+   rendered as <div class="tabs tab-container">, with the tab list and panels inside it. */
+.tabs.tab-container {
+  border: 1px solid rgb(0 0 0 / 0.12);
+  border-radius: 0.75rem;
+  padding: 0 1rem 0.25rem;
+  margin: 1.5rem 0;
+}
+
+.dark .tabs.tab-container {
+  border-color: rgb(255 255 255 / 0.15);
+}

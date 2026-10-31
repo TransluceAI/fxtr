@@ -1,9 +1,0 @@
-/* diff.module.css - Scoped styles for diff highlighting */
-
-.add {
-  background-color: rgba(46, 160, 67, 0.2);
-}
-
-.remove {
-  background-color: rgba(248, 81, 73, 0.2);
-}

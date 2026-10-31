@@ -1,0 +1,53 @@
+/* The chart components' own styles (chart.tsx), over the shell's design tokens. Private to the kit. */
+
+.frame { position: relative; width: 100%; min-width: 0; }
+
+/* In the look of the shell's popovers. Beside its point, on the side with more room. */
+.tooltip {
+  position: absolute;
+  z-index: 10;
+  /* The measured border box fits even when the frame is narrower than the preferred width. */
+  box-sizing: border-box;
+  width: max-content;
+  max-width: min(280px, 100%);
+  overflow-wrap: anywhere;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+  color: var(--fg);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin: 4px 0;
+  padding: 0;
+  list-style: none;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+.legend li { display: inline-flex; align-items: center; gap: 5px; }
+.swatch { flex: none; width: 8px; height: 8px; border-radius: 2px; }
+.swatch[data-shape="circle"] { border-radius: 50%; }
+.swatch[data-shape="line"] { width: 12px; height: 2px; border-radius: 1px; }
+
+.scale {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  font-variant-numeric: tabular-nums;
+}
+.scaleBar { position: relative; width: 120px; height: 8px; border-radius: 2px; }
+/* The midpoint's label under the bar's centre, in room the legend keeps below it. */
+.scale[data-mid] { padding-bottom: 12px; }
+.scaleMid { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); white-space: nowrap; }

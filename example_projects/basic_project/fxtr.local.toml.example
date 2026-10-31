@@ -1,0 +1,5 @@
+# Copy to fxtr.local.toml (gitignored) and point it at your Postgres server. The server in the
+# repository's postgres_env/ is reached like this; FXTR_DATABASE_URL in the environment overrides
+# database_url. schema defaults to fxtr_<project name>.
+database_url = "postgresql+asyncpg://fxtr:fxtr@localhost:55433/fxtr"
+# schema = "fxtr_basic_project"

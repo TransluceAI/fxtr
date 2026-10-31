@@ -1,0 +1,47 @@
+[project]
+name = "{{project_name}}"
+version = "0.1.0"
+description = "A fxtr project"
+requires-python = ">=3.12.4"
+dependencies = [
+    "{{fxtr_requirement}}",
+]
+
+[tool.uv]
+# Installed (editably) into its own venv, so the `fxtr` command, which has no project directory on
+# its path, can import the modules [tool.fxtr] lists.
+package = true
+{{^published}}
+
+[tool.uv.sources]
+# The project depends on a checkout of fxtr, by path.
+fxtr = { path = "{{fxtr_path}}", editable = true }
+{{/published}}
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/{{package}}"]
+
+[tool.fxtr]
+# The modules whose import registers the project's steps and workflows: what a process with no
+# script of its own (a resume, the CLI, the viewer) imports.
+{{#example}}
+modules = ["{{package}}.experiment"]
+{{/example}}
+{{^example}}
+modules = []
+{{/example}}
+
+[tool.fxtr.views]
+# The project's renderer package (views/): `fxtr views build` builds it into views/dist, which the
+# viewer serves.
+package = "views"
+{{#in_checkout}}
+
+[tool.pyright]
+extends = "{{pyright_base}}"
+include = {{pyright_include}}
+{{/in_checkout}}

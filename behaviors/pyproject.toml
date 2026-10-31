@@ -1,0 +1,42 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "behaviors"
+version = "0.0.1a4"
+description = "Types, context policies, and chat model rollouts for behavioral experiments"
+requires-python = ">=3.12.4"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+    "anyio>=4.14.0",
+    "cattrs>=26.1.0",
+    "fxtr>=0.1.0a0,<0.2",
+    "pyyaml>=6",
+]
+
+[project.optional-dependencies]
+models = [
+    "anthropic>=1.11",
+    "httpx2>=2.13.1",
+    "openai>=3.24",
+]
+docent = [
+    "docent-python>=0.1.74",
+    "jsonschema>=4.0",
+]
+
+[tool.uv.sources]
+fxtr = { workspace = true }
+
+[tool.pyright]
+extends = "../pyright-base.json"
+include = ["src/behaviors", "tests"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "llm_integration: calls live LLM providers; requires API keys and explicit opt-in",
+]
+addopts = '-m "not llm_integration"'

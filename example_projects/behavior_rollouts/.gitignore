@@ -1,0 +1,11 @@
+# Where this machine reaches the project's database: local, never committed (see fxtr.local.toml.example).
+fxtr.local.toml
+# Where `fxtr view` records its URL while it runs.
+.fxtr/
+.venv/
+__pycache__/
+# The renderer package's installed dependencies and its built bundle.
+node_modules/
+dist/
+# The interpreter pin is tracked here even though the repository root ignores the file by name.
+!.python-version

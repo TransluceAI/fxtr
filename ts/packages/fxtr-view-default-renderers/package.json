@@ -1,0 +1,31 @@
+{
+  "name": "fxtr-view-default-renderers",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "The renderers every shell starts from: the core types' renderers (the array table) and the cbor-tree views as wildcard renderers of the built-in entity slots. Projects' renderers are concatenated by the shell.",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "fxtr-view": "workspace:*",
+    "fxtr-view-array-table": "workspace:*",
+    "fxtr-view-cbor-tree": "workspace:*"
+  },
+  "peerDependencies": {
+    "jotai": "^2.10.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.11",
+    "fxtr-view-shell-util": "workspace:*",
+    "jotai": "^2.10.0",
+    "react": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

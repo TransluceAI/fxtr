@@ -1,0 +1,14 @@
+{
+  ".agents/skills/fxtr/SKILL.md": "---\nname: fxtr\n---\n\n# fxtr\n",
+  ".agents/skills/behaviors/SKILL.md": "---\nname: behaviors\n---\n\n# behaviors\n",
+  ".agents/skills/first-experiment/SKILL.md": "---\nname: first-experiment\n---\n\n# Your first experiment\n",
+  "docs/docs.json": "{\"redirects\": [{\"source\": \"/fxtr/old-name\", \"destination\": \"/fxtr/concepts/caching\"}], \"navigation\": {\"tabs\": [{\"tab\": \"Home\", \"groups\": [{\"group\": \"Overview\", \"pages\": [\"index\"]}]}, {\"tab\": \"fxtr\", \"groups\": [{\"group\": \"Get started\", \"pages\": [\"fxtr/index\"]}, {\"group\": \"Concepts\", \"pages\": [\"fxtr/concepts/caching\", {\"group\": \"More\", \"pages\": [\"fxtr/concepts/arrays\"]}]}]}, {\"tab\": \"behaviors\", \"groups\": [{\"group\": \"Guides\", \"pages\": [\"behaviors/index\"]}]}]}}",
+  "docs/index.mdx": "---\ntitle: \"Home\"\n---\n\nThe platform.\n",
+  "docs/fxtr/index.mdx": "---\ntitle: \"Introduction\"\ndescription: \"What fxtr is.\"\n---\n\n## How it works\n",
+  "docs/fxtr/concepts/caching.mdx": "---\ntitle: \"Caching\"\ndescription: \"Reusing results.\"\n---\n\n## Resolving a job's conflicts\n\nText.\n",
+  "docs/fxtr/concepts/arrays.mdx": "---\ntitle: \"Arrays\"\n---\n\n## Mapping\n",
+  "docs/fxtr/unlisted.mdx": "# Not in the navigation\n",
+  "docs/behaviors/index.mdx": "---\ntitle: \"behaviors\"\n---\n\n## Set up\n",
+  "fxtr/pyproject.toml": "[project]\nname = \"fxtr\"\nversion = \"1.2.3\"\n",
+  "behaviors/pyproject.toml": "[project]\nname = \"behaviors\"\nversion = \"4.5.6\"\n"
+}

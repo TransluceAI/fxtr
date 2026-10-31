@@ -1,7 +1,0 @@
-format_version = 1
-
-# Empty to start: `fxtr_nix update-hashes` fills it (the E2E exercises that).
-# Committed (tracked) so the tool modifies it in place — nix's git flake fetcher
-# only sees tracked files, and host-side `git add` of a new file isn't readable
-# by the podman builder's in-container libgit2.
-[hashes]

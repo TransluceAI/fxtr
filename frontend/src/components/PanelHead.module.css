@@ -1,0 +1,93 @@
+/* One line: the path and params (wrapping the own params under the path when they do
+   not fit beside it), the controls at the top right. */
+:global(.detail-head).head {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 6px;
+  padding: 4px 6px 4px 8px;
+  font-family: var(--font-sans);
+  font-size: var(--text-sm);
+  color: var(--fg);
+  cursor: grab;
+  user-select: none;
+  background: var(--bg-alt);
+}
+/* A pinned panel's head: a faint violet wash, where a browsing panel's is the panel's own grey. */
+:global(.detail-head).head.is-pinned { background: var(--pinned-bg); }
+
+.main {
+  display: flex;
+  flex: 1;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 3px 6px;
+  min-width: 0;
+}
+.lead { display: inline-flex; flex: 0 1 auto; align-items: center; gap: 4px; min-width: 0; max-width: 100%; height: 20px; }
+.unresolved { color: var(--danger); }
+
+/* The path: every part but the last gives way first, then the last. */
+.path { display: flex; align-items: center; min-width: 0; }
+.leading, .last { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.leading { flex: 0 100 auto; min-width: 1.5em; }
+.last { flex: 0 1 auto; }
+.separator { margin: 0 4px; color: var(--fg-faint); }
+.name { font-size: var(--text-md); font-weight: 500; color: var(--fg); }
+.name.is-shared { font-weight: 400; color: var(--fg-dim); }
+.facet {
+  padding: 0 4px;
+  border-radius: 3px;
+  background: var(--muted-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--fg-dim);
+}
+.facet.is-shared { opacity: 0.7; }
+.part-icon { margin-right: 3px; vertical-align: -2px; color: var(--fg-dim); }
+
+/* A param: its name, then its value; how it is drawn says where it comes from. */
+.chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 0 5px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--fg);
+}
+.chip-name { font-family: var(--font-sans); color: var(--fg-dim); }
+.chip.is-own { background: var(--muted-bg); }
+.chip.is-inherited { border-color: var(--line-strong); color: var(--fg-dim); }
+.chip.is-slice { border-color: var(--line-strong); border-style: dashed; font-style: italic; color: var(--fg-dim); }
+.chip.is-folded { flex: none; align-items: center; gap: 2px; font-family: var(--font-sans); cursor: default; }
+.chip.is-passed-on { opacity: 0.55; }
+.own { display: flex; flex: none; flex-wrap: wrap; gap: 4px; max-width: 100%; }
+
+.controls { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 20px; }
+/* The pin: on a browsing panel, only while the pointer is over the panel or it has keyboard focus
+   (transparent, not hidden, so it keeps its room and can still be tabbed to); on a pinned one,
+   always, filled and violet. */
+.controls :global(.icon-button).pin { opacity: 0; }
+:global(.detail):hover .controls :global(.icon-button).pin,
+.controls :global(.icon-button).pin:focus-visible,
+.controls :global(.icon-button).pin.is-pinned { opacity: 1; }
+.controls :global(.icon-button).pin.is-pinned { background: none; color: var(--pinned-fg); cursor: default; }
+
+/* The address card. */
+:global(.popover).card { z-index: 50; width: max-content; max-width: min(480px, calc(100vw - 16px)); padding: 0; overflow: hidden; font-size: var(--text-sm); }
+.rows { display: flex; flex-direction: column; }
+.row { display: grid; grid-template-columns: 52px minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 5px 10px; }
+.row + .row { border-top: 1px solid var(--line); }
+.row-label { font-size: var(--text-2xs); font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--fg-dim); }
+.row-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; min-width: 0; }
+.kind { display: inline-flex; align-items: center; gap: 1px; font-weight: 500; }
+.code { font-family: var(--font-mono); font-size: var(--text-xs); }
+.drop { display: inline-flex; align-self: center; padding: 0; border: 0; background: none; color: var(--fg-dim); cursor: pointer; }
+.drop:hover { color: var(--fg); }
+.problem { margin: 0; padding: 5px 10px; border-top: 1px solid var(--line); color: var(--fg-dim); }

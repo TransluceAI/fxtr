@@ -1,0 +1,85 @@
+/* At the foot of its card: its corners are the card's bottom corners. */
+.card-table { position: relative; }
+.error { padding: 6px 12px; font-size: var(--text-sm); }
+/* The rows' toggle: a badge centred on the card's bottom border (the table is the card's foot, so
+   its bottom edge is one border width above the card's), shown while the card (its `article`) is
+   hovered or the badge has focus. */
+.rows-toggle {
+  position: absolute;
+  z-index: 5;
+  bottom: 0;
+  left: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 16px;
+  padding: 0;
+  border: 1px solid var(--card-border, var(--line-strong));
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  opacity: 0;
+  transform: translate(-50%, calc(50% + 1px));
+  transition: opacity 120ms ease-out;
+}
+:global(article):hover .rows-toggle, .rows-toggle:focus-visible { opacity: 1; }
+.rows-toggle:hover { border-color: var(--fg-dim); color: var(--fg); }
+.footer { border-radius: 0 0 7px 7px; }
+.key-head {
+  min-width: 0;
+  padding: 5px 4px 5px 9px;
+  font-size: var(--text-xs);
+}
+/* Both lines are cut off at the column's edge. */
+.key-name { display: flex; align-items: center; gap: 8px; height: 14px; overflow: hidden; white-space: nowrap; font-weight: 600; }
+.key-name > span { flex: none; }
+.count { font-weight: 400; opacity: 0.65; }
+/* The picked value under the dim's name, or while nothing is picked the dim's kind, faint. */
+.picked {
+  height: 14px;
+  overflow: hidden;
+  font-family: var(--font-mono);
+  font-weight: 400;
+  line-height: 14px;
+  white-space: nowrap;
+}
+/* The value the level is sliced at: a chip in the header's colours inverted (`--dim-bg` /
+   `--dim-fg`, set by the header's dim kind), so a sliced column stands out. */
+.picked.is-sliced {
+  display: inline-block;
+  box-sizing: border-box;
+  max-width: 100%;
+  padding: 0 5px;
+  border-radius: 4px;
+  background: var(--dim-fg, var(--fg));
+  color: var(--dim-bg, var(--bg));
+  text-overflow: ellipsis;
+}
+.picked.is-missing { text-decoration: line-through; opacity: 0.55; }
+.picked.is-unpicked { opacity: 0.45; }
+/* The value columns, floated from the foot of the header row over the key columns' rows and what
+   follows the card while open (`left` and `width` set to the key columns' span, its border outside
+   it). Past the card's foot they read as the card extending: their sides and foot continue its
+   border (`--card-border`, set by StepCard), their bottom corners round while the card squares
+   the ones they meet, and their shadow falls only outside the card's top. */
+.values {
+  position: absolute;
+  z-index: 20;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--card-border, var(--line-strong));
+  border-top-color: var(--line);
+  border-radius: 0 0 8px 8px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+  clip-path: inset(0 -24px -24px -24px);
+}
+.values[hidden] { display: none; }
+/* Each under its key column's header, in a row as the key columns are (their widths and the gaps
+   before them are the header cells'). The tallest sets the row's height. */
+.values { display: flex; }
+.value-column { flex: none; box-sizing: border-box; min-width: 0; border-right: 1px solid var(--line); }
+.value-column:last-child { border-right: 0; }

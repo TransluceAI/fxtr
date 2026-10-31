@@ -1,0 +1,13 @@
+/* Over the opened entity's top right corner: the renderer dropdown (when there is a choice), faint
+   until the panel or the dropdown is hovered or focused. */
+.corner {
+  position: absolute;
+  top: 0;
+  right: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  opacity: 0.35;
+}
+:global(.view-panel):hover > .corner, .corner:hover, .corner:focus-within { opacity: 1; }

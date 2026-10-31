@@ -1,0 +1,36 @@
+/* Scoped with the global `.chip` it wears so it outranks that rule (loaded later, a flex block):
+   the link flows inline with the text around it (on its key's line in a data tree), with a little
+   less vertical padding than a chip. */
+:global(.chip).link {
+  display: inline-flex;
+  max-width: 100%;
+  overflow: hidden;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+:global(.chip).link > * {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* What the browsing panel after the link's view shows. */
+:global(.chip).link.is-open { background: var(--select-bg); border-color: var(--select-line); color: var(--select-fg); }
+/* What a pinned panel shows. */
+:global(.chip).link.is-pinned { border-color: var(--select-line); border-style: dashed; }
+
+/* The entity behind a link, shown on hover. */
+.preview {
+  width: 360px;
+  max-width: min(360px, calc(100vw - 24px));
+  max-height: 300px;
+  overflow-y: auto;
+  font-size: var(--text-sm);
+  line-height: 1.45;
+}
+.preview-cid {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line);
+  font-size: var(--text-xs);
+  overflow-wrap: anywhere;
+}

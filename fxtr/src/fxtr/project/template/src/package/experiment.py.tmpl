@@ -1,0 +1,61 @@
+"""The experiment: greet every guest on a guest list.
+
+A starting point to replace with your own, showing the pieces every experiment has:
+
+- an entity type (:class:`Greeting`), a frozen dataclass stored by its content, which the viewer
+  shows (and a renderer package can show its own way);
+- a step (:func:`greet`), one unit of cached work, here called once per guest;
+- a workflow (:func:`greet_everyone`), which declares the guest list as a source array and maps
+  the step over it. Its return annotation gives the result's dims, which no Python type says.
+
+``pyproject.toml`` lists this module in ``[tool.fxtr] modules``: importing it registers the step
+and the workflow, which is how ``fxtr run``, a resume, and the viewer find them by name. A name
+must be unique in the project; without ``name=`` it is the function's ``module.qualname``.
+Docstrings are shown on the step's and workflow's cards in the viewer.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+from typing import Annotated
+
+from fxtr.core.entities import BoundID
+from fxtr.entity_defns.array import Array
+from fxtr.entity_defns.dataclass_entity import DataclassEntity
+from fxtr.experiment.handles import ArrayHandle, ScalarHandle
+from fxtr.experiment.steps import StepContext, step
+from fxtr.experiment.workflows import WorkflowContext, workflow
+
+GREETING = "{{package}}.Greeting"
+"""The entity type's name: what its stored data is tagged with, and what a renderer is keyed on."""
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Greeting(DataclassEntity, fxtr_type=GREETING):
+    """A greeting for one guest."""
+
+    guest: str
+    text: str
+
+
+GUESTS = ("Ada", "Grace", "Alan")
+
+
+@step(name="greet")
+async def greet(context: StepContext, guest: str, salutation: str) -> BoundID[Greeting]:
+    """Write a greeting for one guest."""
+    return await context.store(Greeting(guest=guest, text=f"{salutation}, {guest}!"))
+
+
+@workflow(name="{{workflow}}")
+async def greet_everyone(
+    context: WorkflowContext, salutation: ScalarHandle[str]
+) -> Annotated[ArrayHandle[BoundID[Greeting]], "[guest: str]"]:
+    """Greet every guest on the guest list with the given salutation."""
+    guest_list = context.add_source_array(
+        "guest_list", Array.infer_from_items([((guest,), guest) for guest in GUESTS], dims=["guest"])
+    )
+    # One greeting per guest; the salutation has no `guest` dim, so every call gets the same one.
+    return context.run_step(
+        "greet", greet, {"guest": guest_list, "salutation": salutation}, map_over=["guest"]
+    ).expect_type(("[guest: str]", BoundID[Greeting]))

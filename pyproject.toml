@@ -1,0 +1,57 @@
+[dependency-groups]
+dev = [
+    "pre-commit>=4.3.0",
+    "pyright>=1.1.411",
+    "pytest>=9.1.1",
+    "pytest-rerunfailures>=16.6",
+    "pytest-xdist>=3.8.0",
+    "ruff>=0.16.5",
+]
+
+[tool.uv]
+# Workspace-root dependency groups can be selected for individual members in uv 0.12.2+.
+required-version = ">=0.12.2"
+
+[tool.uv.workspace]
+# Add top-level product packages here
+members = ["fxtr", "behaviors"]
+# The example projects are independent uv projects
+exclude = [
+    "example_projects/*",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+src = ["fxtr/src", "behaviors/src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ruff.lint.isort]
+known-first-party = [
+    "fxtr",
+    "behaviors",
+    "basic_project",
+    "behavior_rollouts",
+]
+
+[tool.ruff.lint.per-file-ignores]
+"fxtr/src/fxtr/core/entities.py" = ["UP046"]
+"fxtr/tests/test_loader_registry.py" = ["E402", "UP046"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "fxtr/tests",
+    "behaviors/tests",
+    "example_projects",
+]
+pythonpath = [
+    "fxtr/tests", "example_projects/basic_project/src", "example_projects",
+    "example_projects/behavior_rollouts/src",
+]
+markers = [
+    "llm_integration: calls live LLM providers; requires API keys and explicit opt-in",
+    "timeout_seconds(n): let a test that is slow by design run n seconds instead of the default 10",
+]
+addopts = '-m "not llm_integration"'

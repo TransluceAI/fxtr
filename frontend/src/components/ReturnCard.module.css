@@ -1,0 +1,44 @@
+.card {
+  /* The card's border colour, which its table's floated values continue (CardTable). */
+  --card-border: var(--select-line);
+  position: relative;
+  border: 1px solid var(--card-border);
+  border-radius: 8px;
+  background: var(--card-bg);
+  box-shadow: var(--shadow-sm);
+}
+.head {
+  display: flex;
+  align-items: stretch;
+  min-height: 40px;
+  border-radius: 7px;
+  background: var(--select-tint);
+}
+.select { display: flex; flex: 1; flex-wrap: wrap; align-items: center; gap: 8px; min-width: 0; padding: 9px 12px; }
+.kind { color: var(--select-fg); }
+.panel-button {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 5px;
+  padding: 0 12px;
+  border: 0;
+  border-left: 1px solid var(--select-line-soft);
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+  white-space: nowrap;
+  border-radius: 0 7px 7px 0;
+}
+.panel-button:hover { background: var(--hover); color: var(--fg); }
+.panel-button.is-selected { background: var(--select-bg); color: var(--select-accent); }
+.head:not(:last-child) { border-bottom: 1px solid var(--select-line-soft); border-radius: 7px 7px 0 0; }
+.head:not(:last-child) .panel-button { border-radius: 0 7px 0 0; }
+.table { border-radius: 0 0 7px 7px; background: var(--bg); }
+.card:has([data-values-open]) { border-bottom-left-radius: 0; }
+.card:has([data-values-open]) .table { border-bottom-left-radius: 0; }
+.card:has([data-values-open="full"]) { border-bottom-right-radius: 0; }
+.card:has([data-values-open="full"]) .table { border-bottom-right-radius: 0; }
+.pending { font-size: var(--text-sm); color: var(--fg-dim); }

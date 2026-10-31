@@ -1,0 +1,84 @@
+.trigger {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 10px 26px 9px 10px;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.trigger:hover { background: var(--hover); }
+.name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+.sub {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--fg-dim);
+}
+.chevron { position: absolute; top: 12px; right: 9px; color: var(--fg-dim); }
+.trigger:hover .chevron { color: var(--fg); }
+
+.menu { width: 380px; max-width: calc(100vw - 16px); padding: 6px; }
+.search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  color: var(--fg-dim);
+}
+.search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: var(--text-md); }
+.list { max-height: 320px; margin: 6px 0 0; padding: 0; overflow-y: auto; list-style: none; }
+.item {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  width: 100%;
+  padding: 6px 26px 6px 8px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.item:hover { background: var(--hover); }
+.item.is-selected { background: var(--select-bg); box-shadow: inset 2px 0 0 var(--select-accent); }
+.item-name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--text-md);
+}
+.item-meta { display: flex; gap: 8px; font-size: var(--text-xs); color: var(--fg-dim); }
+.item-id { font-family: var(--font-mono); }
+.state { text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--text-2xs); }
+.state.is-failed { color: var(--danger); }
+.none { padding: 8px; color: var(--fg-dim); font-size: var(--text-sm); }
+.succeeded { flex: none; color: var(--state-done); }

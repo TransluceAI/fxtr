@@ -1,0 +1,35 @@
+{
+  "name": "fxtr-view-shell-util",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "description": "Helpers for shells hosting fxtr-view renderers: the dispatch registry and the components dispatching through it, caching data hooks, and a DRISL entity loader; under ./testing, an in-memory shell for tests. Renderer code never imports this.",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./testing/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ipld/dag-cbor": "^9.2.1",
+    "fxtr-view": "workspace:*",
+    "multiformats": "^13.3.1"
+  },
+  "peerDependencies": {
+    "jotai": "^2.10.0",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@testing-library/react": "^16.0.1",
+    "@types/react": "^18.3.11",
+    "@types/react-dom": "^18.3.1",
+    "jotai": "^2.10.0",
+    "jsdom": "^25.0.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

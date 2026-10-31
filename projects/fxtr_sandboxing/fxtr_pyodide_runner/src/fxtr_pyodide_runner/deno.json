@@ -1,4 +1,0 @@
-{
-  "//": "Load-bearing: without a config file, deno's config discovery walks up from the entry module and may find (and try to rewrite) unrelated workspace config, e.g. a pnpm-workspace.yaml at a repo root.",
-  "nodeModulesDir": "none"
-}

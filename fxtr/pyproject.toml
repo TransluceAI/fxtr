@@ -1,0 +1,66 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "fxtr"
+version = "0.1.0a0"
+description = "A configuration and orchestration system for modular, reproducible experiments"
+# Before 3.12.4, typing.get_type_hints cannot resolve a PEP 695 class's type parameters under
+# `from __future__ import annotations`, which the entity converter relies on.
+requires-python = ">=3.12.4"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+    "anyio>=4.14.0",
+    "cbrrr>=1.1.0",
+    "duckdb>=1.5.0",
+    "frozendict>=2.4.6",
+    "cattrs>=26.1.0",
+    "pyarrow>=20.0.0",
+    "python-dotenv>=1.0",
+]
+
+[project.scripts]
+fxtr = "fxtr.project.cli:entry"
+
+[project.optional-dependencies]
+# The persistent, Postgres-backed runner (fxtr.runner.postgres).
+runner = [
+    "sqlalchemy[asyncio]>=2.0.52",
+    "asyncpg>=0.30",
+]
+
+# The isolated, removable debug viewer's GraphQL server (fxtr.runner.postgres.debug_web).
+# Not depended on by anything else in the package; delete it and this extra to remove the viewer.
+debug-web = [
+    "fxtr[runner]",
+    "ariadne>=0.23",
+    # Ariadne 1.1 allows graphql-core 3.3 but fails to import with it (no `ExecutionContext`).
+    "graphql-core>=3.2,<3.3",
+    "starlette>=0.37",
+    "uvicorn[standard]>=0.30",
+    # `fxtr view` rebuilds the project's view bundle as its sources change.
+    "watchfiles>=0.21",
+]
+
+[tool.hatch.build.hooks.custom]
+# hatch_build.py: ship the built experiment viewer (frontend/) and the TypeScript packages
+# renderers use (ts/) inside the sdist and wheel.
+
+[tool.pyright]
+extends = "../pyright-base.json"
+include = [
+    "src/fxtr",
+    "tests",
+]
+# Tests import the example project's package the same way pytest's pythonpath setting exposes it
+# (the example project is typechecked in its own venv; see its pyproject).
+extraPaths = ["../example_projects/basic_project/src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["../example_projects/basic_project/src"]
+markers = [
+    "timeout_seconds(n): let a test that is slow by design run n seconds instead of the default 10",
+]
