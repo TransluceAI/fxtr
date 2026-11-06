@@ -5,7 +5,12 @@ from dataclasses import replace
 import pytest
 
 from behavior_rollouts import openai_rollout
-from behavior_rollouts.scripted_rollout import EchoAPI, scripted_experiment
+from behavior_rollouts.scripted_rollout import (
+    EchoAPI,
+    MessageSelector,
+    longest_reply,
+    scripted_experiment,
+)
 from behaviors.types import (
     ChatRollout,
     ContentText,
@@ -131,7 +136,15 @@ async def test_mapped_rollouts_are_stored_and_loadable_from_workflow_results(
     )
     assert result.type == ArrayType.of(("[prompt: str]", BoundID[ChatRollout]))
     assert set(result.keys()) == {(name,) for name in prompts}
-    assert len(await project_client.list_cache_entries()) == 2
+    # A rollout and its longest reply, for each prompt.
+    assert len(await project_client.list_cache_entries()) == 4
+    assert (
+        len(await project_client.list_cache_entries(step="scripted_rollout.pick_longest_reply"))
+        == 2
+    )
+    # The echo of "Thank you." outgrows that of "Hello.", not of the question: the fourth message
+    # of the conversation, or the second.
+    longest = {"greeting": 3, "question": 1}
     for (name,), reference in result.items():
         assert isinstance(name, str)
         rollout = await project_client.load(reference, as_type=ChatRollout)
@@ -141,6 +154,7 @@ async def test_mapped_rollouts_are_stored_and_loadable_from_workflow_results(
         assert rollout.model_turns[0].messages[0].content == (
             ContentText(text=f"Echo: {prompts[name]}"),
         )
+        assert longest_reply(rollout)[0] == MessageSelector(message=longest[name])
         assert rollout.model_turns[1].messages[0].content == (ContentText(text="Echo: Thank you."),)
         response = find_metadata(rollout.model_turns[1].metadata, ModelResponse)
         assert response is not None

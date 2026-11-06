@@ -22,6 +22,7 @@ import { useLoading } from '../lib/loading'
 import { LevelStateContext } from '../lib/levelState'
 import { linkTarget } from '../lib/linkBase'
 import { useEntityOpener } from '../lib/openEntity'
+import { keyParams } from '../panes/address'
 
 const useCachedEntity = createCachedEntityHook(loadEntity)
 
@@ -41,7 +42,8 @@ function useInvocation(ref: InvocationRef) {
  *  trace's, or a panel's), from the nearest `LevelStateContext`. */
 function useKeys(): ViewKeys {
   const level = useContext(LevelStateContext)
-  return level ? { slice: level.slice, selected: level.selected } : NO_KEYS
+  // Renderers read the dims' keys alone, not a panel's other params.
+  return level ? { slice: keyParams(level.slice), selected: level.selected } : NO_KEYS
 }
 
 const NO_KEYS: ViewKeys = { slice: {}, selected: {} }

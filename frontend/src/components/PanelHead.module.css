@@ -67,6 +67,8 @@
 .chip.is-slice { border-color: var(--line-strong); border-style: dashed; font-style: italic; color: var(--fg-dim); }
 .chip.is-folded { flex: none; align-items: center; gap: 2px; font-family: var(--font-sans); cursor: default; }
 .chip.is-passed-on { opacity: 0.55; }
+/* In the address card: the whole value, wrapping, so a long one (a selector) can be read. */
+.chip.is-full { white-space: normal; overflow-wrap: anywhere; max-width: 100%; }
 .own { display: flex; flex: none; flex-wrap: wrap; gap: 4px; max-width: 100%; }
 
 .controls { display: inline-flex; flex: none; align-items: center; gap: 4px; height: 20px; }

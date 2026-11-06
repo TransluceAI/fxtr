@@ -1,5 +1,6 @@
 import styles from "./behaviors.module.css";
-import { unwrap, useEntity, type EntityData, type EntityID, type EntityViewProps } from "fxtr-view";
+import { unwrap, useEntity, type EntityData, type EntityID, type EntityPanelProps, type EntityViewProps } from "fxtr-view";
+import { isMessageSelector } from "./selector";
 import { Messages, Metadata, MetadataList, usageOf } from "./messages";
 import {
   AGENT_RUN, CHAT_ROLLOUT, SET_SYSTEM_MESSAGE, TRANSCRIPT, TRANSCRIPT_GROUP,
@@ -60,9 +61,20 @@ export function Initialization({ data }: { data: EntityData | null }) {
   </section>;
 }
 
-export function ChatRolloutView({ data }: { data: ChatRolloutData }) {
+/** A rollout's conversation, turn by turn; `selected` is the index of the message a selector picks
+ *  (`MessageSelector`), marked. */
+export function ChatRolloutView({ data, selected = null }: { data: ChatRolloutData; selected?: number | null }) {
   const usage = usageOf(data.model_turns);
   const turnCount = Math.max(data.context_turns.length, data.model_turns.length);
+  // Where each turn's context and model messages start among the conversation's messages.
+  const starts: { context: number; model: number }[] = [];
+  let next = 0;
+  for (let index = 0; index < turnCount; index++) {
+    const context = next;
+    next += data.context_turns[index]?.messages.length ?? 0;
+    starts.push({ context, model: next });
+    next += data.model_turns[index]?.messages.length ?? 0;
+  }
   return (
     <section className={styles["panel"]} aria-label="Chat rollout">
       <header className={styles["header"]}>
@@ -81,8 +93,9 @@ export function ChatRolloutView({ data }: { data: ChatRolloutData }) {
         return (
           <section className={styles["exchange"]} aria-label={`Turn ${index + 1}`} key={index}>
             <h3 className={styles["turn-number"]}>Turn {index + 1}</h3>
-            {context && <Messages messages={context.messages} />}
-            {model ? <Messages messages={model.messages} /> : <p className={styles["muted"]}>No model response recorded.</p>}
+            {context && <Messages messages={context.messages} first={starts[index]!.context} selected={selected} />}
+            {model ? <Messages messages={model.messages} first={starts[index]!.model} selected={selected} />
+              : <p className={styles["muted"]}>No model response recorded.</p>}
             {(context || model) && (
               <details className={styles["details"]}>
                 <summary>Turn details</summary>
@@ -103,7 +116,7 @@ export function ChatRolloutView({ data }: { data: ChatRolloutData }) {
   );
 }
 
-function TranscriptView({ data }: { data: TranscriptData }) {
+function TranscriptView({ data, selected = null }: { data: TranscriptData; selected?: number | null }) {
   return (
     <section className={styles["panel"]}>
       <header className={styles["header"]}>
@@ -112,7 +125,7 @@ function TranscriptView({ data }: { data: TranscriptData }) {
         {data.description && <p className={styles["prose"]}>{data.description}</p>}
         <div className={styles["muted"]}>{countLabel(data.messages.length, "message")}</div>
       </header>
-      {data.messages.length ? <Messages messages={data.messages} /> : <p className={styles["muted"]}>No messages recorded.</p>}
+      {data.messages.length ? <Messages messages={data.messages} selected={selected} /> : <p className={styles["muted"]}>No messages recorded.</p>}
       <Metadata value={data.metadata} />
     </section>
   );
@@ -145,11 +158,16 @@ function GroupView({ data }: { data: TranscriptGroupData }) {
   );
 }
 
-export function BehaviorPanel({ id }: EntityViewProps) {
+/** A conversation in full. For a `ChatRollout` or a `Transcript`, a `selector` param that is a
+ *  `MessageSelector` marks its message (one of another shape, or past the last message, marks
+ *  nothing). */
+export function BehaviorPanel({ id, params }: EntityPanelProps) {
   const data = unwrap(useEntity(id as EntityID<BehaviorData>));
+  const selector = params?.["selector"];
+  const selected = isMessageSelector(selector) ? selector.message : null;
   switch (data.$type) {
-    case CHAT_ROLLOUT: return <ChatRolloutView data={data} />;
-    case TRANSCRIPT: return <TranscriptView data={data} />;
+    case CHAT_ROLLOUT: return <ChatRolloutView data={data} selected={selected} />;
+    case TRANSCRIPT: return <TranscriptView data={data} selected={selected} />;
     case TRANSCRIPT_GROUP:
     case AGENT_RUN: return <GroupView data={data} />;
     case SET_SYSTEM_MESSAGE:

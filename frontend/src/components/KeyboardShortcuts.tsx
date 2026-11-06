@@ -30,6 +30,14 @@ const shortcutGroups = (modifier: string): { title: string; shortcuts: Shortcut[
     ],
   },
   {
+    title: 'Flowchart',
+    shortcuts: [
+      { keys: [['='], ['-']], action: 'Zoom in / out', context: 'While the flowchart is open and not typing. Zooms about the middle of the graph.' },
+      { keys: [['0']], action: 'Fit the graph in view', context: 'While the flowchart is open and not typing.' },
+      { keys: [[modifier, 'scroll']], action: 'Zoom at the pointer', context: 'Over the flowchart. A trackpad pinch zooms too.' },
+    ],
+  },
+  {
     title: 'Tables',
     shortcuts: [
       { keys: [['Enter']], action: 'Go to a row', context: 'In a table’s “Go to row” input, opens the page containing the entered row number.' },

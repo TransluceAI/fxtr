@@ -20,3 +20,10 @@ When a user interaction causes a panel to fetch new data, the loading state shou
 * Let the user customize layout as desired (like panes in VS Code) so the user can e.g. compare specific things side by side
 * Close a pane when it's no longer relevant, unless the user intentionally keeps it. It should be hard to accidentally create a bunch of panel clutter.
 * Make it clear "what" exactly the user is looking at in any given pane—is this information about a step in general? an invocation of the step? output of an invocation?
+
+## Parameters for views
+* Custom views can take parameters (specified by a link). These might be used to select a subset of the data to show.
+* Entity views can also take parameters. The primary use case for entity view parameters is selectors. Selectors work a bit like text fragments in URLs - they tell the view to highlight a specific piece of content. However, fxtr has no concept of a selector; it does not dictate how selectors are represented or displayed. Selectors are just a use case for entity view parameters.
+* General stuff for parameters
+    * When the value is a short string (e.g. a dim key), show it in the chip in the panel header
+    * When the value is not a short string (e.g. a selector), just show the name of the parameter and an x button to clear it.

@@ -43,7 +43,7 @@ pytest.importorskip("sqlalchemy")
 pytest.importorskip("ariadne")
 
 from ariadne import graphql  # noqa: E402
-from asgi_testing import PAGE_ORIGIN, a_page_socket  # noqa: E402
+from asgi_testing import PAGE_ORIGIN, a_page_socket, a_request  # noqa: E402
 from starlette.applications import Starlette  # noqa: E402
 from starlette.routing import Mount  # noqa: E402
 from starlette.types import ASGIApp, Message  # noqa: E402
@@ -429,7 +429,7 @@ async def test_many_entities_come_back_in_one_response(database: Database) -> No
 
         def post(payload: object) -> Any:
             body = json.dumps(payload).encode()
-            return _request(app, "/api/entities", method="POST", body=body)
+            return a_request(app, "/api/entities", method="POST", body=body)
 
         cids = [result_cid, missing.cid_str(), result_cid]
         status, headers, body = await post({"cids": cids})
@@ -1025,41 +1025,6 @@ def test_the_experiment_readme_is_the_project_roots(tmp_path: Path) -> None:
 # ---- the viewer itself: everything outside /api ----
 
 
-async def _request(
-    app: ASGIApp,
-    path: str,
-    headers: list[tuple[bytes, bytes]] | None = None,
-    *,
-    method: str = "GET",
-    body: bytes = b"",
-) -> tuple[int, dict[str, str], bytes]:
-    """One request through ``app``, without a server: the status, headers, and body."""
-    messages: list[Message] = []
-
-    async def receive() -> Message:
-        return {"type": "http.request", "body": body}
-
-    async def send(message: Message) -> None:
-        messages.append(message)
-
-    await app(
-        {
-            "type": "http",
-            "method": method,
-            "path": path,
-            "raw_path": path.encode(),
-            "root_path": "",
-            "query_string": b"",
-            "headers": headers or [(b"host", b"127.0.0.1:8000")],
-        },
-        receive,
-        send,
-    )
-    start = messages[0]
-    response_headers = {k.decode().lower(): v.decode() for k, v in start["headers"]}
-    return start["status"], response_headers, b"".join(m.get("body", b"") for m in messages[1:])
-
-
 def a_built_viewer(root: Path) -> Path:
     dist = root / "dist"
     (dist / "assets").mkdir(parents=True)
@@ -1070,28 +1035,28 @@ def a_built_viewer(root: Path) -> Path:
 
 async def test_the_viewer_is_served_from_the_root_uncached(tmp_path: Path) -> None:
     app = Starlette(routes=[Mount("/", ViewerFiles(a_built_viewer(tmp_path)))])
-    status, headers, body = await _request(app, "/")
+    status, headers, body = await a_request(app, "/")
     assert (status, body) == (200, b"<!doctype html><title>viewer</title>")
     assert headers["cache-control"] == "no-cache"
-    status, headers, body = await _request(app, "/assets/index.js")
+    status, headers, body = await a_request(app, "/assets/index.js")
     assert (status, body) == (200, b"console.log(1)")
     assert headers["cache-control"] == "no-cache"
     # A revalidation of an unchanged file is a 304 that still says to revalidate next time.
-    _, headers, _ = await _request(app, "/")
-    status, headers, _ = await _request(app, "/", [(b"if-none-match", headers["etag"].encode())])
+    _, headers, _ = await a_request(app, "/")
+    status, headers, _ = await a_request(app, "/", headers={"if-none-match": headers["etag"]})
     assert status == 304 and headers["cache-control"] == "no-cache"
-    assert (await _request(app, "/nowhere.js"))[0] == 404
+    assert (await a_request(app, "/nowhere.js"))[0] == 404
 
 
 async def test_an_unbuilt_viewer_says_how_to_build_it(tmp_path: Path) -> None:
     dist = tmp_path / "dist"
     app = Starlette(routes=[Mount("/", ViewerFiles(dist))])
-    status, headers, body = await _request(app, "/")
+    status, headers, body = await a_request(app, "/")
     assert status == 404 and b"pnpm --filter fxtr-ide build" in body
     assert headers["cache-control"] == "no-cache"
     # Building it while the server runs is enough.
     a_built_viewer(tmp_path)
-    assert (await _request(app, "/"))[0] == 200
+    assert (await a_request(app, "/"))[0] == 200
 
 
 def test_an_installed_viewer_is_preferred_to_the_checkouts(
@@ -1111,12 +1076,12 @@ async def test_the_api_and_the_viewer_share_one_origin(tmp_path: Path) -> None:
     async with a_client(Database("postgresql+asyncpg://unused", pg_schema="unused")) as client:
         client.project = project
         app = create_app(client, frontend_dist=a_built_viewer(tmp_path))
-        status, _, body = await _request(app, "/api/experiment_readme")
+        status, _, body = await a_request(app, "/api/experiment_readme")
         assert status == 200 and json.loads(body)["markdown"] == "# p"
-        assert (await _request(app, "/"))[0] == 200
+        assert (await a_request(app, "/"))[0] == 200
         # The API is only under /api.
-        assert (await _request(app, "/experiment_readme"))[0] == 404
-        status, headers, _ = await _request(app, "/api/graphql")
+        assert (await a_request(app, "/experiment_readme"))[0] == 404
+        status, headers, _ = await a_request(app, "/api/graphql")
         assert status == 307 and headers["location"].endswith("/api/graphql/")
 
 
@@ -1124,7 +1089,7 @@ async def test_the_server_says_which_project_it_serves(tmp_path: Path) -> None:
     project = a_views_project(tmp_path, views=False)
     async with a_client(Database("postgresql+asyncpg://unused", pg_schema="unused")) as client:
         client.project = project
-        status, headers, body = await _request(create_app(client), "/api/info")
+        status, headers, body = await a_request(create_app(client), "/api/info")
         assert (status, headers["cache-control"]) == (200, "no-cache")
         info = json.loads(body)
         assert (info["root"], info["schema"]) == (str(tmp_path.resolve()), "unused")
@@ -1225,11 +1190,13 @@ async def test_a_running_dev_server_takes_over_the_viewers_paths(tmp_path: Path)
     viewer = Viewer(ViewerFiles(a_built_viewer(tmp_path)))
     app = Starlette(routes=[Mount("/", viewer)])
     viewer.dev_port = 5199
-    status, headers, _ = await _request(app, "/assets/index.js", [(b"host", b"localhost:8000")])
+    status, headers, _ = await a_request(
+        app, "/assets/index.js", headers={"host": "localhost:8000"}
+    )
     assert status == 307 and headers["location"] == "http://localhost:5199/assets/index.js"
     assert headers["cache-control"] == "no-cache"
     viewer.dev_port = None
-    assert (await _request(app, "/"))[0] == 200
+    assert (await a_request(app, "/"))[0] == 200
 
 
 def test_only_a_checkout_runs_the_dev_server(
@@ -1434,11 +1401,11 @@ async def test_a_refused_viewer_answers_every_path_with_why(tmp_path: Path) -> N
     app = Starlette(routes=[Mount("/", viewer)])
     viewer.refusal = "The viewer is out of date."
     for path in ("/", "/assets/index.js"):
-        status, headers, body = await _request(app, path)
+        status, headers, body = await a_request(app, path)
         assert (status, body) == (503, b"The viewer is out of date.")
         assert headers["cache-control"] == "no-cache"
     viewer.refusal = None
-    assert (await _request(app, "/"))[0] == 200
+    assert (await a_request(app, "/"))[0] == 200
 
 
 async def test_startup_refuses_a_checkouts_stale_viewer_but_keeps_the_api(
@@ -1454,5 +1421,5 @@ async def test_startup_refuses_a_checkouts_stale_viewer_but_keeps_the_api(
     client.project = dataclasses.replace(client.project, root=tmp_path)
     app = create_app(client)
     async with app.router.lifespan_context(app):
-        assert (await _request(app, "/"))[0] == 503
-        assert (await _request(app, "/api/experiment_readme"))[0] == 200
+        assert (await a_request(app, "/"))[0] == 503
+        assert (await a_request(app, "/api/experiment_readme"))[0] == 200

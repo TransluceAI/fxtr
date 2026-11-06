@@ -2,16 +2,19 @@
 import {act} from 'react'
 import {createRoot} from 'react-dom/client'
 import {afterEach, beforeEach, expect, it, vi} from 'vitest'
-import {InvocationPanel, declareView, renderer} from 'fxtr-view'
+import {InvocationPanel, declarePage, declareView, page, renderer} from 'fxtr-view'
 import {dispatchRegistry} from 'fxtr-view-shell-util'
 import {buildLevel} from '../src/model/level'
 import {parseRel, type Params} from '../src/panes/address'
 import {TRACE, allPanels, sequence} from '../src/panes/columns'
+import {showLinkProblem} from '../src/lib/linkProblem'
 import {useColumns, type Centre, type ColumnsState} from '../src/panes/useColumns'
 import {linkTarget, panelBase} from '../src/lib/linkBase'
 import type {Catalog} from '../src/panes/resolve'
 import type {Level, StepDoc} from '../src/types'
 import {inProgress, overviewOf} from './fixtures'
+
+vi.mock('../src/lib/linkProblem', () => ({showLinkProblem: vi.fn()}))
 
 const built = buildLevel('job', overviewOf(inProgress()))
 const roll = built.steps.find((step) => step.name === 'roll')!
@@ -31,9 +34,10 @@ const levels: Record<string, Level> = {root: rootLevel, 'root/score[model:"a"]':
 const View = () => null
 const ROLLS = declareView(InvocationPanel, 'roll', 'test.Rolls')
 const DETAIL = declareView(InvocationPanel, 'roll', 'detail', {within: ROLLS, params: ['point']})
+const TRANSCRIPT = declarePage('test.transcript', {params: ['event']})
 const catalog: Catalog = {
   root: 'root',
-  registry: dispatchRegistry([renderer(ROLLS, View), renderer(DETAIL, View)]),
+  registry: dispatchRegistry([renderer(ROLLS, View), renderer(DETAIL, View), page(TRANSCRIPT, View)]),
   level: (pathname) => (levels[pathname] ? {status: 'ready', level: levels[pathname]} : {status: 'pending'}),
 }
 const rootCentre: Centre = {address: {view: 'trace', location: {root: 'step', steps: [], path: []}}, keys: {}}
@@ -59,6 +63,7 @@ beforeEach(() => {
 afterEach(async () => {
   await act(async () => root.unmount())
   vi.unstubAllGlobals()
+  vi.mocked(showLinkProblem).mockClear()
 })
 
 const link = (to: string, params: Params = {}) => ({rel: parseRel(to).rel, params})
@@ -81,6 +86,15 @@ it('navigates the browsing panel after the view on a plain click, remembering wh
   expect(panel!.back).toHaveLength(1)
   await act(async () => state.history(panel!.id, -1))
   expect(shown()).toEqual(['browses test.Rolls(/roll, seed=a)'])
+})
+
+it('opens a page from a panel with a location, at no location', async () => {
+  await mount()
+  await follow('(/roll)', {seed: 'a'})
+  const [step] = panels()
+  const pageLink = {rel: {view: 'test.transcript', location: {kind: 'absolute' as const, location: null}}, params: {event: '42.61'}}
+  await act(async () => state.follow(pageLink, step!.id))
+  expect(ordered()).toEqual(['browses test.Rolls(/roll, seed=a)', 'browses test.transcript(event="42.61")'])
 })
 
 it('opens a pinned panel on Alt, which a plain click then leaves alone', async () => {
@@ -398,8 +412,17 @@ it('shows a node\'s code, and the root workflow\'s, as the code version its leve
   await follow('code(/score/inner)', {model: 'a'})
   expect(resolution().text).toBe('code(/score/inner, model=a)')
   expect(resolution().target).toEqual({kind: 'code', name: inner.method, codeVersion: inner.codeVersion})
-  await follow('code(/roll.output)', {}, TRACE, {pin: true})
-  expect(state.stateOf(panels().at(-1)!.id).resolution).toMatchObject({target: null, structural: true})
+})
+
+it('opens nothing for a link naming nothing, and says why, leaving the panels as they were', async () => {
+  await mount()
+  await follow('(/roll)', {seed: 'a'})
+  for (const pin of [false, true]) {
+    await follow('code(/roll.output)', {}, TRACE, {pin})
+    expect(shown()).toEqual(['browses test.Rolls(/roll, seed=a)'])
+  }
+  expect(showLinkProblem).toHaveBeenCalledTimes(2)
+  expect(vi.mocked(showLinkProblem).mock.calls[0]![0]).toBe('code(/roll.output)')
 })
 
 it('keeps every panel as it is when the centre moves to another level, binding the level\'s keys from a link in the trace', async () => {
@@ -419,4 +442,55 @@ it('follows a relative link from a view in the centre, against the centre\'s add
   await follow('(.output)')
   expect(shown()).toEqual(['browses (/score.output, model=a)'])
   expect(panels()[0]!.rel.location.kind).toBe('absolute')
+})
+
+const selector = {message: 2}
+// A link to a judgment alone, its views opened at a selector.
+const selected = (value: Params = selector) => linkTarget('cid1', null, {selector: value})
+
+it('opens an entity alone at the params its link passes, and lights the link', async () => {
+  await mount({seed: 'a'})
+  await act(async () => state.follow(selected(), TRACE))
+  expect(shown()).toEqual(['browses (cid:cid1, selector={"message":2})'])
+  expect(state.linkState(selected(), TRACE)).toEqual({selected: true, open: true})
+  expect(state.linkState(selected({message: 3}), TRACE)).toEqual({selected: false, open: false})
+})
+
+it('binds no level keys on a link from the trace to an entity', async () => {
+  await mount({}, {...rootCentre, keys: {model: 'a'}})
+  await act(async () => state.follow(selected(), TRACE))
+  expect(panels()[0]!.own).toEqual({selector})
+})
+
+it('passes on none of an entity panel\'s own params, only what it inherits', async () => {
+  await mount({seed: 'a'})
+  await act(async () => state.follow(selected(), TRACE))
+  const first = panels()[0]!.id
+  await follow('(.verdict)', {}, first)
+  expect(ordered()).toEqual(['browses (cid:cid1, selector={"message":2})', 'browses (cid:cid1.verdict)'])
+  const env = state.stateOf(panels()[1]!.id).resolution.env
+  expect(env).toEqual({seed: 'a'})
+})
+
+it('keeps an entity panel\'s params across its views, and drops one on a clear, which back undoes', async () => {
+  await mount()
+  await act(async () => state.follow(selected(), TRACE))
+  const id = panels()[0]!.id
+  const location = {root: 'entity' as const, cid: 'cid1', path: []}
+  await act(async () => state.setAddress(id, {view: 'tree', location}))
+  expect(shown()).toEqual(['browses tree(cid:cid1, selector={"message":2})'])
+  await act(async () => state.setAddress(id, {view: null, location}))
+  await act(async () => state.setOwn(id, {}))
+  expect(shown()).toEqual(['browses (cid:cid1)'])
+  await act(async () => state.history(id, -1))
+  expect(shown()).toEqual(['browses (cid:cid1, selector={"message":2})'])
+})
+
+it('pins an entity panel at its own params alone', async () => {
+  await mount({seed: 'a'})
+  await act(async () => state.follow(selected(), TRACE))
+  const id = panels()[0]!.id
+  await act(async () => state.pin(id))
+  expect(panels()[0]!.own).toEqual({selector})
+  expect(shown()).toEqual(['pinned (cid:cid1, selector={"message":2})'])
 })

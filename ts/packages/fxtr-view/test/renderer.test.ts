@@ -1,5 +1,5 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
-import { EntityInlineLink, declareView, renderer, type Renderer } from "../src/index";
+import { EntityID, EntityInlineLink, EntityPanel, declareView, renderer, useLink, type EntityLinkProps, type ParamValue, type Renderer, type ViewProps } from "../src/index";
 import { declareViewSlot } from "../src/slots";
 
 const Card = declareViewSlot<{ readonly label: string }>("Card");
@@ -32,5 +32,36 @@ describe("declareView", () => {
   it("refuses a view within one of another subject", () => {
     const CHART = declareView(Card, "org.example.Run", "chart");
     expect(() => declareView(Card, "org.example.Other", "point", { within: CHART })).toThrow(/another subject/);
+  });
+});
+
+describe("params", () => {
+  const Run = declareViewSlot<{ readonly label: string }>("Run");
+  const BATCH = declareView(Run, "org.example.Step", "batch", { params: ["prompt"] });
+  const CONVERSATION = declareView(EntityPanel, "org.example.Transcript", "conversation", { params: ["selector"] });
+
+  it("binds every param of a view of another slot, and leaves an entity view's optional, each any JSON", () => {
+    expectTypeOf<ViewProps<typeof BATCH>["params"]>().toEqualTypeOf<{ readonly prompt: ParamValue }>();
+    expectTypeOf<ViewProps<typeof CONVERSATION>["params"]["selector"]>().toEqualTypeOf<ParamValue | undefined>();
+  });
+  it("makes a link to a view bind its required params, and to an entity view none", () => {
+    // Type-only: these calls are never run.
+    const check = () => {
+      useLink(BATCH, { prompt: 3 });
+      // @ts-expect-error the link leaves out a required param
+      useLink(BATCH, {});
+      useLink(CONVERSATION);
+      useLink(CONVERSATION, { selector: { message: 2 } });
+      useLink({ to: "/judge" });
+    };
+    void check;
+  });
+  it("lets an entity link carry params to the entity alone, not at a place", () => {
+    const id = new EntityID("cid1");
+    const alone: EntityLinkProps = { id, params: { selector: { message: 2 } } };
+    // @ts-expect-error a link at a place carries no params
+    const placed: EntityLinkProps = { id, at: { path: ["transcript"] }, params: { selector: 2 } };
+    void alone;
+    void placed;
   });
 });

@@ -77,7 +77,7 @@ import fxtr
 from fxtr.project import ts_packages
 from fxtr.project.config import ProjectError, ViewsConfig
 
-VIEW_API_VERSION = 3
+VIEW_API_VERSION = 4
 """The bundle contract's version this fxtr supports: ``fxtr-view``'s ``VIEW_API_VERSION``."""
 
 VIEW_BUNDLE_MANIFEST_FILENAME = "fxtr-view-bundle-manifest.json"
@@ -226,7 +226,9 @@ def _parse_manifest(dist: Path, raw: bytes) -> ViewBundleManifest:
     if api_version != VIEW_API_VERSION:
         raise ViewsError(
             f"{path} was built at view API version {api_version}; this fxtr supports"
-            f" {VIEW_API_VERSION}. Rebuild the renderer package against this fxtr's fxtr-view."
+            f" {VIEW_API_VERSION}. Rebuild the renderer package against this fxtr's fxtr-view;"
+            " outside the fxtr checkout, refresh its copy first: `uv run fxtr views vendor`,"
+            " `pnpm install` in the package, then `uv run fxtr views build`."
         )
     for name in (module, stylesheet):
         if name is not None and not (dist / name).is_file():

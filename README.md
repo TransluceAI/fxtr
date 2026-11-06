@@ -125,12 +125,14 @@ A new shipped skill is added to `skillNames` in `scripts/skills/bundle.mjs`.
 To update the plugins, complete the JavaScript setup above, then run
 `pnpm sync:plugin PATH/TO/claude-code-plugins PATH/TO/codex-plugins` against checkouts of those
 repositories (either one alone also works) and open a pull request in each with the result. The
-command prepares the skills once, copies them into each checkout's plugin, and bumps that plugin's
-patch version when content changes, including documentation alone. It tells the two kinds of
-checkout apart by their marketplace files. Unchanged content writes nothing, even when its source
-commit changed. Generated copies may normalize formatting; authored sources are never modified. To
-inspect a bundle directly, run `node scripts/skills/prepare.mjs . /tmp/fxtr-skills-preview` with a
-new output directory.
+command prepares the skills once. When any bundled content changes, including documentation alone,
+it copies all three skills from the same snapshot and bumps the plugin patch version once.
+It tells the two kinds of checkout apart by their marketplace files. Unchanged content writes
+nothing, even when its source commit changed. The tool normalizes formatting in generated
+copies and preserves the authored files. To inspect a bundle directly, run
+`node scripts/skills/prepare.mjs . /tmp/fxtr-skills-preview` with a new output directory.
+Use `pnpm sync:plugin --check` with the same checkout paths for a read-only
+comparison. It exits nonzero when a marketplace needs an update.
 
 Repository instructions for coding agents live in `AGENTS.md`, with `CLAUDE.md` linked to it.
 

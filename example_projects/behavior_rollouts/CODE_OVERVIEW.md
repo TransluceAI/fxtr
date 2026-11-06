@@ -14,7 +14,9 @@ behavior_rollouts/
 ├── launch_scripted.py, launch_openai.py  launchers using fxtr.project.running's shared execution
 │                           helpers; jobs persist in the project's own Postgres schema
 ├── src/behavior_rollouts/
-│   ├── scripted_rollout.py EchoAPI, the rollout step, and the mapped workflow
+│   ├── scripted_rollout.py EchoAPI, the rollout step, the step picking each conversation's
+│   │                       longest reply (`LongestReply`, with a `MessageSelector` into the
+│   │                       conversation), and the mapped workflow
 │   └── openai_rollout.py   question sequences, validation, the tagged metadata records,
 │                           provider rollout, the workflow, and result reporting
 ├── tests/                  validation and Postgres workflow tests with a fake model API
@@ -26,6 +28,8 @@ behavior_rollouts/
     │   │                   comparison invocations
     │   ├── views.ts        the step and workflow names, and the declaration of the conversation
     │   │                   panel a row among several conversations links to
+    │   ├── longest.tsx     the `LongestReply` entity view, linking to its conversation with its
+    │   │                   selector, which the shared conversation view marks
     │   ├── invocations.tsx, comparison.tsx  the conversation views (one in full; several as a
     │   │                   row each linking to that one alone) and the model/sequence selection
     │   │                   controls; the workflow's compare panel aligns two models' replies by

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "behaviors"
-version = "0.0.1a4"
+version = "0.0.1a5"
 description = "Types, context policies, and chat model rollouts for behavioral experiments"
 requires-python = ">=3.12.4"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "anyio>=4.14.0",
     "cattrs>=26.1.0",
-    "fxtr>=0.1.0a0,<0.2",
+    "fxtr>=0.1.0a0,<0.3",
     "pyyaml>=6",
 ]
 

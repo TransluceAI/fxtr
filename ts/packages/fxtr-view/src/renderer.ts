@@ -9,9 +9,15 @@
 // declarations, never their components, and a typo in a view's name or params is a type error. A
 // detail view (a chart's point) is declared `within` the view that links to it: its id is the
 // parent's id, `/`, and its own name, and only the parent links to it.
+//
+// A view's params are names; their values are any JSON (`ParamValue`), which the view narrows
+// itself, since they reach it through an address nothing validates. Whether a param must be bound
+// follows the slot: an entity view's are optional (it is opened from plain links too, which bind
+// none), every other view's are required (a host shows it only once they are all bound).
 
 import type { ComponentType } from "react";
-import type { LinkKeyValue } from "./link";
+import type { EntityPanelProps } from "./builtin_slots";
+import type { ParamValue } from "./link";
 import type { ViewSlot } from "./slots";
 
 /** The subject type of a renderer that fits every subject of its slot (the cbor-tree views of any
@@ -32,14 +38,25 @@ export interface ViewDecl<Props extends object, Params extends string = string> 
   readonly within: string | null;
 }
 
-/** The params a view declaring `Params` is handed: each of them, bound. */
-export type BoundParams<Params extends string> = { readonly [Name in Params]: LinkKeyValue };
+/** Whether a view of a slot taking `Props` reads its params as optional: an entity view's are,
+ *  since a host opens an entity from plain links that bind none. Told by the props, since a type
+ *  sees no slot's identity: `EntityPanelProps` is the only built-in slot's props it matches (the
+ *  invocation and page props have no `id`), and a slot declared with props extending it would
+ *  read its params as optional too. */
+export type ParamsOptional<Props extends object> = Props extends EntityPanelProps ? true : false;
+
+/** The params a view declaring `Params` is handed: each of them bound, or for `Optional`, each
+ *  bound or absent. */
+export type BoundParams<Params extends string, Optional extends boolean = false> = Optional extends true
+  ? { readonly [Name in Params]?: ParamValue }
+  : { readonly [Name in Params]: ParamValue };
 
 /** The props of a declared view's component: its slot's, and when it declares params, `params`
- *  binding each of them (a host shows the view only once they are all bound). */
+ *  binding them (`BoundParams`: every one, but an entity view's only those bound where it is
+ *  opened). */
 export type DeclaredViewProps<Props extends object, Params extends string> = [Params] extends [never]
   ? Props
-  : Props & { readonly params: BoundParams<Params> };
+  : Props & { readonly params: BoundParams<Params, ParamsOptional<Props>> };
 
 /** The props of the component of the declared view `View`: `ViewProps<typeof SCORE_FIT>`. */
 export type ViewProps<View extends AnyViewDecl> =
@@ -72,7 +89,7 @@ export function declareView<Props extends object, Params extends string = never>
 /** One renderer. `id` must be unique among the renderers of its slot and subject type, and a
  *  wildcard's among all of its slot's, since a host offers them side by side. `params` are the
  *  params it reads, which a host binds by name where it is shown and hands in the slot's `params`
- *  prop; `within`, the id of the view it is declared within (a host offers it only through links
+ *  prop (optional for an entity view, required for any other); `within`, the id of the view it is declared within (a host offers it only through links
  *  from that one). */
 export interface Renderer<Props extends object> {
   readonly slot: ViewSlot<Props>;

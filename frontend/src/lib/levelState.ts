@@ -2,6 +2,7 @@ import { createContext, useContext } from 'react'
 import type { KeyValue, Sort } from '../types'
 import type { Store } from './store'
 import type { Selected } from '../panes/useColumns'
+import type { Params } from '../panes/address'
 
 /**
  * How a node's panel shows it: its output (`output`: see `StepPanel`), through an `EntityPanel`
@@ -54,10 +55,12 @@ export interface CardTableState {
  * and each card's table state: a store, which a card reads its own entry of, so paging one card re-renders only it (`useCardTable`). Provided by
  * `JobView`; the card tables are reset on a level change.
  */
-type Slice = Readonly<Record<string, KeyValue>>
+/** The bindings a view's contents read and pick: the dims' keys, and in a panel its other params
+ *  too (any JSON), which only a dim's binding must be a key of (`lib/invocations.ts`'s `pick`). */
+type Slice = Params
 
 export interface LevelState {
-  slice: Readonly<Record<string, KeyValue>>
+  slice: Slice
   /** Set the slice, or update it from the current one (for a caller that picks after an await,
    *  so picks made meanwhile are kept). Every card's table changes height with it, so the trace
    *  holds one card still on screen while they settle: `anchor`, the id of the card the pick was

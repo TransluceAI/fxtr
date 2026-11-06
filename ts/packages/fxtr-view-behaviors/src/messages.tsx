@@ -1,4 +1,5 @@
 import styles from "./behaviors.module.css";
+import { useEffect, useRef } from "react";
 import { isDataMap, type DataMap } from "fxtr-view";
 import { MODEL_RESPONSE, type ContentData, type MessageData, type MetadataEntries, type TurnData } from "./types";
 
@@ -54,11 +55,24 @@ function ContentBlock({ block }: { block: ContentData }) {
   }
 }
 
-export function Messages({ messages }: { messages: readonly MessageData[] }) {
+/** `messages`, each in its role's colours. `first` is the index of the first of them among the
+ *  messages of the whole conversation, and `selected` the index there of the one a selector picks
+ *  (`MessageSelector`), which is marked, and scrolled into view when it is picked. */
+export function Messages({ messages, first = 0, selected = null }: {
+  messages: readonly MessageData[];
+  first?: number;
+  selected?: number | null;
+}) {
+  const marked = useRef<HTMLElement>(null);
+  const local = selected === null ? -1 : selected - first;
+  useEffect(() => {
+    marked.current?.scrollIntoView?.({ block: "center" });
+  }, [local]);
   return (
     <div className={styles["messages"]}>
       {messages.map((message, index) => (
-        <article className={styles["message"]} data-role={message.role} key={index}>
+        <article className={styles["message"]} data-role={message.role} key={index}
+          {...(index === local ? { "data-selected": "", ref: marked } : {})}>
           <header className={styles["role"]}>
             {message.role}
             {message.role === "tool" && (

@@ -29,6 +29,14 @@
  * panel before it shows that one, so it closes when that one switches away; only that view links to
  * it (`views/viewLink.ts`).
  *
+ * A link whose address names nothing (no such view, page, or step) opens nothing, and a toast says
+ * why (`lib/linkProblem.tsx`).
+ *
+ * **A panel showing an entity by its cid** uses every param it binds itself (what the link opening
+ * it passed: a selector into a transcript, for its views), and passes none of them on: they are
+ * about that one entity, so the panels following it inherit only what it inherited. A link from a
+ * root to an entity binds no level keys, which an entity does not use.
+ *
  * A pick inside a browsing panel that leaves out a binding it inherits pins it (`setBindings`).
  * After every change, the first browsing panel whose address names nothing any more (the panel
  * before it changed to something it cannot follow) closes, with its followers (`prune`); a pinned
@@ -38,8 +46,12 @@
  */
 
 import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { showLinkProblem } from '../lib/linkProblem'
 import { Store, useStableCallback } from '../lib/store'
-import { AddressError, addressTitle, applyRelLocation, formatRel, relLocationFor, sameLocation, type Address, type Location, type Params, type Rel } from './address'
+import {
+  AddressError, addressTitle, applyRelLocation, formatRel, isKeyValue, relLocationFor, sameLocation, sameValue, type Address,
+  type Location, type Params, type Rel,
+} from './address'
 import {
   RAIL,
   TRACE,
@@ -65,12 +77,13 @@ import {
   type Stored,
 } from './columns'
 import type { LinkTarget } from './drag'
+import type { KeyValue } from '../types'
 import { autoPlacement, type Decision, type Geometry } from './placement'
 import { isPage, parentViewOf, resolve, type Catalog, type Resolution } from './resolve'
 
 
 /** Dim values the panels following a view show, on dims it does not bind. */
-export type Selected = Readonly<Record<string, readonly Params[string][]>>
+export type Selected = Readonly<Record<string, readonly KeyValue[]>>
 
 /** What a panel (or a root) resolves to now. */
 export interface PanelState {
@@ -188,11 +201,18 @@ export function sameKind(from: Address | null, to: Address | null): boolean {
   return sameLocation(from.location, to.location)
 }
 
-/** What `stored` resolves to after `before`. */
+/** What `stored` resolves to after `before`. A panel showing an entity by its cid passes on none of
+ *  its own params. */
 function resolveStored(stored: Stored, before: Before, catalog: Catalog): PanelState {
-  const env = before === null ? stored.own : { ...before.state.resolution.env, ...stored.own }
+  // A cid panel's own params are its link's params for that entity's views (a selector): about
+  // that one entity, so a panel following it, which shows something else, must not get them.
+  const fixed = before !== null && before.state.address?.location?.root === 'entity'
+  const inheritable = (name: string) => !fixed || before.state.sources[name] !== 'own'
+  const env = before === null ? stored.own
+    : { ...Object.fromEntries(Object.entries(before.state.resolution.env).filter(([name]) => inheritable(name))), ...stored.own }
   const inherited = before === null ? {}
-    : Object.fromEntries(Object.entries(before.state.sources).map(([name, source]) => [name, source === 'own' ? before.id : source]))
+    : Object.fromEntries(Object.entries(before.state.sources).flatMap(([name, source]) =>
+      (inheritable(name) ? [[name, source === 'own' ? before.id : source]] : [])))
   const sources = { ...inherited, ...Object.fromEntries(Object.keys(stored.own).map((name) => [name, 'own'])) }
   let location: Location | null
   try {
@@ -201,7 +221,7 @@ function resolveStored(stored: Stored, before: Before, catalog: Catalog): PanelS
     if (!(error instanceof AddressError)) throw error
     return unresolved(stored, env, sources, error.message)
   }
-  const resolution = resolve({ view: stored.rel.view, location }, env, catalog)
+  const resolution = resolve({ view: stored.rel.view, location }, env, catalog, Object.keys(stored.own))
   const parent = before === null ? null : parentViewOf(catalog.registry, resolution.address.view)
   if (parent !== null && before!.state.address?.view !== parent)
     return unresolved(stored, env, sources, `this is a view of ${parent}, and the panel before it does not show that`)
@@ -221,16 +241,18 @@ function unresolved(stored: Stored, env: Params, sources: Record<string, string>
 }
 
 /** What a panel resolving to `state` stores once pinned: its address whole, and every binding it
- *  has. One whose address names nothing keeps the `rel` it stored. */
+ *  has (one showing an entity by its cid, which uses only its own, those alone). One whose address
+ *  names nothing keeps the `rel` it stored. */
 function pinnedOf(stored: Stored, state: PanelState): Stored {
   const rel: Rel = state.address === null ? stored.rel : { view: state.address.view, location: { kind: 'absolute', location: state.address.location } }
-  return { rel, own: state.resolution.env }
+  return { rel, own: state.address?.location?.root === 'entity' ? state.resolution.params : state.resolution.env }
 }
 
 /** The params of `params` that `env` does not already bind to the same value. */
 function added(params: Params, env: Params): Params {
-  return Object.fromEntries(Object.entries(params).filter(([name, value]) => env[name] !== value))
+  return Object.fromEntries(Object.entries(params).filter(([name, value]) => !sameValue(env[name], value)))
 }
+
 
 /** `address` relative to `parent` (the address of the panel before it): its view, and its location
  *  as near as it can be put (`relLocationFor`). */
@@ -263,7 +285,6 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
       const stored: Stored = { rel: target.rel, own: added(target.params, origin.resolution.env) }
       return { stored, state: resolveStored(stored, from, catalog) }
     }
-    const own = added({ ...centre.keys, ...target.params }, origin.resolution.env)
     let rel = target.rel
     try {
       rel = { view: rel.view, location: { kind: 'absolute', location: applyRelLocation(rel.location, origin.address?.location ?? null) } }
@@ -271,6 +292,10 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
       // Stored as it is, it resolves to the same problem, which the panel shows.
       if (!(error instanceof AddressError)) throw error
     }
+    // A cid address uses every param the panel binds itself (`resolve`), so the level's keys,
+    // which an entity does not use, would show as its params: a link to an entity binds none.
+    const ofEntity = rel.location.kind === 'absolute' && rel.location.location?.root === 'entity'
+    const own = added({ ...(ofEntity ? {} : centre.keys), ...target.params }, origin.resolution.env)
     const stored: Stored = { rel, own }
     return { stored, state: resolveStored(stored, from, catalog) }
   }
@@ -345,6 +370,13 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
 
   const follow = useStableCallback((target: LinkTarget, originId: string, options: FollowOptions = {}) => {
     highlight.set(null)
+    // A link naming nothing opens nothing (it would only be closed again), and says why.
+    const origin = isRoot(originId) || findPanel(columns, originId) ? originId : TRACE
+    const { resolution } = targetOf(resolveColumns(columns, slice, catalog, centre), target, origin).state
+    if (resolution.structural) {
+      showLinkProblem(resolution.text, resolution.problem!)
+      return
+    }
     const seq = nextSeq()
     const measured = measure()
     setColumns((current) => {
@@ -414,7 +446,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
         return pinPanel(current, panelId, { ...pinnedOf(panel, state), own: bindings })
       const own: Record<string, Params[string]> = { ...panel.own }
       for (const name of new Set([...Object.keys(env), ...Object.keys(bindings)])) {
-        if (bindings[name] === env[name]) continue
+        if (sameValue(bindings[name], env[name])) continue
         if (Object.hasOwn(bindings, name)) own[name] = bindings[name]!
         else delete own[name]
       }
@@ -455,10 +487,12 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
     }
     const selectedBelowOf = (viewId: string): Selected => {
       const env = stateOf(viewId).resolution.env
-      const selected: Record<string, Params[string][]> = {}
+      const selected: Record<string, KeyValue[]> = {}
       for (const panel of followersOf(ordered, viewId)) {
         for (const [dim, value] of Object.entries(panel.own)) {
-          if (Object.hasOwn(env, dim)) continue
+          // Only dims' values are picks a view shows among its own; a panel's other params (a
+          // selector, any JSON) are not.
+          if (Object.hasOwn(env, dim) || !isKeyValue(value)) continue
           const values = (selected[dim] ??= [])
           if (!values.includes(value)) values.push(value)
         }

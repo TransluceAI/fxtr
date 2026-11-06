@@ -97,7 +97,7 @@ export async function loadViews(version: string | null = null, importer: ImportB
 async function prepareBundle(response: Response, base: URL, version: string, importer: ImportBundle): Promise<ViewsLoad> {
   const manifest = (await response.json()) as ViewBundleManifest
   if (manifest.apiVersion !== VIEW_API_VERSION) {
-    throw new Error(`the project's view bundle is at view API version ${manifest.apiVersion}; this viewer supports ${VIEW_API_VERSION}`)
+    throw new Error(`the project's view bundle is at view API version ${manifest.apiVersion}; this viewer supports ${VIEW_API_VERSION}. Re-vendor the fxtr packages (\`fxtr views vendor\`, outside the fxtr checkout) and rebuild the renderers (\`fxtr views build\`)`)
   }
   const versioned = (name: string) => {
     const url = new URL(name, base)

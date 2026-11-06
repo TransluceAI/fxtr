@@ -13,7 +13,9 @@
 // renderer, the entity id, the spawns) remounts the dispatched subtree, which is also what clears a
 // caught error. So does a new registry: a host may replace its registry while it runs (the
 // frontend does when a project's renderers are rebuilt), and a renderer that threw gets another
-// chance with the new code.
+// chance with the new code. A slot's `params` prop reaches a renderer narrowed to the params it
+// declares, so a host can hand every renderer of an entity the same params (the entity's views'
+// params are optional, and a view switcher keeps them across its views).
 import { Component, Suspense, createContext, useContext, type ErrorInfo, type ReactNode } from "react";
 import {
   idKey,
@@ -23,6 +25,7 @@ import {
   type EntityViewProps,
   type InvocationViewProps,
   type Renderer,
+  type ViewParams,
   type ViewSlot,
 } from "fxtr-view";
 import { DispatchFault } from "./errors";
@@ -144,10 +147,19 @@ export function RenderSlot<Props extends object>(props: RenderSlotProps<Props>) 
       renderError={shown.error}
     >
       <Suspense fallback={shown.loading}>
-        {found === undefined ? shown.noRenderer(subjectType) : <found.Component {...componentProps} />}
+        {found === undefined ? shown.noRenderer(subjectType) : <found.Component {...narrowParams(componentProps, found)} />}
       </Suspense>
     </DispatchErrorBoundary>
   );
+}
+
+/** `props` with its `params`, when it has them, narrowed to those `found` declares. */
+function narrowParams<Props extends object>(props: Props, found: Renderer<Props>): Props {
+  const params = (props as { params?: ViewParams }).params;
+  if (params === undefined) return props;
+  const declared = found.params ?? [];
+  const narrowed = Object.fromEntries(declared.flatMap((name) => (Object.hasOwn(params, name) ? [[name, params[name]!]] : [])));
+  return { ...props, params: narrowed };
 }
 
 /** Props of `RenderEntity`: the entity slot, optionally the renderer id and the host's fallbacks,

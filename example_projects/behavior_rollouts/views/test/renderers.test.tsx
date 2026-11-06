@@ -1,16 +1,18 @@
 import { fireEvent, render, screen, within } from "@testing-library/react";
 import { atom } from "jotai";
 import {
-  ARRAY_TYPE, EntityID, InvocationPanel,
-  invocationRefKey, type ArrayData, type EntityData, type InvocationRecord, type JsonValue,
+  ARRAY_TYPE, EntityID, EntityPanel, InvocationPanel, LinkBase, ViewShellProvider,
+  invocationRefKey, type ArrayData, type EntityData, type EntityLinkImplProps, type InvocationRecord, type JsonValue,
+  type ViewShell,
 } from "fxtr-view";
-import { RenderInvocation, dispatchRegistry } from "fxtr-view-shell-util";
+import { RegistryProvider, RenderEntity, RenderInvocation, dispatchRegistry } from "fxtr-view-shell-util";
 import { TableShellProvider } from "fxtr-view-shell-util/testing";
 import {
   CHAT_ROLLOUT, CONTEXT_TURN, END_ROLLOUT, MODEL_TURN, SET_SYSTEM_MESSAGE,
   type ChatRolloutData, type MessageData, type TurnData,
 } from "fxtr-view-behaviors";
 import { rolloutRenderers, OPENAI_CONVERSATION, OPENAI_EXPERIMENT } from "../src";
+import { LONGEST_REPLY } from "../src/longest";
 
 const registry = dispatchRegistry(rolloutRenderers);
 const tag = (name: string) => `org.transluce.behaviors.${name}.v1`;
@@ -274,4 +276,32 @@ it("recovers stale selections and handles sequences without a second model", () 
   expect((screen.getByLabelText("Right model") as HTMLSelectElement).value).toBe("large");
   fireEvent.change(screen.getByLabelText("Sequence"), { target: { value: "single" } });
   expect(screen.queryByRole("region", { name: "Comparison turn 1" })).toBeNull();
+});
+
+it("links a longest reply to its conversation with a selector for it", () => {
+  const links: EntityLinkImplProps[] = [];
+  const reply = {
+    $type: LONGEST_REPLY, rollout: new EntityID("rollout"), selector: { message: 3 }, text: "Echo: Thank you.",
+  };
+  const entities = new Map<string, EntityData>([["reply", reply as unknown as EntityData], ["rollout", rollout]]);
+  const shell: ViewShell = {
+    useEntity: (id) => ({ status: "loaded", value: entities.get(id.cid)! }),
+    EntityLinkImpl: (props) => {
+      links.push(props);
+      return <span>link</span>;
+    },
+  };
+  render(
+    <ViewShellProvider shell={shell}>
+      <RegistryProvider registry={registry}>
+        <LinkBase base="the panel">
+          <RenderEntity slot={EntityPanel} id={new EntityID("reply")} storage={atom<JsonValue>(null)} />
+        </LinkBase>
+      </RegistryProvider>
+    </ViewShellProvider>,
+  );
+  expect(screen.getByText("Echo: Thank you.")).toBeTruthy();
+  expect(links.at(-1)).toMatchObject({
+    id: { cid: "rollout" }, place: null, params: { selector: { message: 3 } },
+  });
 });

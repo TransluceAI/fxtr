@@ -36,7 +36,10 @@ interface Props {
  * - The **params** the address uses: the panel's own as chips after the path (all of them on a
  *   line of their own under it when they do not fit beside it), and the ones from the level's
  *   slice only counted (`slice n`), since the slice control shows them. The ones it inherits from
- *   the panel before it are left out: that panel's head shows them.
+ *   the panel before it are left out: that panel's head shows them. A chip shows a short value (a
+ *   string or a number that fits `VALUE_CHARS`), and otherwise its param's name alone (a
+ *   selector), the value in its tooltip. On a panel showing an entity by its cid, whose views'
+ *   params are optional, each has a × clearing it.
  * - A pinned panel's head has a faint violet wash; a browsing panel's is the panel's own light
  *   grey. The pin button, first of the controls, pins the panel where it is. It shows on a pinned
  *   panel (filled violet, and no longer a button), and on a browsing one only while the pointer is
@@ -70,7 +73,7 @@ export function PanelHead({ panel, columns, onView }: Props) {
             <SliceCount state={state} />
           </span>
         </AddressCard>
-        <OwnParams state={state} />
+        <OwnParams panel={panel} columns={columns} state={state} />
       </span>
       <span className={styles.controls}>
         <button className={cx('icon-button', styles.pin, pinned && styles.isPinned)} aria-label="Pin" aria-pressed={pinned}
@@ -111,7 +114,8 @@ function onHeadItself(event: React.MouseEvent): boolean {
 
 /** How big the icon before a path's part is, in px. */
 const PART_ICON_SIZE = 12
-/** The longest a param's value is drawn in a chip, in characters; a longer one loses its middle. */
+/** The longest a param's value is drawn in a chip, in characters; a longer one (or a list, or an
+ *  object) is drawn as its name alone. */
 const VALUE_CHARS = 28
 
 /**
@@ -201,40 +205,69 @@ function SliceCount({ state }: { state: PanelState }) {
 
 /** The panel's own params that its address uses, one chip each: beside the path when they all fit,
  *  else on a line of their own under it. */
-function OwnParams({ state }: { state: PanelState }) {
+function OwnParams({ panel, columns, state }: { panel: PanelInstance; columns: ColumnsState; state: PanelState }) {
   const { own } = usedBySource(state)
   if (own.length === 0) return null
+  const ofEntity = showsEntity(state)
   return (
     <span className={styles.own}>
-      {own.map((name) => <ParamChip key={name} name={name} value={state.resolution.params[name]!} className={styles.isOwn} title={`${name}: this panel's own`} />)}
+      {own.map((name) => (
+        <ParamChip key={name} name={name} value={state.resolution.params[name]!} className={styles.isOwn} title={`${name}: this panel's own`}>
+          {ofEntity && <DropParam panel={panel} columns={columns} name={name} />}
+        </ParamChip>
+      ))}
     </span>
   )
 }
 
-function ParamChip({ name, value, className, title, onMouseEnter, onMouseLeave, children }: {
+/** Whether a panel shows an entity by its cid, whose params are its views' own (optional). */
+function showsEntity(state: PanelState): boolean {
+  return state.address?.location?.root === 'entity'
+}
+
+/** The × dropping one of a panel's own params: a browsing panel inherits it again (one showing an
+ *  entity by its cid inherits none, so it is cleared), a pinned one leaves it unbound. */
+function DropParam({ panel, columns, name }: { panel: PanelInstance; columns: ColumnsState; name: string }) {
+  return (
+    <button className={styles.drop} aria-label={`Drop ${name}`}
+      title={panel.pinned || showsEntity(columns.stateOf(panel.id))
+        ? 'drop it: leave this param unbound' : 'drop it: inherit this param again'}
+      onClick={(event) => {
+        event.stopPropagation()
+        const { [name]: _dropped, ...rest } = panel.own
+        columns.setOwn(panel.id, rest)
+      }}>
+      <X size={9} />
+    </button>
+  )
+}
+
+/** Whether a param's value is drawn in its chip: a string or a number that fits `VALUE_CHARS`. */
+function isShort(value: Params[string]): boolean {
+  return (typeof value === 'string' || typeof value === 'number') && formatValue(value).length <= VALUE_CHARS
+}
+
+/** A param's chip: its name, then its value when short (`isShort`), or always with `full` (the
+ *  address card, where a long one, a selector, wraps). */
+function ParamChip({ name, value, className, title, full = false, onMouseEnter, onMouseLeave, children }: {
   name: string
   value: Params[string]
   className?: string | false
   title: string
+  full?: boolean
   onMouseEnter?: () => void
   onMouseLeave?: () => void
   children?: React.ReactNode
 }) {
   const text = formatValue(value)
   return (
-    <span className={cx(styles.chip, className)} title={`${title}\n${name}=${text}`} onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
+    <span className={cx(styles.chip, full && styles.isFull, className)} title={`${title}\n${name}=${text}`}
+      onMouseEnter={onMouseEnter} onMouseLeave={onMouseLeave}>
       <span className={styles.chipName}>{name}</span>
-      {elide(text, VALUE_CHARS)}
+      {(full || isShort(value)) && text}
       {children}
     </span>
   )
-}
-
-/** `text`, its middle left out when longer than `chars`: the end usually tells values apart. */
-function elide(text: string, chars: number): string {
-  if (text.length <= chars) return text
-  const tail = Math.floor((chars - 1) / 3)
-  return `${text.slice(0, chars - 1 - tail)}…${text.slice(-tail)}`
 }
 
 /** Outline a panel (null: nothing) while something naming it is hovered. */
@@ -255,7 +288,8 @@ const CARD_CLOSE_DELAY = 150
  *   invocation, an entity, a custom view), when its path has one;
  * - **path**: its address as stored (a browsing panel's relative to the panel before it), and its
  *   own params (each one dropped with its ×: a browsing panel inherits it again, a pinned one
- *   leaves it unbound);
+ *   leaves it unbound). Every param here shows its value in full, a long one (a selector)
+ *   included, which the head leaves out;
  * - **inherits** and **slice**: every binding from the panel before it (hovering outlines the
  *   panel that binds it) or the level's slice, dim when its address does not use it but passes it
  *   on to the panels following it.
@@ -308,16 +342,10 @@ function AddressRows({ panel, columns, state }: { panel: PanelInstance; columns:
         <span className={styles.rowValue}>
           <code className={styles.code}>{formatRel(panel.rel)}</code>
           {own.map((name) => (
-            <ParamChip key={name} name={name} value={panel.own[name]!} className={cx(styles.isOwn, !used.has(name) && styles.isPassedOn)}
+            <ParamChip key={name} name={name} value={panel.own[name]!} full
+              className={cx(styles.isOwn, !used.has(name) && styles.isPassedOn)}
               title={`${name}: this panel's own${passedOn(name)}`}>
-              <button className={styles.drop} aria-label={`Drop ${name}`}
-                title={panel.pinned ? 'drop it: leave this param unbound' : 'drop it: inherit this param again'}
-                onClick={() => {
-                  const { [name]: _dropped, ...rest } = panel.own
-                  columns.setOwn(panel.id, rest)
-                }}>
-                <X size={9} />
-              </button>
+              <DropParam panel={panel} columns={columns} name={name} />
             </ParamChip>
           ))}
         </span>
@@ -327,7 +355,7 @@ function AddressRows({ panel, columns, state }: { panel: PanelInstance; columns:
           <span className={styles.rowLabel}>inherits</span>
           <span className={styles.rowValue}>
             {inherited.map((name) => (
-              <ParamChip key={name} name={name} value={env[name]!} className={cx(styles.isInherited, !used.has(name) && styles.isPassedOn)}
+              <ParamChip key={name} name={name} value={env[name]!} full className={cx(styles.isInherited, !used.has(name) && styles.isPassedOn)}
                 title={`${name}: inherited from ${columns.nameOf(sources[name]!)}${passedOn(name)}`}
                 onMouseEnter={() => outline(columns, sources[name]!)} onMouseLeave={() => outline(columns, null)} />
             ))}
@@ -339,7 +367,7 @@ function AddressRows({ panel, columns, state }: { panel: PanelInstance; columns:
           <span className={styles.rowLabel}>slice</span>
           <span className={styles.rowValue}>
             {slice.map((name) => (
-              <ParamChip key={name} name={name} value={env[name]!} className={cx(styles.isSlice, !used.has(name) && styles.isPassedOn)}
+              <ParamChip key={name} name={name} value={env[name]!} full className={cx(styles.isSlice, !used.has(name) && styles.isPassedOn)}
                 title={`${name}: from the level's slice${passedOn(name)}`} />
             ))}
           </span>

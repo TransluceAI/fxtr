@@ -58,10 +58,22 @@ test('first sync, no writes for provenance alone, and a version bump for documen
   write(prepared, 'fxtr/provenance.json', '{"revision":"later"}\n');
   assert.equal(syncPlugin(marketplace, prepared), null);
   assert.deepEqual(snapshot(marketplace), before);
+  write(prepared, 'fxtr/assets/provenance.json', '{}\n');
+  assert.equal(syncPlugin(marketplace, prepared, {checkOnly: true}), '0.1.1');
+  assert.deepEqual(snapshot(marketplace), before);
 
   write(checkout, 'docs/fxtr/unlisted.mdx', '# Changed\n');
   const changed = prepareSkills(checkout, path.join(root, 'changed'));
+  for (const name of ['fxtr', 'behaviors', 'first-experiment']) {
+    const file = `${name}/provenance.json`;
+    write(changed, file, JSON.stringify({...readJson(path.join(changed, file)), revision: 'a'.repeat(40)}));
+  }
+  assert.equal(syncPlugin(marketplace, changed, {checkOnly: true}), '0.1.1');
+  assert.deepEqual(snapshot(marketplace), before);
   assert.equal(syncPlugin(marketplace, changed), '0.1.1');
+  for (const name of ['fxtr', 'behaviors', 'first-experiment']) {
+    assert.equal(readJson(path.join(plugin, 'skills', name, 'provenance.json')).revision, 'a'.repeat(40));
+  }
   assert.equal(readFileSync(path.join(plugin, 'skills/fxtr/references/unlisted.mdx'), 'utf8'), '# Changed\n');
   assert.equal(readJson(manifest).version, '0.1.1');
   assert.equal(readJson(path.join(marketplace, '.claude-plugin/marketplace.json')).plugins[1].version, '0.1.1');
@@ -147,6 +159,15 @@ test('sync CLI prepares once and syncs every marketplace given', t => {
   });
   assert.match(output, /Claude Code: synced the skills into the fxtr plugin at version 0.1.0/);
   assert.match(output, /Codex: synced the skills into the fxtr plugin at version 0.1.0/);
+  const check = () => spawnSync(process.execPath, [path.join(tool, 'sync.mjs'), '--check', marketplace, codex],
+    {cwd: root, env: {...process.env, PATH: ''}, encoding: 'utf8'});
+  assert.equal(check().status, 0);
+  write(codex, 'plugins/fxtr/skills/fxtr/SKILL.md', 'Draft with different content\n');
+  const stale = snapshot(codex);
+  const mismatch = check();
+  assert.equal(mismatch.status, 1);
+  assert.match(mismatch.stderr, /Codex: .*needs a content update/);
+  assert.deepEqual(snapshot(codex), stale);
   // A checkout of neither kind is refused before any marketplace is written.
   const before = snapshot(codex);
   const refused = spawnSync(process.execPath, [path.join(tool, 'sync.mjs'), codex, path.join(root, 'checkout')], {encoding: 'utf8'});

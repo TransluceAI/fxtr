@@ -20,10 +20,13 @@
  * view of no location is a page (`PagePanel`) or the experiment.
  *
  * The params an address uses: the keys of the workflows on its way, its node's row dims, and the
- * params its view declares. A view whose declared params are not all bound, a workflow key left
- * unbound, or a level still loading is a **problem** of the params (or of time), which a panel waits
- * out or a link can fix; an address naming nothing is a **structural** problem, and a browsing panel
- * at one closes (`useColumns`).
+ * params its view declares. An entity shown by its cid is shown through a view only its data
+ * decides (the default of its type, or one a view switcher picks among its type's), so its address
+ * uses every param the panel binds itself (`own`: what the link opening it passed, a selector),
+ * none of them required, and the view shown gets those it declares. A view whose declared params are not all bound, a workflow key left
+ * unbound (or bound to a value no key can be), or a level still loading is a **problem** of the
+ * params (or of time), which a panel waits out or a link can fix; an address naming nothing is a
+ * **structural** problem, and a browsing panel at one closes (`useColumns`).
  */
 
 import { EntityPanel, InvocationPanel, PagePanel, type AnyRenderer } from 'fxtr-view'
@@ -31,7 +34,7 @@ import { renderersFor, type DispatchRegistry } from 'fxtr-view-shell-util'
 import type { KeyValue, Level, SchemaJson, StepDoc } from '../types'
 import { schemaAt } from '../model/schema'
 import { isProjectRenderer } from '../views/registry'
-import { VIEWS, formatAddress, type Address, type Location, type Params } from './address'
+import { VIEWS, formatAddress, isKeyValue, type Address, type Location, type Params } from './address'
 
 /** A level as the catalog has it so far. */
 export type LevelLookup =
@@ -160,9 +163,9 @@ function walk(steps: readonly string[], env: Params, catalog: Catalog): { level:
     const dims = [...node.mapOver, ...node.replicaDims]
     keys.push(...dims)
     try {
-      const unbound = dims.filter((dim) => !Object.hasOwn(env, dim))
+      const unbound = dims.filter((dim) => !isKeyValue(env[dim]))
       if (unbound.length > 0) throw new Unresolved(`pick ${unbound.join(', ')} to look inside ${name}`, false)
-      pathname = childPathname(pathname, name, dims.map((dim) => [dim, env[dim]!] as const))
+      pathname = childPathname(pathname, name, dims.map((dim) => [dim, env[dim] as KeyValue] as const))
       level = lookup(catalog, pathname, `the run of ${name} at ${dims.map((dim) => `${dim}=${JSON.stringify(env[dim])}`).join(', ')}`)
     } catch (error) {
       if (error instanceof Unresolved) error.takes = keys
@@ -179,7 +182,9 @@ function lookup(catalog: Catalog, pathname: string, what: string): Level {
   return found.level
 }
 
-export function resolve(address: Address, env: Params, catalog: Catalog): Resolution {
+/** `address` resolved against `env`, every binding the panel has, of which `own` are those it binds
+ *  itself. */
+export function resolve(address: Address, env: Params, catalog: Catalog, own: readonly string[] = []): Resolution {
   let resolved = address
   let target: Target | null = null
   let takes: readonly string[] = []
@@ -201,6 +206,7 @@ export function resolve(address: Address, env: Params, catalog: Catalog): Resolu
       const shown = valueViewId(view, catalog.registry)
       if (shown !== null && shown !== VIEWS.tree && location.path.length > 0) throw new Unresolved(RENDERER_AT_PATH, false)
       target = { kind: 'entity', cid: location.cid, path: location.path, view: shown }
+      takes = own
     } else if (view === VIEWS.code) {
       const code = resolveCode(location, env, catalog)
       takes = code.takes
@@ -224,8 +230,10 @@ export function resolve(address: Address, env: Params, catalog: Catalog): Resolu
   }
   const params = pick(env, takes)
   return {
-    address: resolved, params, text: formatAddress(resolved, params), env, viewParams: pick(env, declared), takes, target,
-    problem, structural, loading,
+    address: resolved, params, text: formatAddress(resolved, params), env,
+    // An entity's view is known only once its data loads, so it gets every param the address uses
+    // (its own), and dispatch narrows them to the ones the view shown declares.
+    viewParams: target?.kind === 'entity' ? params : pick(env, declared), takes, target, problem, structural, loading,
   }
 }
 

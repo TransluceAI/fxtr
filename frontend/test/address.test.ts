@@ -30,6 +30,21 @@ describe('addresses', () => {
     expect(parseAddress('(/a, n=3, s="3")').params).toEqual({ n: 3, s: '3' })
   })
 
+  it('writes a JSON value compactly with its keys sorted, and reads one back', () => {
+    const { address } = parseAddress('behaviors.conversation(cid:bafyabc)')
+    const selector = { message: 3, span: [0, 12], note: 'a "b"', at: { z: null, a: true } }
+    const text = formatAddress(address, { selector })
+    expect(text).toBe('behaviors.conversation(cid:bafyabc, selector={"at":{"a":true,"z":null},"message":3,"note":"a \\"b\\"","span":[0,12]})')
+    expect(parseAddress(text).params).toEqual({ selector })
+    expect(parseAddress('(/a, s={"b": "}", "a": [1, {"c": "]"}]})').params).toEqual({ s: { b: '}', a: [1, { c: ']' }] } })
+  })
+
+  it('reads bare true, false and null as those, and quotes strings spelled so', () => {
+    expect(parseAddress('(/a, t=true, f=false, n=null, s="true")').params).toEqual({ t: true, f: false, n: null, s: 'true' })
+    const { address } = parseAddress('(/a)')
+    expect(formatAddress(address, { b: true, s: 'null' })).toBe('(/a, b=true, s="null")')
+  })
+
   it('reads the parts of a location', () => {
     expect(parseAddress('tree(/a/b.output.x[2])').address).toEqual({
       view: 'tree', location: { root: 'step', steps: ['a', 'b'], path: ['output', 'x', '2'] },
@@ -42,6 +57,8 @@ describe('addresses', () => {
     expect(() => parseAddress('(/a.)')).toThrow(AddressError)
     expect(() => parseAddress('(/a, b)')).toThrow(AddressError)
     expect(() => parseAddress('(/a) x')).toThrow(AddressError)
+    expect(() => parseAddress('(/a, s={"b":1)')).toThrow(AddressError)
+    expect(() => parseAddress('(/a, s={b:1})')).toThrow(AddressError)
   })
 })
 

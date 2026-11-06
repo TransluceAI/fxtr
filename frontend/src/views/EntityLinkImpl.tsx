@@ -10,7 +10,7 @@
 
 import { useMemo, useState } from 'react'
 import { CidText, EntityHoverPreview, type EntityLinkImplProps } from 'fxtr-view'
-import { RenderEntity } from 'fxtr-view-shell-util'
+import { RenderEntity, useRegistry } from 'fxtr-view-shell-util'
 import { dragLink, useEntityOpener } from '../lib/openEntity'
 import { linkTarget } from '../lib/linkBase'
 import type { LinkTarget } from '../panes/drag'
@@ -21,15 +21,17 @@ import { CHIP_ATTRIBUTE, CHIP_SELECTED } from '../lib/tableKeys'
 import styles from './EntityLinkImpl.module.css'
 import { EntityLabel } from './EntityLabel'
 
-export function EntityLinkImpl({ id, place, to }: EntityLinkImplProps) {
+export function EntityLinkImpl({ id, place, to, params }: EntityLinkImplProps) {
   const opener = useEntityOpener()
   const { follow, hover, linkState } = opener
+  const registry = useRegistry()
   const [previewOpen, setPreviewOpen] = useState(false)
   // What the view named opens in place of the entity's own place, where it can be followed from
   // here (a relative location needs a view with an address).
-  const named = useMemo(() => (to === undefined ? null : specTarget(to.spec, to.params, opener)),
-    [to?.spec.view, to?.spec.within, to?.spec.to, JSON.stringify(to?.params), opener])
-  const target: LinkTarget = named ?? linkTarget(id.cid, place)
+  const named = useMemo(() => (to === undefined ? null : specTarget(to.spec, to.params, opener, registry)),
+    [to?.spec.view, to?.spec.within, to?.spec.to, JSON.stringify(to?.params), opener, registry])
+  const target: LinkTarget = useMemo(() => named ?? linkTarget(id.cid, place, params),
+    [named, id.cid, place, JSON.stringify(params)])
   const state = linkState(target)
   const className = cx('chip', styles.link, state.selected ? styles.isOpen : state.open && styles.isPinned)
   // A link inside a selectable row opens the link, not the row.

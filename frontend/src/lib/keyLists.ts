@@ -2,6 +2,7 @@ import { fetchKeyPage, fetchOutputDimValues, useQuery } from '../api/browse'
 import type { KeyValue, RunSource, StepDoc } from '../types'
 import { dimKind, rowSliceFor, invocationSliceFor } from './invocations'
 import { outputSourceFor } from './output'
+import type { Params } from '../panes/address'
 
 /** One value of a dim, and whether the other picks leave it possible. */
 export interface KeyListItem { value: KeyValue; compatible: boolean }
@@ -48,7 +49,7 @@ export function againstKey(others: Readonly<Record<string, KeyValue>>): string {
 }
 
 /** The slice less `dim`: every other dim it is on. */
-export function withoutDim(slice: Readonly<Record<string, KeyValue>>, dim: string): Record<string, KeyValue> {
+export function withoutDim<V>(slice: Readonly<Record<string, V>>, dim: string): Record<string, V> {
   const { [dim]: _dropped, ...rest } = slice
   return rest
 }
@@ -68,7 +69,7 @@ export function invocationKeyLoader(source: RunSource, dim: string, others: Reco
 /** A dim's values as a `KeyValueList` lists them (in the slice panel, or under a card's table
  *  header): its source's values, compatible against the level's other picks that apply to that
  *  node; null for a dim with no source yet. */
-export function levelDimList(entry: LevelDim, slice: Readonly<Record<string, KeyValue>>) {
+export function levelDimList(entry: LevelDim, slice: Params) {
   const source = entry.source
   if (!source) return null
   const { step } = source

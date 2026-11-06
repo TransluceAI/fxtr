@@ -167,7 +167,7 @@ function TargetBody({ jobId, target, params, run, onEntityView }: {
           <div className={styles.cid}>
             <CidText cid={target.cid} />
           </div>
-          <EntityPanel cid={target.cid} view={target.view} onView={onEntityView} />
+          <EntityPanel cid={target.cid} view={target.view} onView={onEntityView} params={params} />
         </div>
       )
     case 'node':

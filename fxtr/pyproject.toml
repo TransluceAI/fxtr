@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fxtr"
-version = "0.1.0a0"
+version = "0.2.0a0"
 description = "A configuration and orchestration system for modular, reproducible experiments"
 # Before 3.12.4, typing.get_type_hints cannot resolve a PEP 695 class's type parameters under
 # `from __future__ import annotations`, which the entity converter relies on.
@@ -14,7 +14,8 @@ license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "anyio>=4.14.0",
     "cbrrr>=1.1.0",
-    "duckdb>=1.5.0",
+    # Array queries rely on DuckDB 1.x's integer division by zero and SQL parameter syntax.
+    "duckdb>=1.5.0,<2.0",
     "frozendict>=2.4.6",
     "cattrs>=26.1.0",
     "pyarrow>=20.0.0",

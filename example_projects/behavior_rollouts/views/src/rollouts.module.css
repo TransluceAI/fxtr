@@ -23,3 +23,5 @@
 .compare-actions { display: flex; justify-content: flex-end; }
 .compare-actions button { font: inherit; color: var(--fg); background: var(--bg-alt); border: 1px solid var(--line); border-radius: 3px; padding: 3px 7px; cursor: pointer; }
 .compare-actions button:disabled { opacity: 0.5; cursor: default; }
+.longest { display: grid; gap: 6px; padding: 8px; }
+.longest p { margin: 0; white-space: pre-wrap; }

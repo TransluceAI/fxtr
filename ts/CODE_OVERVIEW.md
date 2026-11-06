@@ -99,8 +99,9 @@ packages/fxtr-view/src/
 ├── renderer.ts      ViewDecl and declareView (a view as links name it: slot, subject type, id,
 │                    the params it reads, the view it is declared within), Renderer (slot,
 │                    subjectType, id, Component, params, within) and renderer() (of a declaration,
-│                    its component handed the params it declares: ViewProps, BoundParams; or of a
-│                    slot, subject type and id, reading none), ANY_SUBJECT_TYPE (the subject type of a
+│                    its component handed the params it declares: ViewProps, BoundParams, every one
+│                    bound but an entity view's optional (ParamsOptional); or of a slot, subject
+│                    type and id, reading none), ANY_SUBJECT_TYPE (the subject type of a
 │                    renderer for every subject of its slot); what a package exports, nothing that
 │                    dispatches
 ├── shell.tsx        ViewShell (useEntity, the optional useInvocation, useKeys and useLink,
@@ -108,14 +109,15 @@ packages/fxtr-view/src/
 │                    LoadResult (a pending result carries its completion promise), unwrap (the
 │                    value, or suspend), the context with its faulting default,
 │                    ViewShellProvider, useEntity, useInvocation
-├── builtin_slots.ts EntityPanel (props: id + StorageAtom), EntityInlineLink (static content only:
+├── builtin_slots.ts EntityPanel (props: id + StorageAtom + params), EntityInlineLink (static content only:
 │                    the shell wraps it in interactive chrome), EntityHoverPreview (props: id);
 │                    InvocationPanel (props: invocations + StorageAtom + params); PagePanel
 │                    (props: the run + params + StorageAtom), declarePage() and page()
 ├── link.tsx         EntityLink (renders the shell's EntityLinkImpl), LinkBase / useLinkPlace
 │                    (where a value sits), useLink (a link to a declared view, a location relative
 │                    to the view, or both: LinkTo, handed to the shell as a ViewLinkSpec; its
-│                    params, LinkParams, must bind the view's), useEntityLinks (EntityLinks:
+│                    params, LinkParams, must bind the view's required ones), ParamValue / ViewParams
+│                    (a param's value: any JSON), useEntityLinks (EntityLinks:
 │                    open an entity as following its link would, and whether the shell shows it
 │                    now; nothing opens under a shell without it)
 ├── cid.tsx          CidText: a full cid with the prefix / tail marked to recede and the short run
@@ -162,7 +164,11 @@ Concepts, briefly (the plan has the rationale):
   registers `renderer(decl, Component)`, so a view's module links to others by their declarations
   without importing their components. The component of a declared view is handed every param it
   declares (`ViewProps<typeof DECL>`: the slot's props, with `params` binding each), since a host
-  shows the view only once they are all bound; their values are the view's to check. A **detail view** (what a renderer opens for something picked in it)
+  shows the view only once they are all bound; their values are any JSON (`ParamValue`), the
+  view's to check. An entity view's (`EntityPanel`) params are optional instead: a host opens an
+  entity from links binding none, so `params` holds those bound where it is opened. Their main use
+  is a *selector*, telling the view which part of the entity to point out; fxtr-view gives it no
+  shape of its own. A **detail view** (what a renderer opens for something picked in it)
   is a view that reads more params, optionally declared `within` the one view that links to it: its
   id is that view's, `/`, and its own name, and only that view may link to it. A **page**
   (`declarePage(name, { params, within })` and `page(decl, Component)`, the `PagePanel` slot) is a
@@ -208,8 +214,9 @@ Concepts, briefly (the plan has the rationale):
   `EntityLink`'s `to`; the frontend's `panes/address.ts`), or both, and the params it is opened
   at; a link's params must bind the params its view declares, which the types check. An
   `EntityLink` either says where its entity sits in the value the view was handed (`at`, extending
-  the enclosing `LinkBase`), the way to link to anything inside it, or names somewhere else (`to`,
-  `view`, `params`: another step's output, an input); the types allow one or the other. A shell that
+  the enclosing `LinkBase`), the way to link to anything inside it, names somewhere else (`to`,
+  `view`, `params`: another step's output, an input), or opens the entity alone at `params` for
+  its views (a selector, which is about that one entity); the types allow one of these. A shell that
   opens no views yields null, and the renderer shows its detail in place. The default value faults
   on use.
 - **State.** Plain jotai. A panel gets a JSON-only `StorageAtom`; `validatedAtom` narrows it to
@@ -356,7 +363,8 @@ test/
   id threaded in (a reference is a bare cid, so the type is only in the data).
   `RenderInvocation` takes an invocation slot, the step / workflow `name` (which the host already
   has from its run data), and the spawns. Each accepts only its own kind of slot; both go through
-  `RenderSlot`. `useRenderers(slot, subjectType)` lists the alternatives a host
+  `RenderSlot`, which hands a renderer a slot's `params` prop narrowed to the params it declares,
+  so a host can give every view of an entity the same params. `useRenderers(slot, subjectType)` lists the alternatives a host
   builds its switcher from, the same list dispatch picks the first of. A host keeping a choice
   reads it back with `chosenRenderer(renderers, remembered)`, which falls back to the default
   (null) once the remembered id is no longer offered, and a host that also needs the renderer
@@ -499,7 +507,10 @@ adds the renderers of the project's view bundle after these.
 `TranscriptGroup`, `AgentRun`, and session initialization. `entities.tsx` and `messages.tsx`
 present conversations, metadata, usage, and failures. `types.ts` exports the current type tags
 and wire shapes; rollouts, their turns, and their end records use `.v2`, and a rollout's
-`initialization` is a tagged record or explicit null. Rollout and turn metadata arrives as a list
+`initialization` is a tagged record or explicit null. The `ChatRollout` and `Transcript`
+conversation views are declared in `selector.ts` and read a `selector` param, a `MessageSelector`
+(`{ message: n }`, the `n`th message the view draws), which `Messages` marks and scrolls to; it
+is provisional, and its producer's shape is kept the same by hand. Rollout and turn metadata arrives as a list
 of tagged records, each shown under its type tag, and usage totals come from the `ModelResponse`
 records models leave in their turns' metadata. `comparison.tsx` aligns pairs of rollouts;
 its `behaviorsRenderers` registers only shared entity types. A behaviors project's own

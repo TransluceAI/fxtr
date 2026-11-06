@@ -14,7 +14,8 @@ import type { KeyValue, StepDoc } from '../types'
  *   it opens the value at its path in what the panel shows, relative to the panel (`.output.…` or
  *   `.…`), so the panel it opens follows that one as it changes.
  *
- * Any other link opens its entity alone (`cid:…`), fixed.
+ * Any other link opens its entity alone (`cid:…`), fixed, at the params it carries for the entity's
+ * views (a selector).
  */
 export interface NodeLinkBase {
   kind: 'fxtr-node'
@@ -42,6 +43,7 @@ function baseKind(base: unknown): unknown {
 }
 
 const NO_PARAMS: Params = {}
+const NO_KEYS: Readonly<Record<string, KeyValue>> = {}
 
 /** The location of a node of the level at `levelPath`, with `path` into its invocations' records. */
 export function nodeLocation(levelPath: readonly string[], name: string, path: readonly string[] = []): Location & { root: 'step' } {
@@ -63,8 +65,9 @@ function valueRel(location: Location, path: readonly string[]): Rel {
   return { view: null, location: below.length === 0 ? { kind: 'same' } : { kind: 'below', path: below } }
 }
 
-/** What a link to `cid` opens, given its place. */
-export function linkTarget(cid: string, place: LinkPlace | null | undefined): LinkTarget {
+/** What a link to `cid` opens, given its place; a link with `params` (for the entity's views) has
+ *  none, and opens the entity alone. */
+export function linkTarget(cid: string, place: LinkPlace | null | undefined, params: Params = NO_PARAMS): LinkTarget {
   if (place && baseKind(place.base) === 'fxtr-panel') {
     const { location } = (place.base as PanelLinkBase).address
     if (location !== null) return { rel: valueRel(location, place.path), params: place.keys }
@@ -73,11 +76,11 @@ export function linkTarget(cid: string, place: LinkPlace | null | undefined): Li
     const base = place.base as NodeLinkBase
     return { rel: absolute({ ...base.location, path: ['output', ...place.path] }), params: place.keys }
   }
-  return { rel: absolute({ root: 'entity', cid, path: [] }), params: NO_PARAMS }
+  return { rel: absolute({ root: 'entity', cid, path: [] }), params }
 }
 
 /** The link to a node's panel at a row's or an invocation's keys: what clicking a row opens. */
-export function nodeTarget(levelPath: readonly string[], step: StepDoc, keys: Readonly<Record<string, KeyValue>> = NO_PARAMS): LinkTarget {
+export function nodeTarget(levelPath: readonly string[], step: StepDoc, keys: Readonly<Record<string, KeyValue>> = NO_KEYS): LinkTarget {
   return { rel: absolute(nodeLocation(levelPath, step.name)), params: keys }
 }
 
