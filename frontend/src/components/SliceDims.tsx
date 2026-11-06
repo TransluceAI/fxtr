@@ -5,6 +5,7 @@ import { useDismiss } from '../lib/dismiss'
 import { useLevelState } from '../lib/levelState'
 import { cx } from '../lib/cx'
 import type { StepDoc } from '../types'
+import { isKeyValue } from '../panes/address'
 import { KeyValueList } from './KeyValueList'
 import styles from './SliceDims.module.css'
 
@@ -77,7 +78,8 @@ export function SliceDimsPanel({ steps, className }: { steps: readonly StepDoc[]
       <div className={styles.dimsColumn}>
         <div className={styles.dims}>
           {dims.map((entry) => {
-            const picked = slice[entry.dim]
+            // The trace's slice holds dims' keys alone; a level state's slice is typed as any params.
+  const picked = slice[entry.dim]
             return (
               <button key={entry.dim} className={cx(styles.dim, entry === active && styles.isActive)}
                 aria-pressed={entry === active} onClick={() => setActiveDim(entry.dim)}>
@@ -101,9 +103,11 @@ function DimValues({ entry }: { entry: LevelDim }) {
   const { slice, setSlice } = useLevelState()
   const list = levelDimList(entry, slice)
   if (!list) return <span className={styles.none}>no node has output with {entry.dim} yet</span>
+  // The trace's slice holds dims' keys alone; a level state's slice is typed as any params.
+  const picked = slice[entry.dim]
   return (
     <KeyValueList key={list.scope} dim={entry.dim} scope={list.scope} against={list.against} load={list.load}
-      version={list.version} enabled picked={slice[entry.dim]} chooseUnavailable fill
+      version={list.version} enabled picked={isKeyValue(picked) ? picked : undefined} chooseUnavailable fill
       onChoose={(value) => setSlice({ ...slice, [entry.dim]: value })}
       onClear={() => setSlice(withoutDim(slice, entry.dim))} />
   )

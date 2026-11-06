@@ -24,18 +24,36 @@
  *
  * A **token** (a step name, a field name, a param's name, a view id) is bare when made of letters,
  * digits, `_` and `-` (a view id may also hold `.` and `/`), and a JSON string otherwise. A param's
- * value is bare when made of letters, digits, `_`, `-` and `.`: a bare value that reads as a number
- * is that number, and a string that would read as one is quoted.
+ * value is any JSON. A string is bare when made of letters, digits, `_`, `-` and `.`; a bare value
+ * that reads as a number is that number, `true`, `false` and `null` are those, and a string that
+ * would read as one of them is quoted. A list or an object is written as JSON, compactly and with
+ * its keys sorted, so that a value has one spelling: `selector={"message":3}`.
  *
  * A **relative address** (`Rel`) is what links and browsing panels store: a view, and a location
  * relative to the location of the view before it (`RelLocation`): none (the same), `.field…` (a
  * field path below it), `../step…` (a sibling step), or an absolute one.
  */
 
-import { shortCid } from 'fxtr-view'
+import { shortCid, type ParamValue } from 'fxtr-view'
 import type { KeyValue } from '../types'
 
-export type Params = Readonly<Record<string, KeyValue>>
+export type Params = Readonly<Record<string, ParamValue>>
+
+/** Whether a param's value can be a dim's key: a string or a number. */
+export function isKeyValue(value: ParamValue | undefined): value is KeyValue {
+  return typeof value === 'string' || typeof value === 'number'
+}
+
+/** Whether two params' values are the same value (lists and objects compared by content). */
+export function sameValue(a: ParamValue | undefined, b: ParamValue | undefined): boolean {
+  if (a === undefined || b === undefined) return a === b
+  return a === b || formatValue(a) === formatValue(b)
+}
+
+/** The params among `params` that can be dims' keys. */
+export function keyParams(params: Params): Record<string, KeyValue> {
+  return Object.fromEntries(Object.entries(params).filter((entry): entry is [string, KeyValue] => isKeyValue(entry[1])))
+}
 
 export type Location =
   | { root: 'step'; steps: readonly string[]; path: readonly string[] }
@@ -86,6 +104,7 @@ const VALUE = '[A-Za-z0-9_.-]'
 const bareIn = (chars: string) => new RegExp(`^${chars}+$`)
 const BARE: Readonly<Record<string, RegExp>> = { [NAME]: bareIn(NAME), [VIEW]: bareIn(VIEW), [VALUE]: bareIn(VALUE) }
 const NUMBER = /^-?\d+(\.\d+)?$/
+const LITERALS: Readonly<Record<string, ParamValue>> = { true: true, false: false, null: null }
 const INDEX = /^\d+$/
 
 // ── formatting ──
@@ -94,9 +113,19 @@ function token(text: string, chars: string = NAME): string {
   return BARE[chars]!.test(text) ? text : JSON.stringify(text)
 }
 
-export function formatValue(value: KeyValue): string {
+export function formatValue(value: ParamValue): string {
   if (typeof value === 'number') return String(value)
-  return BARE[VALUE]!.test(value) && !NUMBER.test(value) ? value : JSON.stringify(value)
+  if (typeof value === 'string')
+    return BARE[VALUE]!.test(value) && !NUMBER.test(value) && !Object.hasOwn(LITERALS, value) ? value : JSON.stringify(value)
+  return JSON.stringify(canonical(value))
+}
+
+/** `value` with every object's keys in sorted order, so equal values spell the same. */
+function canonical(value: ParamValue): ParamValue {
+  if (value === null || typeof value !== 'object') return value
+  if (Array.isArray(value)) return value.map(canonical)
+  const object = value as Readonly<Record<string, ParamValue>>
+  return Object.fromEntries(Object.keys(object).sort().map((key) => [key, canonical(object[key]!)]))
 }
 
 /** A field path: `.name` for a field, `[n]` for a list index. */
@@ -241,8 +270,42 @@ class Scanner {
     return location === null ? { kind: 'same' } : { kind: 'absolute', location }
   }
 
+  /** A param's value: a list or an object as JSON, else a token (`formatValue`). */
+  value(): ParamValue {
+    if (this.peek() === '{' || this.peek() === '[') {
+      // Find where the JSON ends by counting brackets, stepping over strings whole (`token`), so a
+      // bracket or quote inside one is not counted; then let JSON.parse read the span.
+      const start = this.pos
+      let depth = 0
+      while (!this.done()) {
+        const char = this.text[this.pos]!
+        if (char === '"') {
+          this.token()
+          continue
+        }
+        this.pos += 1
+        if (char === '{' || char === '[') depth += 1
+        else if (char === '}' || char === ']') {
+          depth -= 1
+          if (depth === 0) break
+        }
+      }
+      if (depth !== 0) this.fail('an unterminated value')
+      try {
+        return JSON.parse(this.text.slice(start, this.pos)) as ParamValue
+      } catch {
+        this.pos = start
+        return this.fail('a JSON value expected')
+      }
+    }
+    const value = this.token(VALUE)
+    if (value.quoted) return value.text
+    if (NUMBER.test(value.text)) return Number(value.text)
+    return Object.hasOwn(LITERALS, value.text) ? LITERALS[value.text]! : value.text
+  }
+
   params(first: boolean): Params {
-    const params: Record<string, KeyValue> = {}
+    const params: Record<string, ParamValue> = {}
     let needComma = !first
     for (;;) {
       this.skipSpaces()
@@ -253,8 +316,7 @@ class Scanner {
       }
       const name = this.token().text
       this.expect('=')
-      const value = this.token(VALUE)
-      params[name] = !value.quoted && NUMBER.test(value.text) ? Number(value.text) : value.text
+      params[name] = this.value()
       needComma = true
     }
   }

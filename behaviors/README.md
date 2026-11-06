@@ -135,8 +135,8 @@ Install `behaviors[docent]` to convert transcript trees into Docent data models 
 `behaviors.implementations.docent.DocentReadingStep`. The reading step renders a Docent prompt
 against a transcript or agent run, calls an injected `ModelAPI`, and parses and validates the
 response and citations. It operates on ordinary Python objects without separate child save/load
-calls. Provider and Docent SDKs remain optional dependencies. There is no supplied model-driven
-user simulator or general judging implementation.
+calls. Provider and Docent SDKs remain optional dependencies. There is no supplied general
+judging implementation.
 
 ## Development
 

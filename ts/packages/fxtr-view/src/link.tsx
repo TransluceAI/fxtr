@@ -10,6 +10,9 @@
 //   `LinkBase`, has no place, and the shell opens the entity itself. This is the way to link to
 //   anything inside what the view was handed: it needs no location syntax, and generic components
 //   (a data tree) can extend the place without knowing where they are drawn.
+// - **The entity alone, at params** (`params`, no `at`): the entity itself, its views handed
+//   `params` (a selector into a transcript, which they read as optional params). A view's params
+//   apply to that one entity, so such a link opens it fixed, wherever the view drawing it sits.
 // - **Somewhere the view names** (`to`, `view`, `params`), as `useLink` does: for an entity the view
 //   knows a better place of than inside its own value, such as a step's input or another step's
 //   output.
@@ -27,9 +30,10 @@
 // It opens the entity alone; one hook serves every mark, so it fits marks drawn in a loop.
 
 import { createContext, useContext, type DragEvent, type MouseEvent, type ReactNode } from "react";
-import type { EntityID } from "./ids";
-import type { AnyViewDecl, ViewDecl } from "./renderer";
+import type { EntityID, JsonValue } from "./ids";
+import type { AnyViewDecl, ParamsOptional, ViewDecl } from "./renderer";
 import { useViewShell } from "./shell";
+import type { ViewSlot } from "./slots";
 
 /** A dim's key value, as a spawn's key holds it. */
 export type LinkKeyValue = string | number;
@@ -86,17 +90,45 @@ function extend(place: LinkPlace, at: LinkAt | undefined): LinkPlace {
   };
 }
 
+/** A param's value: any JSON. A dim's key is one too (`LinkKeyValue`); a view's param may be
+ *  structured (a selector), and the view narrows it itself. */
+export type ParamValue = JsonValue;
+
 /** Values bound to params by name: the dims of a step, and the params views declare. */
-export type ViewParams = Readonly<Record<string, LinkKeyValue>>;
+export type ViewParams = Readonly<Record<string, ParamValue>>;
 
 /** The params a link to a view reading `Params` is opened at: a row's full keys, say, among which
  *  each of `Params` is bound. */
-export type LinkParams<Params extends string> = ViewParams & { readonly [Name in Params]: LinkKeyValue };
+export type LinkParams<Params extends string> = ViewParams & { readonly [Name in Params]: ParamValue };
 
-/** A link's `params`: required, and binding each of `Params`, when the target declares any. */
-type ParamsProp<Params extends string> = [Params] extends [never]
-  ? { readonly params?: ViewParams }
-  : { readonly params: LinkParams<Params> };
+/** The params a link to `View` takes: any, when it declares none, is an entity view (whose params
+ *  are optional), or is not known (a location alone, or any declaration); otherwise required,
+ *  binding each it declares. A tuple, for a rest parameter.
+ *
+ *  The cases, in order: `never` is what `useLink` infers for a target naming no view (a location
+ *  alone), and is checked in a tuple since a bare `never` would distribute to `never`; a `Params`
+ *  of `string` is a declaration typed as any declaration (`AnyViewDecl`, `LinkTo`), whose names
+ *  are unknown, so nothing can be required; then the slot decides (`ParamsOptional`). */
+type ParamsArgOf<View> = [View] extends [never]
+  ? [params?: ViewParams]
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  : View extends ViewDecl<any, infer Params>
+    ? [Params] extends [never]
+      ? [params?: ViewParams]
+      : string extends Params
+        ? [params?: ViewParams]
+      : SlotParamsOptional<View["slot"]> extends true
+        ? [params?: ViewParams]
+        : [params: LinkParams<Params>]
+    : [params?: ViewParams];
+
+/** Whether a slot's views read their params as optional (`ParamsOptional` of its props). */
+type SlotParamsOptional<Slot> = Slot extends ViewSlot<infer Props> ? ParamsOptional<Props> : false;
+
+/** A link's `params`, as a prop: what `ParamsArgOf` says. */
+type ParamsProp<View> = ParamsArgOf<View> extends [params: infer P]
+  ? { readonly params: P }
+  : { readonly params?: ViewParams };
 
 /** A link to where its entity sits in what the view was handed (`at`; none: the entity alone). */
 interface PlacedLinkProps {
@@ -107,43 +139,53 @@ interface PlacedLinkProps {
   readonly params?: never;
 }
 
+/** A link to the entity alone, its views opened at `params` (a selector). */
+interface EntityParamsLinkProps {
+  readonly id: EntityID;
+  readonly at?: never;
+  readonly to?: never;
+  readonly view?: never;
+  readonly params: ViewParams;
+}
+
 /** A link to somewhere the view names in place of where the entity sits: a location (`to`, as
  *  `useLink` takes it), a declared view (`view`), or both, opened at `params`. */
-type NamedLinkProps<Params extends string> = { readonly id: EntityID; readonly at?: never } & (
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { readonly to: string; readonly view?: ViewDecl<any, Params> }
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { readonly to?: string; readonly view: ViewDecl<any, Params> }
+type NamedLinkProps<View extends AnyViewDecl> = { readonly id: EntityID; readonly at?: never } & (
+  | { readonly to: string; readonly view?: View }
+  | { readonly to?: string; readonly view: View }
 ) &
-  ParamsProp<Params>;
+  ParamsProp<View>;
 
-export type EntityLinkProps<Params extends string = never> = PlacedLinkProps | NamedLinkProps<Params>;
+export type EntityLinkProps<View extends AnyViewDecl = never> = PlacedLinkProps | EntityParamsLinkProps | NamedLinkProps<View>;
 
 /** What a link names, as a shell is handed it: a view's id (null: the default for what the
  *  location shows) and the id of the view it is declared within, and a location in the host's
- *  syntax (null: the location of the view the link is in). */
+ *  syntax (null: the location of the view the link is in, or for a page, which has no location,
+ *  none). */
 export interface ViewLinkSpec {
   readonly view: string | null;
   readonly within: string | null;
   readonly to: string | null;
 }
 
-/** What the shell's `EntityLinkImpl` is given: the id, the link's place when it has one, and what
- *  the link opens when the view named it. */
+/** What the shell's `EntityLinkImpl` is given: the id, the link's place when it has one, what the
+ *  link opens when the view named it, or the params it opens the entity alone at. */
 export interface EntityLinkImplProps {
   readonly id: EntityID;
   readonly place?: LinkPlace | null;
   readonly to?: { readonly spec: ViewLinkSpec; readonly params: ViewParams };
+  readonly params?: ViewParams;
 }
 
-export function EntityLink<Params extends string = never>(props: EntityLinkProps<Params>) {
+export function EntityLink<View extends AnyViewDecl = never>(props: EntityLinkProps<View>) {
   const { EntityLinkImpl } = useViewShell();
   const enclosing = useContext(LinkPlaceContext);
-  const { id, at, to, view, params } = props;
+  // The union of the props' forms, read as one shape: each form leaves the others' fields absent.
+  const { id, at, to, view, params } = props as { id: EntityID; at?: LinkAt; to?: string; view?: AnyViewDecl; params?: ViewParams };
   const place = at && enclosing ? extend(enclosing, at) : null;
-  const named =
-    to === undefined && view === undefined ? undefined : { spec: specOf(view ?? null, to ?? null), params: params ?? NO_PARAMS };
-  return <EntityLinkImpl id={id} place={place} {...(named === undefined ? {} : { to: named })} />;
+  if (to !== undefined || view !== undefined)
+    return <EntityLinkImpl id={id} place={place} to={{ spec: specOf(view ?? null, to ?? null), params: params ?? NO_PARAMS }} />;
+  return <EntityLinkImpl id={id} place={place} {...(params === undefined ? {} : { params })} />;
 }
 
 /** A link as the props to spread onto whatever element is picked (an SVG mark, a row), and whether
@@ -161,22 +203,16 @@ export interface ViewLink {
   readonly selected: boolean;
 }
 
-/** What `useLink` opens: a declared view (at the location of the view the link is in), a location
- *  (`to`) through its default view, or a declared view at a location. */
-export type LinkTo<Params extends string = string> =
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | ViewDecl<any, Params>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  | { readonly view?: ViewDecl<any, Params>; readonly to: string };
-
-/** `useLink`'s params: required, and binding each of `Params`, when the target declares any. */
-type ParamsArg<Params extends string> = [Params] extends [never] ? [params?: ViewParams] : [params: LinkParams<Params>];
+/** What `useLink` opens: a declared view (at the location of the view the link is in; a page at
+ *  none, wherever the link is), a location (`to`) through its default view, or a declared view at a
+ *  location. */
+export type LinkTo<View extends AnyViewDecl = AnyViewDecl> = View | { readonly view?: View; readonly to: string };
 
 /** A link to `target`, opened at `params` (null target: no link); null when the shell cannot open
  *  views from here, so the renderer shows its detail in place instead. Pass a row's full keys: the
  *  host keeps only what they add to this view's. A declared view's params must be among them. A
  *  view declared within another is linked to only from that one. */
-export function useLink<Params extends string = never>(target: LinkTo<Params> | null, ...[params]: ParamsArg<Params>): ViewLink | null {
+export function useLink<View extends AnyViewDecl = never>(target: LinkTo<View> | null, ...[params]: ParamsArgOf<View>): ViewLink | null {
   const shell = useViewShell();
   if (shell.useLink === undefined) return null;
   const spec = target === null ? null : "slot" in target ? specOf(target, null) : specOf(target.view ?? null, target.to);

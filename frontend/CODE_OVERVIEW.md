@@ -83,7 +83,8 @@ frontend/
     │                            value outside React state read by selector, and
     │                            useStableCallback), launches (useFollowLaunches: a page switches
     │                            to each launched job unless someone picked one in it, and says
-    │                            why in a toast), debounce (useDebouncedInput, typing applied
+    │                            why in a toast), linkProblem (the toast a link naming nothing
+    │                            raises), debounce (useDebouncedInput, typing applied
     │                            once it pauses), dismiss (useDismiss: a press outside or Escape
     │                            closes), cardTable (a card's table state
     │                            for the slice and its page, read by the card,
@@ -121,9 +122,9 @@ frontend/
     │                            through); networkSimplex (the exact
     │                            solver behind the flowchart's horizontal positions)
     ├── panes/                   the detail view (see "The detail view: panels and addresses")
-    │   ├── address.ts           panel addresses (a view, a location, params): the syntax (parse,
-    │   │                        format), relative locations (`Rel`, applyRelLocation), the parts a
-    │   │                        head draws
+    │   ├── address.ts           panel addresses (a view, a location, params, any JSON): the syntax
+    │   │                        (parse, format), relative locations (`Rel`, applyRelLocation), the
+    │   │                        parts a head draws
     │   ├── resolve.ts           an address against the whole job and the registry (`Catalog`): the
     │   │                        params it uses, the target a panel renders (`Target`), or why there
     │   │                        is none
@@ -390,11 +391,14 @@ following the panel before it, or is **pinned**, and changes only when the user 
   **view** applied to a **location** and **params**, written like a call:
   `pander-score.Elicitations/batch(/generate_prompts, elicitor=sonnet)`,
   `(/prompts.output.call, prompt=3)`, `tree(cid:<cid>.messages[2])`,
-  `limerick-contest.poet(poet=nash)`, `code(/judge)`, `experiment_readme()`. A location is a step path from the job's root workflow
+  `limerick-contest.poet(poet=nash)`, `code(/judge)`, `experiment_readme()`,
+  `(/judge.output.transcript, prompt=3, selector={"message":2})`. A location is a step path from the job's root workflow
   (`/` alone is the root), or an entity's cid, then a **field path**: a step's starts in each
   invocation's record (`.output…`, `.inputs.<name>…`). The view is a renderer's id (a view declared
   within another is named below it), a page's, a built-in (`VIEWS`: `table`, `invocation`,
-  `tree`, `trace`, `flowchart`, `code`, `experiment_readme`), or nothing for the default. Params are flat, by name. A
+  `tree`, `trace`, `flowchart`, `code`, `experiment_readme`), or nothing for the default. Params are flat, by name, and
+  any JSON: a dim's key is a string or a number, a view's param may be structured (a list or
+  object is written as compact JSON, its keys sorted, so a value has one spelling). A
   **relative address** (`Rel`) names a target from another: a view, and a location that is the
   same, a field path below (`.call`), a sibling step (`../step`), or absolute.
 - **Resolution** (`panes/resolve.ts`) works an address out against the whole job and the registry
@@ -403,7 +407,9 @@ following the panel before it, or is **pinned**, and changes only when the user 
   entered through the run its mapped keys pick out (`childPathname`, the runner's naming): a key
   left unbound, or a level still loading, is a problem of the params, which the panel shows and
   waits out. It picks the bindings the address uses (the keys walked, its node's dims, its view's
-  declared params), writes in a node's default view when the registry decides it, picks the
+  declared params; for an entity shown by its cid, every param the panel binds itself, since only
+  its data says which view shows it),
+  writes in a node's default view when the registry decides it, picks the
   `Target` the panel renders (a node through a view, with the source node of each argument that is
   one node's output; a value at a field path; the root workflow's own invocation; an entity; a
   page; the experiment; the code of a node's function, from its `method` and `codeVersion`, or of
@@ -420,6 +426,12 @@ following the panel before it, or is **pinned**, and changes only when the user 
   the panel before it shows that one, so it closes when that one switches away. The pin button
   pins a panel where it is, for good (`columns.ts`'s `pinPanel` says why there is no unpinning); a
   pick inside a browsing panel that leaves out a binding it inherits pins it too (`setBindings`).
+  **A panel showing an entity by its cid** (opened by a link carrying params for its views, a
+  selector) keeps every param it binds itself and passes none of them on: the panels following it
+  inherit only what it inherited. A link from a root to an entity binds no level keys. Params are
+  any JSON in one set; only where a dim's binding picks rows (`lib/invocations.ts`'s `pick`),
+  enters a mapped workflow's run, or reaches a renderer's `useKeys` must it be a key, and one that
+  is not counts as unbound there.
   Closing a panel closes its followers. Each panel keeps a history of what it stored, for back and
   forward; pinning drops it. **Navigating** a panel (a click in the view before it, its view
   switcher, its params, back and forward) keeps its followers, which follow it, only while it stays
@@ -434,8 +446,9 @@ following the panel before it, or is **pinned**, and changes only when the user 
   the view's followers. A drop opens a panel where it lands: browsing, right after the view, when
   the view has no browsing panel after it yet; else pinned, as Alt does. A link from a root is
   stored absolute, binding the level's keys itself, so moving between levels changes what no panel
-  shows. After a change, the first browsing panel whose address names nothing closes, with its
-  followers. A path through an entity reference is checked against the data once it loads:
+  shows. A link whose address names nothing (no such view, page, or step) opens nothing, and a
+  toast says why (`lib/linkProblem.tsx`). After a change, the first browsing panel whose address
+  names nothing closes, with its followers. A path through an entity reference is checked against the data once it loads:
   `PathValue` reports a field the value lacks through `PathMissingContext`, and a browsing panel
   closes the same way (`namesNothing`). A link carries its row's full keys: the panel keeps only
   what they add to its view's bindings.
@@ -445,7 +458,7 @@ following the panel before it, or is **pinned**, and changes only when the user 
   entity chips as the value at their place relative to it (`.output…` in a node, `.…` below a
   value), and a renderer's `useLink` / `EntityLink` at the view and location the renderer names
   (`views/viewLink.ts`, which refuses a link to a view declared within another from anywhere but
-  that one). Every link that opens a panel on a click can be dragged into the
+  that one, and gives a link to a page no location, since a page has none). Every link that opens a panel on a click can be dragged into the
   columns too, a table's rows among them (`dragLink` in `lib/openEntity.ts`).
 - **What shows the navigation.** A panel's head (`PanelHead`) is one line that is its resolved
   address in words, part by part (`addressParts`: the steps, the field path, a nested view's own
@@ -552,7 +565,8 @@ last build still shown), and briefly that the renderers were updated.
   selecting a registered renderer invokes its complete-data view. Other entities dispatch through
   `RenderEntity` in the `EntityPanel` slot with a per-mount storage atom: a type's own panel when
   registered, the data tree otherwise. (A node's panel dispatches its one output entity to the same
-  slot, choosing the renderer from its own dropdown.) Its
+  slot, choosing the renderer from its own dropdown.) An entity shown by its cid hands its
+  renderer the panel's params, each renderer those it declares. Its
   corner carries the renderer controls. A `RendererSelect` switches between the type's views
   (`useRenderers`: its own panels, then the data tree, the wildcard), shown even when the tree is
   the only one so the choice is always visible; the choice lives with the mount and is not
@@ -677,7 +691,7 @@ platform-modifier row clicks, the last page's padding, its failed invocations an
 card a slice change holds still, and the column sizing. `test/address.test.ts` checks the address
 syntax, relative locations, and the parts a head draws; `test/columns.test.tsx` the panels'
 sequence (following, pinning, history, closing, moves and drops, default views, views declared
-within others, the entity chip chain) and resolution across the job (a step inside a mapped
+within others, the entity chip chain, an entity panel's params) and resolution across the job (a step inside a mapped
 workflow, an unbound key, a level loading, panels kept when the centre moves to another level).
-`test/flowchart.test.tsx` checks platform-specific wheel shortcuts and trackpad pinch zoom.
+`test/flowchart.test.tsx` checks platform-specific wheel shortcuts, trackpad pinch zoom, and the zoom keys.
 Model, progress, and graph-layout tests cover the remaining pure transformations.

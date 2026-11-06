@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { fireEvent, render, screen } from '@testing-library/react'
 import { expect, it } from 'vitest'
-import { EntityID, useEntityLinks } from 'fxtr-view'
+import { EntityID, declarePage, page, useEntityLinks, useLink } from 'fxtr-view'
 import { dispatchRegistry } from 'fxtr-view-shell-util'
 import { FrontendViewShellProvider } from '../src/views/FrontendViewShellProvider'
 import { OpenEntityContext, type EntityOpener } from '../src/lib/openEntity'
@@ -38,4 +38,33 @@ it("opens a renderer's marks through the nearest opener, and says which one a pa
   expect(screen.getByText('other').getAttribute('aria-pressed')).toBe('false')
   fireEvent.click(screen.getByText('other'))
   expect(opened).toEqual(['other'])
+})
+
+const transcript = declarePage('test.transcript', { params: ['event'] })
+
+function PageLink() {
+  const link = useLink(transcript, { event: '42.61' })
+  return link === null ? <span>no link</span> : <button {...link.props}>42.61</button>
+}
+
+it('links to a page with no location, from a panel with a location and from where links have none', () => {
+  for (const relative of [true, false]) {
+    const followed: LinkTarget[] = []
+    const opener: EntityOpener = {
+      originId: 'panel', viewId: null, relative,
+      follow: (target) => followed.push(target),
+      hover: () => {},
+      linkState: () => ({ open: false, selected: false }),
+    }
+    const { unmount } = render(
+      <OpenEntityContext.Provider value={opener}>
+        <FrontendViewShellProvider registry={dispatchRegistry([page(transcript, () => null)])}>
+          <PageLink />
+        </FrontendViewShellProvider>
+      </OpenEntityContext.Provider>,
+    )
+    fireEvent.click(screen.getByText('42.61'))
+    expect(followed).toEqual([{ rel: { view: 'test.transcript', location: { kind: 'absolute', location: null } }, params: { event: '42.61' } }])
+    unmount()
+  }
 })

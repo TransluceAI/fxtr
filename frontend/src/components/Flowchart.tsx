@@ -3,9 +3,9 @@ import { dimKind, type DimKind } from '../lib/invocations'
 import { KIND_ICONS, KIND_ICON_SIZE, KIND_ICON_STROKE } from '../lib/kindIcons'
 import type { StepDoc } from '../types'
 import { cx } from '../lib/cx'
-import { hasPrimaryModifier } from '../lib/keyboard'
+import { hasPrimaryModifier, isEditableTarget } from '../lib/keyboard'
 import { LINE_HEIGHT, ProgressLineSvg } from './ProgressLine'
-import { DIM_PITCH, DIM_TOP, edgePath, layoutLevel, measureDim, NAME_X, NODE_PAD, type LayoutNode } from './flowchartLayout'
+import { DIM_PITCH, DIM_TOP, edgePath, layoutLevel, measureDim, NAME_X, NODE_PAD, type FlowchartLayout, type LayoutNode } from './flowchartLayout'
 import { panBy, placeX, rankPlacements, zoomAt, type ParallaxView } from './flowchartParallax'
 import styles from './Flowchart.module.css'
 
@@ -29,6 +29,11 @@ interface Props {
  * that way instead of a sheaf of nearly flat curves.
  */
 const EDGE_OVERHANG = 40
+
+/** How much one press of `=` or `-` zooms. */
+const KEY_ZOOM = 1.25
+
+const clampScale = (scale: number) => Math.min(2.5, Math.max(0.22, scale))
 
 /**
  * A pannable, zoomable DAG for the cards in one workflow invocation. Each node shows its step's
@@ -71,6 +76,14 @@ export function Flowchart({ levelKey, level, selectedId, onSelect }: Props) {
     setView(next)
   }
 
+  const fit = (viewport: HTMLElement, layout: FlowchartLayout) => {
+    const width = viewport.clientWidth
+    const height = viewport.clientHeight
+    if (width === 0 || height === 0) return
+    const scale = Math.min(1, Math.max(0.06, Math.min(width / layout.width, height / layout.height)))
+    update({ pan: 0.5, y: (height - layout.height * scale) / 2, scale })
+  }
+
   // Opening a level starts with its complete graph fitted into the graph pane; a new layout of the
   // same level keeps the view the user has.
   useLayoutEffect(() => {
@@ -78,15 +91,8 @@ export function Flowchart({ levelKey, level, selectedId, onSelect }: Props) {
     const viewport = viewportRef.current
     const refit = fittedFor.current !== levelKey
     fittedFor.current = levelKey
-    const fit = () => {
-      const width = viewport.clientWidth
-      const height = viewport.clientHeight
-      if (width === 0 || height === 0) return
-      const scale = Math.min(1, Math.max(0.06, Math.min(width / layout.width, height / layout.height)))
-      update({ pan: 0.5, y: (height - layout.height * scale) / 2, scale })
-    }
     setViewportWidth(viewport.clientWidth)
-    if (refit) fit()
+    if (refit) fit(viewport, layout)
     let previousSize = { width: viewport.clientWidth, height: viewport.clientHeight }
     const observer = new ResizeObserver(() => {
       const nextSize = { width: viewport.clientWidth, height: viewport.clientHeight }
@@ -122,17 +128,36 @@ export function Flowchart({ levelKey, level, selectedId, onSelect }: Props) {
       const pointerY = event.clientY - bounds.top
       const pinch = event.ctrlKey && !controlHeld && !event.metaKey && !event.altKey && !event.shiftKey
       if (hasPrimaryModifier(event) || pinch) {
-        const nextScale = Math.min(2.5, Math.max(0.22, current.scale * Math.exp(-event.deltaY * 0.01)))
+        const nextScale = clampScale(current.scale * Math.exp(-event.deltaY * 0.01))
         update(zoomAt(layoutRef.current, current, viewport.clientWidth, pointerX, pointerY, nextScale))
       } else {
         update(panBy(layoutRef.current, current, viewport.clientWidth, pointerY, -event.deltaX, -event.deltaY))
       }
     }
+    // `=` and `-` zoom about the viewport's centre and `0` fits the graph, without Shift so `=`
+    // stands for `+`. Modified keys stay the browser's own page zoom.
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing ||
+          isEditableTarget(event.target)) return
+      const current = viewRef.current
+      if (event.key === '0') {
+        fit(viewport, layoutRef.current)
+      } else if (event.key === '=' || event.key === '-') {
+        const nextScale = clampScale(current.scale * (event.key === '=' ? KEY_ZOOM : 1 / KEY_ZOOM))
+        update(zoomAt(layoutRef.current, current, viewport.clientWidth,
+          viewport.clientWidth / 2, viewport.clientHeight / 2, nextScale))
+      } else {
+        return
+      }
+      event.preventDefault()
+    }
+    window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keydown', syncControl, true)
     window.addEventListener('keyup', syncControl, true)
     window.addEventListener('blur', releaseControl)
     viewport.addEventListener('wheel', onWheel, { passive: false })
     return () => {
+      window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keydown', syncControl, true)
       window.removeEventListener('keyup', syncControl, true)
       window.removeEventListener('blur', releaseControl)

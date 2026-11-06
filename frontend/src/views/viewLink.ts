@@ -5,21 +5,29 @@
  * after the view, or with Alt in a pinned panel), hovering lights where it would open, and dragging
  * carries it. A relative location needs a view with an address of its own: a panel, or the centre.
  * Anywhere else a relative link is null, and
- * the renderer shows its detail in place.
+ * the renderer shows its detail in place. A page has no location, so a link to one names none,
+ * wherever it is drawn.
  */
 
 import { useContext, useMemo } from 'react'
 import type { ViewLink, ViewLinkSpec, ViewParams } from 'fxtr-view'
+import { useRegistry, type DispatchRegistry } from 'fxtr-view-shell-util'
 import { OpenEntityContext, dragLink, type EntityOpener } from '../lib/openEntity'
 import { parseRelLocation } from '../panes/address'
 import type { LinkTarget } from '../panes/drag'
+import { isPage } from '../panes/resolve'
 
 /** What `spec` opens from `opener`'s view at `params`; null where a relative location has no address
  *  to start from. A view declared within another may be linked to only from that one: a link from
- *  anywhere else is the renderer's bug, and throws. A malformed location throws too. */
-export function specTarget(spec: ViewLinkSpec, params: ViewParams, opener: EntityOpener): LinkTarget | null {
+ *  anywhere else is the renderer's bug, and throws. A malformed location throws too, and so does a
+ *  location given with a page. */
+export function specTarget(spec: ViewLinkSpec, params: ViewParams, opener: EntityOpener, registry: DispatchRegistry): LinkTarget | null {
   if (spec.within !== null && opener.viewId !== spec.within)
     throw new Error(`${spec.view} is declared within ${spec.within}, and only that view links to it (this link is in ${opener.viewId ?? 'no view'})`)
+  if (isPage(registry, spec.view)) {
+    if (spec.to !== null) throw new Error(`${spec.view} is a page, which has no location, and the link to it names ${spec.to}`)
+    return { rel: { view: spec.view, location: { kind: 'absolute', location: null } }, params }
+  }
   const location = spec.to === null ? { kind: 'same' as const } : parseRelLocation(spec.to)
   if (location.kind !== 'absolute' && !opener.relative) return null
   return { rel: { view: spec.view, location }, params }
@@ -27,9 +35,10 @@ export function specTarget(spec: ViewLinkSpec, params: ViewParams, opener: Entit
 
 export function useLink(spec: ViewLinkSpec | null, params: ViewParams): ViewLink | null {
   const opener = useContext(OpenEntityContext)
+  const registry = useRegistry()
   // A malformed address is the renderer's bug: it throws, to the renderer's error boundary.
-  const link = useMemo(() => (spec === null || !opener ? null : specTarget(spec, params, opener)),
-    [spec?.view, spec?.within, spec?.to, JSON.stringify(params), opener])
+  const link = useMemo(() => (spec === null || !opener ? null : specTarget(spec, params, opener, registry)),
+    [spec?.view, spec?.within, spec?.to, JSON.stringify(params), opener, registry])
   if (!link || !opener) return null
   const state = opener.linkState(link)
   return {

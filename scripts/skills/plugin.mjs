@@ -22,16 +22,16 @@ const initialVersion = '0.1.0';
 const readJson = file => JSON.parse(readFileSync(file, 'utf8'));
 const isDirectory = file => existsSync(file) && statSync(file).isDirectory();
 
-function sameTree(a, b) {
+function sameTree(a, b, skillRoot = true) {
   if (!isDirectory(a) || !isDirectory(b)) return false;
   const entries = directory => readdirSync(directory)
-    .filter(name => name !== '__pycache__' && name !== provenanceFile).sort();
+    .filter(name => name !== '__pycache__' && !(skillRoot && name === provenanceFile)).sort();
   const left = entries(a), right = entries(b);
   return left.length === right.length && left.every((name, i) => {
     if (name !== right[i]) return false;
     const source = path.join(a, name), target = path.join(b, name);
     const sourceStat = statSync(source), targetStat = statSync(target);
-    if (sourceStat.isDirectory()) return sameTree(source, target);
+    if (sourceStat.isDirectory()) return sameTree(source, target, false);
     return sourceStat.isFile() && targetStat.isFile()
       && readFileSync(source).equals(readFileSync(target));
   });
@@ -128,8 +128,8 @@ export function marketplaceKind(marketplaceRoot) {
     : `${marketplaceRoot} has both ${files}; sync one marketplace per checkout`);
 }
 
-/** Return the new plugin version, or null when no files changed. */
-export function syncPlugin(marketplaceRoot, prepared) {
+/** Return the new plugin version, or null when current. checkOnly leaves the checkout untouched. */
+export function syncPlugin(marketplaceRoot, prepared, {checkOnly = false} = {}) {
   const kind = marketplaceKinds[marketplaceKind(marketplaceRoot)];
   const marketplacePath = path.join(marketplaceRoot, kind.marketplace);
   const marketplace = readJson(marketplacePath);
@@ -141,10 +141,10 @@ export function syncPlugin(marketplaceRoot, prepared) {
       throw new Error(`${prepared} has no ${name}/SKILL.md`);
     }
   }
-  const changed = skillNames.filter(name => !sameTree(
+  const sameSkills = skillNames.every(name => sameTree(
     path.join(prepared, name), path.join(pluginRoot, 'skills', name),
   ));
-  if (!changed.length && entries.length && existsSync(manifestPath)) return null;
+  if (sameSkills && entries.length && existsSync(manifestPath)) return null;
 
   let manifest, version;
   if (entries.length && existsSync(manifestPath)) {
@@ -155,11 +155,12 @@ export function syncPlugin(marketplaceRoot, prepared) {
     version = initialVersion;
     manifest = kind.newManifest(version);
   }
+  if (checkOnly) return version;
   if (!entries.length) marketplace.plugins.push(kind.newEntry(version));
   else if (kind.entryVersions) entries[0].version = version;
 
-  // Validate the manifests and complete bundle before replacing any plugin files.
-  for (const name of changed) {
+  // Even skills with identical content belong to the same prepared snapshot.
+  for (const name of skillNames) {
     const target = path.join(pluginRoot, 'skills', name);
     rmSync(target, {recursive: true, force: true});
     cpSync(path.join(prepared, name), target, {recursive: true});

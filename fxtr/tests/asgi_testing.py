@@ -28,12 +28,21 @@ async def a_request(
 ) -> tuple[int, dict[str, str], bytes]:
     """One request through ``app`` to :data:`HOST`: the status, headers, and body."""
     messages: list[Message] = []
+    body_sent = False
+    response_complete = anyio.Event()
 
     async def receive() -> Message:
-        return {"type": "http.request", "body": body}
+        nonlocal body_sent
+        if not body_sent:
+            body_sent = True
+            return {"type": "http.request", "body": body}
+        await response_complete.wait()
+        return {"type": "http.disconnect"}
 
     async def send(message: Message) -> None:
         messages.append(message)
+        if message["type"] == "http.response.body" and not message.get("more_body", False):
+            response_complete.set()
 
     sent = {"host": HOST, **(headers or {})}
     scope = {

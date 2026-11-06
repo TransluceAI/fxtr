@@ -1,5 +1,6 @@
 import { EntityID, type ArrayData, type InvocationRef, type Spawn } from 'fxtr-view'
 import type { Column, KeyValue, TableDescriptor, StepInvocation } from '../types'
+import { isKeyValue, type Params } from '../panes/address'
 
 /**
  * How a dim relates to the step's invocations: `mapped` dims fan the body out, `replica` dims
@@ -32,20 +33,23 @@ export function isMapped(step: TableDescriptor): boolean {
 }
 
 /** The level's slice restricted to the step's invocation dims: the invocations it picks out. */
-export function invocationSliceFor(step: TableDescriptor, levelSlice: Readonly<Record<string, KeyValue>>): Record<string, KeyValue> {
+export function invocationSliceFor(step: TableDescriptor, levelSlice: Params): Record<string, KeyValue> {
   return pick(levelSlice, invocationKeyDims(step))
 }
 
 /** The level's slice restricted to every dim of the step's output: the rows it picks out,
  *  slicing on dims produced inside an invocation as well as on invocation dims. */
-export function rowSliceFor(step: TableDescriptor, levelSlice: Readonly<Record<string, KeyValue>>): Record<string, KeyValue> {
+export function rowSliceFor(step: TableDescriptor, levelSlice: Params): Record<string, KeyValue> {
   return pick(levelSlice, step.type.dims.map(([dim]) => dim))
 }
 
-function pick(levelSlice: Readonly<Record<string, KeyValue>>, dims: readonly string[]): Record<string, KeyValue> {
+/** The bindings of `dims` among `levelSlice`. A dim's binding picks its rows by key, so one that
+ *  is no key (a list, an object) picks nothing, and counts as unbound. */
+function pick(levelSlice: Params, dims: readonly string[]): Record<string, KeyValue> {
   const slice: Record<string, KeyValue> = {}
   for (const dim of dims) {
-    if (Object.hasOwn(levelSlice, dim)) slice[dim] = levelSlice[dim]
+    const value = levelSlice[dim]
+    if (isKeyValue(value)) slice[dim] = value
   }
   return slice
 }

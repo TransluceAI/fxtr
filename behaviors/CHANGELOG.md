@@ -1,5 +1,12 @@
 # behaviors changelog
 
+## 0.0.1a5
+
+- Supports fxtr 0.1 and 0.2 (`fxtr>=0.1.0a0,<0.3`). With the fxtr 0.2 viewer, a link can open
+  a rollout or transcript at a selected message (#288).
+- The guides cover model-driven user simulators, checkpointing, model providers, and
+  provider-specific sampling and caching options (#261).
+
 ## 0.0.1a4
 
 - Tagged `DynamicData` metadata, initialization and session checkpoints, model providers,

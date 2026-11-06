@@ -8,8 +8,10 @@ import {fileURLToPath} from 'node:url';
 let scratch;
 try {
   const marketplaces = process.argv.slice(2);
+  const checkOnly = marketplaces[0] === '--check';
+  if (checkOnly) marketplaces.shift();
   if (!marketplaces.length) {
-    throw new Error('usage: pnpm sync:plugin PATH/TO/claude-code-plugins [PATH/TO/codex-plugins ...]');
+    throw new Error('usage: pnpm sync:plugin [--check] PATH/TO/claude-code-plugins [PATH/TO/codex-plugins ...]');
   }
   if (Number(process.versions.node.split('.')[0]) < 22) throw new Error('plugin sync requires Node 22 or newer');
   const {prepareSkills} = await import('./bundle.mjs');
@@ -19,7 +21,12 @@ try {
   scratch = mkdtempSync(path.join(tmpdir(), 'fxtr-plugin-'));
   const prepared = prepareSkills(fileURLToPath(new URL('../../', import.meta.url)), path.join(scratch, 'skills'));
   marketplaces.forEach((marketplace, i) => {
-    const version = syncPlugin(path.resolve(marketplace), prepared);
+    const version = syncPlugin(path.resolve(marketplace), prepared, {checkOnly});
+    if (checkOnly && version !== null) {
+      console.error(`${kinds[i].label}: the fxtr plugin needs a content update`);
+      process.exitCode = 1;
+      return;
+    }
     console.log(version === null ? `${kinds[i].label}: the plugin's skills are up to date`
       : `${kinds[i].label}: synced the skills into the fxtr plugin at version ${version}`);
   });

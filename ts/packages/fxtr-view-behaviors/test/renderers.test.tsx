@@ -60,6 +60,24 @@ it("interleaves context/model turns instead of grouping all answers together", (
   expect(screen.getByText("2 responses")).toBeTruthy();
 });
 
+it("marks the message a selector picks, counting turn by turn, and ignores one of another shape", () => {
+  const marked = (params: Record<string, JsonValue>) => {
+    const { container, unmount } = render(
+      <TableShellProvider registry={registry} entities={new Map([["entity", rollout]])}>
+        <RenderEntity slot={EntityPanel} id={new EntityID("entity")} storage={atom<JsonValue>(null)} params={params} />
+      </TableShellProvider>,
+    );
+    const found = [...container.querySelectorAll(".message[data-selected]")].map((node) => node.textContent);
+    unmount();
+    return found;
+  };
+  expect(marked({ selector: { message: 2 } })).toEqual(["userFollow-up question"]);
+  expect(marked({ selector: { message: 3 } })).toEqual(["assistantSecond answer"]);
+  expect(marked({ selector: { message: 9 } })).toEqual([]);
+  expect(marked({ selector: "2" })).toEqual([]);
+  expect(marked({})).toEqual([]);
+});
+
 const initialization = (text: string) => ({
   $type: SET_SYSTEM_MESSAGE,
   message: { ...message("user", text), $type: tag("SystemMessage"), role: "system" as const },

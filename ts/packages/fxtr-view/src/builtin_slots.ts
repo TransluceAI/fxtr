@@ -13,9 +13,12 @@ import { declareViewSlot, type EntityViewProps, type InvocationViewProps } from 
 /** A panel's persistent per-mount state. JSON only, so a shell may persist it. */
 export type StorageAtom = PrimitiveAtom<JsonValue>;
 
-/** Props of an `EntityPanel` view: the entity shown and per-mount storage. */
+/** Props of an `EntityPanel` view: the entity shown, per-mount storage, and the params it
+ *  declares that are bound where it is opened (all optional: a plain link to the entity binds
+ *  none). A host that binds none leaves `params` out. */
 export interface EntityPanelProps extends EntityViewProps {
   readonly storage: StorageAtom;
+  readonly params?: ViewParams;
 }
 
 /** Props of a link view: the id alone. */

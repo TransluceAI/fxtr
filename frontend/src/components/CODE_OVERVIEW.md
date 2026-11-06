@@ -187,11 +187,13 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   icon, `CUSTOM_VIEW_ICON`, before the last part of a page or a view through a renderer of the
   project's own, `isProjectRendererId`; the step's kind, `KIND_ICONS`, for a node; an invocation's receipt, `INVOCATION_ICON`; an entity's isometric cube,
   `ENTITY_ICON`, in `lib/kindIcons.ts`; a file for a function's code); the panel's own params as gray chips (wrapping onto a line of
-  their own under the path when they do not fit beside it); a count of those from the slice
+  their own under the path when they do not fit beside it), each showing a short value (a string or
+  number that fits) and otherwise its name alone (a selector), on a panel showing an entity by its
+  cid with a × clearing it; a count of those from the slice
   (`slice n`), those inherited from the panel before it left out; the pin (filled violet on a pinned
   panel; on a browsing one, a button shown only while the pointer is over it), back, forward, the view switcher, close. A pinned panel's head has a faint violet wash (`--pinned-bg`); a browsing panel's is the panel's own light grey. Hovering the path or the
   count opens the address card, which says what the icon means, its path as the panel stores it, and where each
-  binding comes from.
+  binding comes from, each with its value in full (a selector's too).
 - **Code.** A card's function, and the level's workflow in its header (`LevelHeader`), show their
   docstring and an "implemented" chip (`SourceDocs`, whose `codeAt` is the node's step path: the
   card's `[...levelPath, step.name]`, the header's `levelPath`; an argument's hover preview shows
@@ -292,7 +294,8 @@ components/
 │                        a run's progress line along its foot until it is all done, cards as narrow
 │                        as their content, mapped/replica dim chips stacked down the card,
 │                        parallax pan and zoom (primary-modifier scroll or trackpad pinch; physical
-│                        Control-scroll on Mac pans), off-screen card counts at each rank's
+│                        Control-scroll on Mac pans; `=`/`-` zoom and `0` fits when not typing),
+│                        off-screen card counts at each rank's
 │                        sides, and selected-card navigation
 ├── flowchartParallax.ts the flowchart's parallax pan: one pan fraction slides every rank
 │                        sideways on its own (an overflowing rank scrolls end to end, a rank
@@ -405,7 +408,8 @@ components/
 ├── ThemeToggle.tsx      at the foot of the rail: follow the system theme, or pick light or
 │                        dark
 ├── Toasts.tsx           sonner's toaster in the top right corner, its toasts unstyled and
-│                        drawn as the viewer's floating cards (lib/launches.tsx raises them)
+│                        drawn as the viewer's floating cards (lib/launches.tsx and
+│                        lib/linkProblem.tsx raise them)
 ├── Status.tsx           Loading, Problem (a failed load with its backend), RetryLine (a
 │                        failed read and its retry button)
 └── ValueModal.tsx, Markdown.tsx, ErrorBoundary.tsx

@@ -3,9 +3,9 @@ import { Toaster } from 'sonner'
 import styles from './Toasts.module.css'
 
 /**
- * Where the viewer's toasts appear (sonner's `toast()`; `lib/launches.tsx` raises them): the top
- * right corner, each drawn like the viewer's other floating cards. sonner positions, stacks, and
- * animates them, and pauses a toast's countdown while it is hovered or the page is hidden, so one
+ * Where the viewer's toasts appear (sonner's `toast()`; `lib/launches.tsx` and `lib/linkProblem.tsx`
+ * raise them): the top right corner, each drawn like the viewer's other floating cards. sonner
+ * positions, stacks, and animates them, and pauses a toast's countdown while it is hovered or the page is hidden, so one
  * raised while the user is in another window waits for them. The classes here are all of their look.
  */
 export function Toasts() {

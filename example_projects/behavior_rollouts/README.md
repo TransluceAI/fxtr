@@ -45,7 +45,9 @@ uv run python launch_openai.py --model MODEL --model ANOTHER_MODEL
 uv run python launch_openai.py --model MODEL --question "What is a prime?" --question "Give an example."
 ```
 
-The scripted example needs Postgres but makes no provider calls. The OpenAI example requires
+The scripted example needs Postgres but makes no provider calls. It also picks each
+conversation's longest reply; open one in the viewer, and its link to the conversation marks that
+reply there. The OpenAI example requires
 `OPENAI_API_KEY`, accepts `--max-tokens` and `--concurrency`, and uses a fresh cache namespace on
 each launch. `--question` replaces the default dataset with one ordered sequence. The workflow's
 **compare** panel aligns two models' replies by turn and retains their system initialization.

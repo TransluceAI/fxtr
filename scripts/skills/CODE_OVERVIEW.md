@@ -9,7 +9,7 @@ setup and publishing.
 
 ```
 skills/
-├── sync.mjs          CLI: prepare this checkout and sync each marketplace checkout given
+├── sync.mjs          CLI: prepare this checkout and sync or check the given marketplaces
 ├── plugin.mjs        marketplace kinds (Claude Code, Codex), plugin file comparison, copying,
 │                     manifests, and patch version bumps
 ├── prepare.mjs       CLI: checkout and new output directory; errors on stderr, nonzero exit
@@ -47,8 +47,10 @@ not).
 Provenance records the source revision, package versions, and whether source or preparation
 tooling differs from the revision; each skill's content hash covers its other generated files.
 Plugin sync ignores provenance when comparing content, so a new source commit alone causes
-neither a write nor a version bump. Content changes bump the plugin manifest's patch version, and the
-marketplace entry's where it has one; first sync creates version 0.1.0. Each marketplace's plugin
+neither a write nor a version bump. A content change copies all shipped skills from one snapshot
+and bumps the plugin manifest's patch version and the marketplace entry's where it has one.
+`sync.mjs --check` uses the same comparison and exits nonzero if a marketplace needs an update,
+without writing files. First sync creates version 0.1.0. Each marketplace's plugin
 keeps its own version. Other plugins and manifest fields are preserved.
 
 The output directory is the boundary between preparation and sync. Every skill is fully

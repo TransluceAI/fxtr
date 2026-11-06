@@ -146,6 +146,34 @@ describe("RenderSlot", () => {
 });
 
 describe("RenderEntity", () => {
+  it("hands a renderer only the params it declares", () => {
+    const HIGHLIGHT = declareView(EntityPanel, "org.example.Note", "highlight", { params: ["selector"] });
+    const seen: unknown[] = [];
+    const withParams = dispatchRegistry([
+      renderer(HIGHLIGHT, ({ params }) => {
+        seen.push(params);
+        return <div>highlight</div>;
+      }),
+      renderer(EntityPanel, "org.example.Note", "plain", (props: EntityPanelProps) => {
+        seen.push(props.params);
+        return <div>plain</div>;
+      }),
+    ]);
+    const params = { selector: { line: 2 }, other: "x" };
+    const { rerender } = render(
+      <TableShellProvider registry={withParams} entities={entities}>
+        <RenderEntity slot={EntityPanel} id={new EntityID("note1")} storage={storage} params={params} />
+      </TableShellProvider>,
+    );
+    expect(screen.getByText("highlight")).toBeTruthy();
+    rerender(
+      <TableShellProvider registry={withParams} entities={entities}>
+        <RenderEntity slot={EntityPanel} renderer="plain" id={new EntityID("note1")} storage={storage} params={params} />
+      </TableShellProvider>,
+    );
+    expect(screen.getByText("plain")).toBeTruthy();
+    expect(seen).toEqual([{ selector: { line: 2 } }, {}]);
+  });
   it("shows Loading, then the dispatched component with the id", () => {
     const { rerender } = render(
       <PendingShellProvider registry={registry}>
@@ -451,7 +479,7 @@ describe("RenderInvocation", () => {
 
 describe("views declared within another", () => {
   function Detail({ invocations, params }: InvocationPanelProps) {
-    return <div>detail {invocations.length} {params?.["point"]}</div>;
+    return <div>detail {invocations.length} {String(params?.["point"])}</div>;
   }
   const CHART = declareView(InvocationPanel, "rollout", "chart");
   const POINT = declareView(InvocationPanel, "rollout", "point", { within: CHART, params: ["point"] });

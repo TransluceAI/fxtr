@@ -12,6 +12,7 @@ import { dragLink, useEntityOpener } from '../lib/openEntity'
 import { useLevelOpener } from '../lib/openLevel'
 import { keyColumnKey } from '../model/schema'
 import type { Column, KeyValue, StepDoc, StepInvocation, TablePage, TableRow } from '../types'
+import type { Params } from '../panes/address'
 import { CardKeys } from './CardKeys'
 import { KeyValueList } from './KeyValueList'
 import { shownPage } from './PagedTable'
@@ -188,7 +189,7 @@ function CardRows({ step, matching, onPick }: Props) {
     return next !== null
   }
 
-  const pick = (next: Readonly<Record<string, KeyValue>>) => {
+  const pick = (next: Params) => {
     setSlice(next, step.id)
     onPick?.()
   }

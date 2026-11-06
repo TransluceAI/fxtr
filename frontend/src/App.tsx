@@ -46,7 +46,7 @@ import { CardSpotlightContext, createSpotlightStore, type CardSpotlight } from "
 import { Store, useStableCallback } from "./lib/store";
 import { indexSteps, levelTrail, mappedKeyOf } from "./lib/steps";
 import { OpenLevelContext, type LevelOpener } from "./lib/openLevel";
-import type { JobSummary, KeyValue, LevelRef } from "./types";
+import type { JobSummary, LevelRef } from "./types";
 import { DetailPane } from "./components/DetailPane";
 import { ErrorBoundary } from "./components/ErrorBoundary";
 import { Flowchart } from "./components/Flowchart";
@@ -74,7 +74,7 @@ import { ColumnsView } from "./panes/ColumnsView";
 import { RAIL, TRACE } from "./panes/columns";
 import { useColumns, type Centre } from "./panes/useColumns";
 import { useJobCatalog } from "./panes/catalog";
-import { VIEWS } from "./panes/address";
+import { VIEWS, type Params } from "./panes/address";
 import type { LinkTarget } from "./panes/drag";
 import { nodeTarget, pageTarget } from "./lib/linkBase";
 import type { EntityOpener } from "./lib/openEntity";
@@ -300,9 +300,7 @@ function JobView({
   const [jumpGlow, setJumpGlow] = useState<{ id: string; seq: number } | null>(null);
   /** The slice: the value picked for each dim sliced on, shared by every card and pane, and kept
    *  across levels, since a dim's name means the same thing in each. */
-  const [slice, setSlice] = useState<
-    Readonly<Record<string, KeyValue>>
-  >({});
+  const [slice, setSlice] = useState<Params>({});
   /** Each card's table state: a store, read by each card for its own. */
   const [cardTables] = useState(
     () => new Store<ReadonlyMap<string, CardTableState>>(new Map()),

@@ -14,7 +14,7 @@
 import type { AnyRenderer } from "./renderer";
 
 /** The version of the bundle contract, stamped into a bundle's manifest by the build. */
-export const VIEW_API_VERSION = 3;
+export const VIEW_API_VERSION = 4;
 
 /** What a bundle contributes to a shell. A shell adds `renderers` after its own defaults; later
  *  contributions are new fields. */

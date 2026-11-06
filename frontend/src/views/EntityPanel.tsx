@@ -18,6 +18,7 @@ import { PagedTable } from '../components/PagedTable'
 import { LEAF_PROGRESS } from '../model/level'
 import type { TableDescriptor } from '../types'
 import { LoadingContent } from '../lib/loading'
+import type { Params } from '../panes/address'
 
 const fallbacks = { loading: <LoadingContent><PlaceholderLoading /></LoadingContent> }
 
@@ -28,13 +29,16 @@ const fallbacks = { loading: <LoadingContent><PlaceholderLoading /></LoadingCont
  *  component behind an info icon. In a panel of its own, the choice is the panel's address's view
  *  (`view`, set through `onView`), so back and forward return to it; read against the views the entity's type offers, a
  *  view it does not offer shows as the default. (A node's panel dispatches its one output entity to
- *  the same slot, with its own view dropdown.) */
-export function EntityPanel({ cid, view, onView }: {
+ *  the same slot, with its own view dropdown.) Whichever view shows it is handed `params`, each view
+ *  those it declares. */
+export function EntityPanel({ cid, view, onView, params = NO_PARAMS }: {
   cid: string
   /** The view chosen for it, and its setter; left out (an entity shown inside a value), the choice
    *  is the mount's own. */
   view?: string | null
   onView?: (view: string | null) => void
+  /** The params its views are opened at: a panel's at the entity, its own (a selector). */
+  params?: Params
 }) {
   const meta = useEntityMetadata(cid)
   const [local, setLocal] = useState<string | null>(null)
@@ -44,17 +48,20 @@ export function EntityPanel({ cid, view, onView }: {
   if (meta.error) return <div role="alert">{String(meta.error)} <button onClick={meta.reload}>retry</button></div>
   if (!meta.value) return <span>{meta.loading ? 'loading entity…' : 'entity not found'}</span>
   if (meta.value.typeTag === 'org.transluce.fxtr.core.Array')
-    return <PagedArrayPanel cid={cid} renderer={renderer} setRenderer={setRenderer} />
-  return <FullEntityPanel cid={cid} renderer={renderer} setRenderer={setRenderer} />
+    return <PagedArrayPanel cid={cid} renderer={renderer} setRenderer={setRenderer} params={params} />
+  return <FullEntityPanel cid={cid} renderer={renderer} setRenderer={setRenderer} params={params} />
 }
+
+const NO_PARAMS: Params = Object.freeze({})
 
 /** The renderer chosen for an `EntityPanel` (null: the default), and its setter. */
 interface Choice {
   renderer: string | null
   setRenderer: (renderer: string | null) => void
+  params: Params
 }
 
-function PagedArrayPanel({ cid, renderer: remembered, setRenderer }: { cid: string } & Choice) {
+function PagedArrayPanel({ cid, renderer: remembered, setRenderer, params }: { cid: string } & Choice) {
   const choices = useRenderers(EntityPanelSlot, 'org.transluce.fxtr.core.Array')
   const renderer = chosenRenderer(choices, remembered)
   const id = useMemo(() => new EntityID(cid), [cid])
@@ -65,19 +72,20 @@ function PagedArrayPanel({ cid, renderer: remembered, setRenderer }: { cid: stri
   // An array's rows are not a path into whatever holds it, so its links open their entities alone.
   return <LinkBase base={null}><div className="view-panel">
     <RendererSelect choices={choices} hostDefaultLabel="paged array" value={renderer} onChange={setRenderer} />
-    {renderer ? <RenderEntity slot={EntityPanelSlot} id={id} storage={storage} renderer={renderer} fallbacks={fallbacks} />
+    {renderer ? <RenderEntity slot={EntityPanelSlot} id={id} storage={storage} renderer={renderer} fallbacks={fallbacks} params={params} />
       : <PagedTable key={cid} table={table} source={{cid}} />}
   </div></LinkBase>
 }
 
-function FullEntityPanel({ cid, renderer, setRenderer }: { cid: string } & Choice) {
+function FullEntityPanel({ cid, renderer, setRenderer, params }: { cid: string } & Choice) {
   const id = useMemo(() => new EntityID(cid), [cid])
   const storage = useMemo(() => atom<JsonValue>(null), [])
   const choices = useRenderers(EntityPanelSlot, useTypeName(id))
   const chosen = chosenRenderer(choices, renderer)
   return (
     <div className="view-panel">
-      <RenderEntity slot={EntityPanelSlot} id={id} storage={storage} fallbacks={fallbacks} {...(chosen === null ? {} : { renderer: chosen })} />
+      <RenderEntity slot={EntityPanelSlot} id={id} storage={storage} fallbacks={fallbacks} params={params}
+        {...(chosen === null ? {} : { renderer: chosen })} />
       <span className={styles.corner}>
         {choices.length > 0 && <RendererSelect choices={choices} value={chosen} onChange={setRenderer} />}
       </span>

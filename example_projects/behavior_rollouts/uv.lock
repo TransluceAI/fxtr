@@ -136,7 +136,7 @@ dev = [
 
 [[package]]
 name = "behaviors"
-version = "0.0.1a4"
+version = "0.0.1a5"
 source = { editable = "../../behaviors" }
 dependencies = [
     { name = "anyio" },
@@ -261,7 +261,7 @@ wheels = [
 
 [[package]]
 name = "fxtr"
-version = "0.1.0a0"
+version = "0.2.0a0"
 source = { editable = "../../fxtr" }
 dependencies = [
     { name = "anyio" },
@@ -295,7 +295,7 @@ requires-dist = [
     { name = "asyncpg", marker = "extra == 'runner'", specifier = ">=0.30" },
     { name = "cattrs", specifier = ">=26.1.0" },
     { name = "cbrrr", specifier = ">=1.1.0" },
-    { name = "duckdb", specifier = ">=1.5.0" },
+    { name = "duckdb", specifier = ">=1.5.0,<2.0" },
     { name = "frozendict", specifier = ">=2.4.6" },
     { name = "fxtr", extras = ["runner"], marker = "extra == 'debug-web'" },
     { name = "graphql-core", marker = "extra == 'debug-web'", specifier = ">=3.2,<3.3" },
