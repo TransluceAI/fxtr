@@ -14,10 +14,12 @@ export {
   RenderEntity,
   RenderInvocation,
   RenderSlot,
+  RenderValue,
   useRegistry,
   useRenderers,
   type DispatchFallbacks,
   type RenderEntityProps,
   type RenderInvocationProps,
   type RenderSlotProps,
+  type RenderValueProps,
 } from "./render";

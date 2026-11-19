@@ -6,6 +6,7 @@
 // renderer fills a slot is chosen by the *subject type*, the kind of thing being rendered: an
 // entity's type name, or a step / workflow's registered name. The slot itself does not care which.
 
+import type { EntityData } from "./data";
 import type { EntityID } from "./ids";
 import type { Spawn } from "./invocation";
 
@@ -29,6 +30,13 @@ export function declareViewSlot<Props extends object>(debugName: string): ViewSl
  *  entity. */
 export interface EntityViewProps {
   readonly id: EntityID;
+}
+
+/** The props every value view receives: the value it shows, given in full rather than by id
+ *  because it is not a stored entity (a step's live preview). A slot whose `Props` extends this is
+ *  a *value slot*; its subject type is the value's type name (`$type`), as for an entity. */
+export interface ValueViewProps {
+  readonly value: EntityData;
 }
 
 /** The props every invocation view receives: the invocations it shows, each with its key within

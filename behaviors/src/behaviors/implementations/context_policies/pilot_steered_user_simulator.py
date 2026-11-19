@@ -58,12 +58,17 @@ from behaviors.types.cache_control import CacheControl
 from behaviors.types.content import (
     CacheableContentText,
     ContentReasoning,
-    ContentSummarizedReasoning,
     ContentText,
 )
 from behaviors.types.message import AssistantMessage, ChatMessage, SystemMessage, UserMessage
 from behaviors.types.namespace import behaviors_type
-from behaviors.types.response import ModelRequest, ModelResponse, ReasoningParams, SamplingParams
+from behaviors.types.response import (
+    ModelRequest,
+    ModelResponse,
+    ReasoningParams,
+    SamplingParams,
+    UnexpectedStopError,
+)
 from behaviors.types.retry import RetryConfig
 from behaviors.types.rollout import EndRollout, UserTurn, find_metadata
 from fxtr.entity_defns.dataclass_bases import TaggedDataclass
@@ -189,7 +194,7 @@ def _response_texts(response: ModelResponse) -> tuple[str, str | None]:
         for block in message.content:
             if isinstance(block, ContentText):
                 text_parts.append(block.text)
-            elif isinstance(block, (ContentReasoning, ContentSummarizedReasoning)):
+            elif isinstance(block, ContentReasoning):
                 thinking_parts.append(block.text)
     thinking = "".join(thinking_parts)
     return "".join(text_parts).strip(), thinking or None
@@ -458,12 +463,14 @@ class PilotSteeredUserSimulatorSession:
                 raise ModelCallFailedError(response)
             raw_response, thinking = _response_texts(response)
             try:
+                # A refused, filtered or truncated answer is retried like one that does not parse.
+                response.raise_for_stop_reason()
                 parsed = parse_pilot_response(
                     raw_response,
                     expected_candidate_count=len(candidates),
                     allow_custom_text=config.allow_custom_text,
                 )
-            except ValueError as exc:
+            except (ValueError, UnexpectedStopError) as exc:
                 if attempt >= PILOT_RESPONSE_MAX_ATTEMPTS:
                     raise
                 logger.warning(

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { EntityDataError, EntityID, isDataMap, isEntityData, typeNameOf, type EntityData } from "../src/index";
+import { EntityDataError, EntityID, isDataMap, isEntityData, isPartial, markPartial, typeNameOf, type EntityData } from "../src/index";
 
 describe("entity data", () => {
   it("reads the type name off the tag", () => {
@@ -17,5 +17,21 @@ describe("entity data", () => {
     expect(isDataMap(new EntityID("bafy1"))).toBe(false);
     expect(isEntityData({ $type: "t" })).toBe(true);
     expect(isEntityData({ type: "t" })).toBe(false);
+  });
+});
+
+describe("markPartial / isPartial", () => {
+  it("tells the marked maps of a value from the finished ones, without changing the data", () => {
+    const finished = { $type: "t.Turn", text: "done" };
+    const inFlight = markPartial({ $type: "t.Turn", text: "hal" });
+    const value = { $type: "t.Rollout", turns: [finished, inFlight] };
+    expect(isPartial(inFlight)).toBe(true);
+    expect(isPartial(finished)).toBe(false);
+    expect(isPartial(value)).toBe(false);
+    expect(Object.keys(inFlight)).toEqual(["$type", "text"]);
+    expect(JSON.stringify(inFlight)).toBe('{"$type":"t.Turn","text":"hal"}');
+    // A copy is a new map, unmarked.
+    expect(isPartial({ ...inFlight })).toBe(false);
+    for (const leaf of [null, undefined, "s", 1, [inFlight]]) expect(isPartial(leaf as never)).toBe(false);
   });
 });

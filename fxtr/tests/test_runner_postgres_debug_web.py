@@ -13,6 +13,7 @@ import json
 import random
 import socket
 import sys
+import uuid
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -49,10 +50,14 @@ from starlette.routing import Mount  # noqa: E402
 from starlette.types import ASGIApp, Message  # noqa: E402
 
 from fxtr.entity_defns.array import ARRAY_TYPE, Array  # noqa: E402
+from fxtr.entity_defns.converter import DEFAULT_CONVERTER  # noqa: E402
+from fxtr.entity_defns.dataclass_bases import TaggedDataclass  # noqa: E402
+from fxtr.entity_defns.partial import Partial  # noqa: E402
 from fxtr.experiment.handles import ArrayHandle  # noqa: E402
 from fxtr.runner.postgres.client import LocalProjectClient  # noqa: E402
 from fxtr.runner.postgres.database import Database  # noqa: E402
 from fxtr.runner.postgres.debug_web import app as app_module  # noqa: E402
+from fxtr.runner.postgres.debug_web import browse  # noqa: E402
 from fxtr.runner.postgres.debug_web import ports as ports_module  # noqa: E402
 from fxtr.runner.postgres.debug_web import server as server_module  # noqa: E402
 from fxtr.runner.postgres.debug_web.app import (  # noqa: E402
@@ -80,6 +85,8 @@ from fxtr.runner.postgres.debug_web.dev_server import (  # noqa: E402
     run_dev_server,
 )
 from fxtr.runner.postgres.debug_web.ports import ViewerPortError, viewer_url  # noqa: E402
+from fxtr.runner.postgres.debug_web.reader import ViewerReader  # noqa: E402
+from fxtr.runner.postgres.debug_web.scope import JobScope  # noqa: E402
 from fxtr.runner.postgres.debug_web.server import serve  # noqa: E402
 from fxtr.runner.postgres.debug_web.viewer_build import (  # noqa: E402
     VIEWER_SOURCES_FILENAME,
@@ -96,9 +103,16 @@ from fxtr.runner.postgres.runner import RunnerSettings  # noqa: E402
 pytestmark = pytest.mark.anyio
 
 
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Rolling(TaggedDataclass, fxtr_type="test.fxtr.debug_web.Rolling"):
+    seed: str
+    value: int
+
+
 @step(inputs={"seed": str}, output=int)
 async def roll(context: StepContext, seed: str) -> int:
     context.log(f"rolling {seed}")
+    context.preview(Partial(Rolling, seed=seed))
     return 42
 
 
@@ -124,7 +138,13 @@ async def _completed_job(database: Database) -> AsyncIterator[tuple[LocalProject
 
 async def _run(schema: Any, client: LocalProjectClient, query: str, **variables: Any) -> dict:
     ok, result = await graphql(
-        schema, {"query": query, "variables": variables}, context_value={"client": client}
+        schema,
+        {"query": query, "variables": variables},
+        context_value={
+            "reader": ViewerReader(
+                client.database, stale_after=client.project.stale_after, scope=JobScope.all()
+            )
+        },
     )
     assert ok, result
     assert "errors" not in result, result["errors"]
@@ -136,13 +156,16 @@ async def test_job_view(database: Database) -> None:
     async with _completed_job(database) as (client, job):
         from fxtr.runner.postgres.debug_web.browse import job_page, level_overview, run_page
 
-        overview = await level_overview(client, job, "root")
+        overview = await level_overview(client.database, job, "root")
         assert overview is not None
         assert overview["state"] == "completed"
         assert "spawns" not in overview and "attempts" not in overview
         assert overview["attemptCount"] == 1
         assert overview["finishedAt"] is not None
-        assert (await job_page(client, 10, None))["items"][0]["state"] == "succeeded"
+        reader = ViewerReader(
+            client.database, stale_after=client.project.stale_after, scope=JobScope.all()
+        )
+        assert (await job_page(reader, 10, None))["items"][0]["state"] == "succeeded"
         run_id = next(node["identity"] for node in overview["nodes"] if node["counts"])
         data = await _run(
             schema,
@@ -191,12 +214,12 @@ async def test_job_view(database: Database) -> None:
         assert data["jobSummary"]["id"] == str(job)
         assert data["jobSummaries"]["items"][0]["id"] == str(job)
         assert data["entityMetas"][0]["typeTag"] == ARRAY_TYPE
-        page = await run_page(client, job, "root", run_id, {}, 1, None)
+        page = await run_page(client.database, job, "root", run_id, {}, 1, None)
         assert page["total"] == 1
         assert page["items"][0]["state"] == "completed"
         from fxtr.runner.postgres.debug_web.output import OutputStore
 
-        outputs = OutputStore(client)
+        outputs = OutputStore(client.database, JobScope.all())
         try:
             output = await outputs.page({"jobId": str(job), "pathname": "root", "nodeId": run_id})
             assert output["total"] == 1 and not output["hasMore"]
@@ -209,7 +232,14 @@ async def test_job_view(database: Database) -> None:
                     } }""",
                     "variables": {"source": {"cid": overview["resultCid"]}},
                 },
-                context_value={"client": client, "outputs": outputs},
+                context_value={
+                    "reader": ViewerReader(
+                        client.database,
+                        stale_after=client.project.stale_after,
+                        scope=JobScope.all(),
+                    ),
+                    "outputs": outputs,
+                },
             )
             assert ok and "errors" not in response, response
             assert response["data"]["outputPage"]["rows"] == output["rows"]
@@ -283,7 +313,7 @@ async def test_job_view(database: Database) -> None:
                 """
                 query($j: ID!, $k: String!) {
                   step(jobId: $j, cacheKey: $k) {
-                    id cacheKey stepName state resultCid
+                    id cacheKey stepName state resultCid resultTaken
                     attempt { id state logs { message } }
                   }
                 }
@@ -296,7 +326,7 @@ async def test_job_view(database: Database) -> None:
         assert pin["cacheKey"] == cache_keys[0]
         assert pin["stepName"] == roll.name
         assert pin["state"] == "completed"
-        assert pin["resultCid"] is not None
+        assert pin["resultCid"] is not None and pin["resultTaken"] is True
         assert any("rolling s" in log["message"] for log in pin["attempt"]["logs"])
 
         # Missing per-entity targets resolve to null (nullable fields, not errors).
@@ -345,7 +375,7 @@ async def test_output_array_cache_eviction_and_default_pages(database: Database,
         async with database.transaction() as tx:
             await client.entities.flush(tx)
         monkeypatch.setattr(output, "MAX_ARRAYS", 2)
-        store = output.OutputStore(client)
+        store = output.OutputStore(client.database, JobScope.all())
         try:
             first = await store.page(sources[0])
             assert len(first["rows"]) == 25 and first["total"] == 60 and first["hasMore"]
@@ -416,6 +446,55 @@ async def test_array_and_entity_views(database: Database) -> None:
 
         missing = await _run(schema, client, ENTITY_QUERY, c="b" + "a" * 50)
         assert missing["entity"] is None
+
+
+@step(inputs={"seed": str}, output=int)
+async def roll_badly(context: StepContext, seed: str) -> int:
+    context.preview(Partial(Rolling, seed=seed))
+    raise RuntimeError("bad roll")
+
+
+@workflow(inputs={"seed": str}, output=int)
+async def roll_badly_once(context: WorkflowContext, seed: ArrayHandle[str]) -> ArrayHandle[int]:
+    return context.run_step("roll", roll_badly, {"seed": seed})
+
+
+_STEP_PREVIEW_QUERY = """
+query($j: ID!, $k: String!) {
+  step(jobId: $j, cacheKey: $k) { attempt { id } preview { attemptId seq at } }
+}
+"""
+
+
+async def test_a_step_preview_is_described_and_served(database: Database) -> None:
+    """A failed step keeps its last preview (a completed one's is deleted with its result)."""
+    async with a_client(database, roll_badly, roll_badly_once, settings=_FAST) as client:
+        with anyio.fail_after(15):
+            status = await client.run(roll_badly_once, {"seed": Array.scalar("s", str)})
+        assert status.state == "stopped", status
+        job = status.job_id
+        app = create_app(client)
+        (key,) = [s.cache_key for s in (await client.jobs.status(job)).steps.values()]
+        pin = (await _run(build_schema(), client, _STEP_PREVIEW_QUERY, j=str(job), k=key))["step"]
+        preview = pin["preview"]
+        assert preview["attemptId"] == pin["attempt"]["id"] and preview["seq"] == 1
+        status, headers, body = await a_request(app, f"/api/previews/{preview['attemptId']}")
+        assert (status, headers["content-type"]) == (200, "application/cbor")
+        assert headers["x-fxtr-preview-seq"] == "1"
+        assert DEFAULT_CONVERTER.structure(codec.decode(body), Partial[Rolling]) == Partial(
+            Rolling, seed="s"
+        )
+        assert (await a_request(app, "/api/previews/not-a-uuid"))[0] == 400
+        assert (await a_request(app, f"/api/previews/{uuid.uuid4()}"))[0] == 404
+
+
+async def test_a_completed_step_has_no_preview(database: Database) -> None:
+    async with _completed_job(database) as (client, job):
+        app = create_app(client)
+        (key,) = [s.cache_key for s in (await client.jobs.status(job)).steps.values()]
+        pin = (await _run(build_schema(), client, _STEP_PREVIEW_QUERY, j=str(job), k=key))["step"]
+        assert pin["preview"] is None
+        assert (await a_request(app, f"/api/previews/{pin['attempt']['id']}"))[0] == 404
 
 
 async def test_many_entities_come_back_in_one_response(database: Database) -> None:
@@ -557,17 +636,19 @@ async def test_spawn_states_and_versions_follow_a_live_job(database: Database) -
             assert blocked != untaken
             from fxtr.runner.postgres.debug_web.browse import key_page, level_overview, run_page
 
-            overview = await level_overview(client, job, "root")
+            overview = await level_overview(client.database, job, "root")
             assert overview is not None and overview["state"] == "running"
             for node in overview["nodes"]:
                 if node["counts"] is None:
                     continue
                 node_id = node["identity"]
                 assert node["counts"] == state_counts() | {"completed": 1, "running": 1}
-                page = await key_page(client, job, "root", node_id, "seed", {}, "", 1, None)
+                page = await key_page(
+                    client.database, job, "root", node_id, "seed", {}, "", 1, None
+                )
                 assert page["total"] == 2 and page["items"][0]["value"] == "fast"
                 next_page = await key_page(
-                    client, job, "root", node_id, "seed", {}, "", 1, page["next"]
+                    client.database, job, "root", node_id, "seed", {}, "", 1, page["next"]
                 )
                 assert next_page["items"][0]["value"] == "slow"
                 pages = await _run(
@@ -593,16 +674,18 @@ async def test_spawn_states_and_versions_follow_a_live_job(database: Database) -
                 )
                 assert pages["keyPage"]["total"] == 2
                 assert pages["runPage"]["items"][0]["state"] == "running"
-                picked = await run_page(client, job, "root", node_id, {"seed": "slow"}, 10, None)
+                picked = await run_page(
+                    client.database, job, "root", node_id, {"seed": "slow"}, 10, None
+                )
                 assert picked["total"] == 1 and picked["items"][0]["state"] == "running"
                 unfinished = await run_page(
-                    client, job, "root", node_id, {}, 10, None, unfinished=True
+                    client.database, job, "root", node_id, {}, 10, None, unfinished=True
                 )
                 assert [item["key"] for item in unfinished["items"]] == [["slow"]]
                 assert unfinished["total"] == 1
             from fxtr.runner.postgres.debug_web.output import OutputStore
 
-            outputs = OutputStore(client)
+            outputs = OutputStore(client.database, JobScope.all())
             source: OutputSource = {
                 "jobId": str(job),
                 "pathname": "root",
@@ -623,6 +706,199 @@ async def test_spawn_states_and_versions_follow_a_live_job(database: Database) -
                 assert current["rows"][0] == before["rows"][0]
             finally:
                 outputs.close()
+
+
+# ---- a step that finishes after the workflow attempt waiting on it has ended ----
+
+OUTLIVING_GATES: dict[str, anyio.Event] = {}
+"""Holds each ``outliving`` call until the event at its seed is set."""
+OUTLIVING_CALLS: list[str] = []
+"""The seed of every ``outliving`` call, in the order they started."""
+OUTLIVING_FAILS = True
+"""Whether the ``outliving`` call with the seed ``"fails"`` raises."""
+
+
+@step(inputs={"seed": str}, output=int)
+async def outliving(context: StepContext, seed: str) -> int:
+    OUTLIVING_CALLS.append(seed)
+    context.preview(Partial(Rolling, seed=seed))
+    await OUTLIVING_GATES[seed].wait()
+    if seed == "fails" and OUTLIVING_FAILS:
+        raise RuntimeError("bad seed")
+    return len(seed)
+
+
+@workflow(inputs={"seeds": ("[seed: str]", str)}, output=("[seed: str]", int))
+async def outliving_sweep(context: WorkflowContext, seeds: ArrayHandle[str]) -> ArrayHandle[int]:
+    return context.run_step("outliving", outliving, {"seed": seeds}, map_over=["seed"])
+
+
+OUTLIVING_PINS_QUERY = """
+query($j: ID!) {
+  invocation(jobId: $j, pathname: "root") { spawns { key stepCacheKey } }
+}
+"""
+
+OUTLIVING_PIN_QUERY = """
+query($j: ID!, $k: String!) {
+  step(jobId: $j, cacheKey: $k) {
+    state resultCid resultTaken provenance { jobId } attempt { state finishedAt }
+    preview { seq }
+  }
+}
+"""
+
+
+async def _pins(schema: Any, client: LocalProjectClient, job: JobID) -> dict[str, dict[str, Any]]:
+    """The step pin of each of the root's spawns, by seed."""
+    spawns = (await _run(schema, client, OUTLIVING_PINS_QUERY, j=str(job)))["invocation"]["spawns"]
+    return {
+        spawn["key"][0]: (
+            await _run(schema, client, OUTLIVING_PIN_QUERY, j=str(job), k=spawn["stepCacheKey"])
+        )["step"]
+        for spawn in spawns
+    }
+
+
+async def test_a_step_outliving_its_workflow_attempt_is_completed_with_its_result(
+    database: Database,
+) -> None:
+    """One call of a mapped step fails while two others are running. The workflow attempt ends at
+    once, and the two run to the end with nothing of the job left to take their results. Each is
+    ``completed`` from the moment it finishes, with its result and no preview, both while the job
+    attempt is still active (the other is still running) and once the job has stopped; its pin
+    says the job has not taken the result. A resume takes both results without running the steps
+    again."""
+    from fxtr.runner.postgres.debug_web.browse import level_overview, run_page
+
+    global OUTLIVING_FAILS
+    seeds = ("fails", "late", "later")
+    OUTLIVING_GATES.clear()
+    OUTLIVING_GATES.update({seed: anyio.Event() for seed in seeds})
+    OUTLIVING_CALLS.clear()
+    OUTLIVING_FAILS = True
+    schema = build_schema()
+
+    def spawns(**states: str) -> dict[tuple[str, str], str]:
+        return {("step", seed): state for seed, state in states.items()}
+
+    async with a_client(database, outliving, outliving_sweep, settings=_FAST) as client:
+        with anyio.fail_after(30):
+            handle = await client.submit(
+                outliving_sweep,
+                {"seeds": Array.from_items([((s,), s) for s in seeds], ("[seed: str]", str))},
+            )
+            job = handle.job_id
+            running = spawns(fails="running", late="running", later="running")
+            await _await_live(schema, client, job, {"state": "running", "spawns": running})
+
+            # One call fails: the workflow attempt ends, and the other two keep running.
+            OUTLIVING_GATES["fails"].set()
+            failed = spawns(fails="failed", late="running", later="running")
+            await _await_live(schema, client, job, {"state": "interrupted", "spawns": failed})
+
+            # The first of them finishes while the job attempt is still active.
+            OUTLIVING_GATES["late"].set()
+            outlived = spawns(fails="failed", late="completed", later="running")
+            await _await_live(schema, client, job, {"state": "interrupted", "spawns": outlived})
+            pins = await _pins(schema, client, job)
+            late = pins["late"]
+            assert late["state"] == "completed" and late["resultCid"] is not None
+            assert late["resultTaken"] is False and late["preview"] is None
+            assert late["attempt"]["state"] == "completed" and late["attempt"]["finishedAt"]
+            assert late["provenance"]["jobId"] == str(job)
+            assert pins["later"]["state"] == "running" and pins["later"]["resultCid"] is None
+            assert pins["later"]["resultTaken"] is False
+            overview = await level_overview(client.database, job, "root")
+            assert overview is not None
+            (run,) = [node for node in overview["nodes"] if node["counts"]]
+            assert run["counts"] == state_counts() | {"completed": 1, "failed": 1, "running": 1}
+            unfinished = await run_page(
+                client.database, job, "root", run["identity"], {}, 10, None, unfinished=True
+            )
+            assert sorted(item["key"] for item in unfinished["items"]) == [["fails"], ["later"]]
+
+            # The last one finishes, and the job stops: nothing changes for the first.
+            OUTLIVING_GATES["later"].set()
+            status = await handle.wait()
+            assert status.state == "stopped", status
+            stopped = spawns(fails="failed", late="completed", later="completed")
+            _, digest = await _live(schema, client, job)
+            assert digest == {"state": "interrupted", "spawns": stopped}
+            pins = await _pins(schema, client, job)
+            assert pins["late"] == late
+            assert pins["later"]["resultCid"] is not None and pins["later"]["resultTaken"] is False
+            overview = await level_overview(client.database, job, "root")
+            assert overview is not None
+            (run,) = [node for node in overview["nodes"] if node["counts"]]
+            assert run["counts"] == state_counts() | {"completed": 2, "failed": 1}
+
+            # A resume runs the failed call again and takes the other two's results as they are.
+            OUTLIVING_FAILS = False
+            status = await (await client.resume(job)).wait()
+            assert status.state == "succeeded", status
+            assert sorted(OUTLIVING_CALLS) == ["fails", "fails", "late", "later"]
+            resumed = await _pins(schema, client, job)
+            assert {pin["state"] for pin in resumed.values()} == {"completed"}
+            assert all(pin["resultTaken"] for pin in resumed.values())
+            assert resumed["late"]["resultCid"] == late["resultCid"]
+
+
+async def test_a_step_running_after_a_gentle_stop_is_running_until_it_ends(
+    database: Database,
+) -> None:
+    """A first interrupt stops a job gently: its job attempt settles and its workflow attempt is
+    interrupted, while the steps in flight run on. Each shows as ``running``, with its running
+    attempt and its preview, until it ends: as ``completed``, with a result the job has not
+    taken, for one that runs to the end, and as ``stopped``, with its attempt finished and its
+    last preview, for one a second interrupt abandons."""
+    seeds = ("late", "cut")
+    OUTLIVING_GATES.clear()
+    OUTLIVING_GATES.update({seed: anyio.Event() for seed in seeds})
+    OUTLIVING_CALLS.clear()
+    schema = build_schema()
+
+    def spawns(**states: str) -> dict[tuple[str, str], str]:
+        return {("step", seed): state for seed, state in states.items()}
+
+    async with a_client(database, outliving, outliving_sweep, settings=_FAST) as client:
+        with anyio.fail_after(30):
+            handle = await client.submit(
+                outliving_sweep,
+                {"seeds": Array.from_items([((s,), s) for s in seeds], ("[seed: str]", str))},
+            )
+            job = handle.job_id
+            running = spawns(late="running", cut="running")
+            await _await_live(schema, client, job, {"state": "running", "spawns": running})
+
+            # Stopped gently: nothing of the job is pending, and both steps are still running.
+            client.interrupt()
+            await _await_live(schema, client, job, {"state": "interrupted", "spawns": running})
+            for pin in (await _pins(schema, client, job)).values():
+                assert pin["state"] == "running" and pin["resultCid"] is None
+                assert pin["attempt"]["state"] == "running" and not pin["attempt"]["finishedAt"]
+                assert pin["preview"] is not None
+
+            # One runs to the end and leaves its result on offer.
+            OUTLIVING_GATES["late"].set()
+            finished = spawns(late="completed", cut="running")
+            await _await_live(schema, client, job, {"state": "interrupted", "spawns": finished})
+            late = (await _pins(schema, client, job))["late"]
+            assert late["resultCid"] is not None and late["resultTaken"] is False
+            assert late["attempt"]["state"] == "completed" and late["preview"] is None
+
+            # A second interrupt abandons the other.
+            client.interrupt()
+            status = await handle.wait()
+            assert status.state == "stopped", status
+            _, digest = await _live(schema, client, job)
+            stopped = spawns(late="completed", cut="stopped")
+            assert digest == {"state": "interrupted", "spawns": stopped}
+            cut = (await _pins(schema, client, job))["cut"]
+            assert cut["state"] == "stopped" and cut["resultCid"] is None
+            assert cut["attempt"]["state"] == "abandoned" and cut["attempt"]["finishedAt"]
+            assert cut["preview"] is not None
+            assert OUTLIVING_CALLS == ["late", "cut"] or OUTLIVING_CALLS == ["cut", "late"]
 
 
 # ---- provenance: which code produced each attempt and result ----
@@ -678,6 +954,122 @@ async def test_provenance_names_the_process_that_produced_each_result(database: 
             await _run(schema, client, "{ stepCache { attempt { provenance { jobId } } } }")
         )["stepCache"]
         assert entry["attempt"]["provenance"]["jobId"] == str(producer)
+
+
+async def test_the_job_picker_reads_launch_commits_inputs_and_reuse(database: Database) -> None:
+    """Two jobs at different commits, the second reusing the first's step: each job's launch
+    commit, its inputs as text, and how many of its step results it ran or took from the cache."""
+    schema = build_schema()
+    first = FakeEnvironment(commit="a" * 40, tree="b" * 40)
+    second = FakeEnvironment(commit="c" * 40, tree="d" * 40, ephemeral=True)
+    jobs: list[JobID] = []
+    for environment in (first, second):
+        async with a_client(database, roll, roll_once, environment=environment) as client:
+            status = await client.run(roll_once, {"seed": Array.scalar("s", str)})
+            assert status.state == "succeeded", status
+            jobs.append(status.job_id)
+    producer, reuser = jobs
+    async with a_client(database, roll, roll_once) as client:
+        code_versions: dict[bytes, Any] = {}
+        reader = ViewerReader(
+            client.database, stale_after=client.project.stale_after, scope=JobScope.all()
+        )
+        launches = await browse.job_launches(reader, code_versions)
+        assert [
+            (launch.job_id, launch.commit, launch.tree, launch.ephemeral) for launch in launches
+        ] == [
+            (str(reuser), "c" * 40, "d" * 40, True),
+            (str(producer), "a" * 40, "b" * 40, False),
+        ]
+        assert len(code_versions) == 2
+        assert [
+            launch.job_id for launch in await browse.job_launches(reader, code_versions, 1)
+        ] == [str(reuser)]
+
+        data = await _run(
+            schema,
+            client,
+            """query($ids: [ID!]!, $a: ID!, $b: ID!) {
+              jobSummariesByIds(ids: $ids) {
+                id state failed failedSteps inputs { name cid single text }
+              }
+              ran: jobReuse(jobId: $a) { identity ran reused }
+              reused: jobReuse(jobId: $b) { identity ran reused }
+            }""",
+            ids=[str(reuser), str(uuid.uuid4()), str(producer)],
+            a=str(producer),
+            b=str(reuser),
+        )
+        summaries = data["jobSummariesByIds"]
+        assert [summary["id"] for summary in summaries] == [str(reuser), str(producer)]
+        for summary in summaries:
+            assert summary["state"] == "succeeded" and summary["failedSteps"] == []
+            (seed,) = summary["inputs"]
+            assert (seed["name"], seed["single"], seed["text"]) == ("seed", True, "s")
+        assert summaries[0]["inputs"][0]["cid"] == summaries[1]["inputs"][0]["cid"]
+        (ran,), (reused,) = data["ran"], data["reused"]
+        assert (ran["ran"], ran["reused"]) == (1, 0)
+        assert (reused["ran"], reused["reused"]) == (0, 1)
+        assert ran["identity"] == reused["identity"]
+
+        # The commits are not in this repository, so the commit view only counts the jobs.
+        status, _, body = await a_request(create_app(client), "/api/job_commits")
+        history = json.loads(body)
+        assert status == 200 and history["jobs"] == [] and history["hidden"] == 2
+        assert history["truncated"] is False
+
+
+async def test_jobs_are_listed_by_workflow(database: Database) -> None:
+    """jobWorkflows names each workflow with jobs once; jobSummaries keeps one workflow's jobs."""
+    schema = build_schema()
+    async with a_client(
+        database, roll, roll_once, roll_badly, roll_badly_once, settings=_FAST
+    ) as client:
+        with anyio.fail_after(15):
+            good = await client.run(roll_once, {"seed": Array.scalar("s", str)})
+            bad = await client.run(roll_badly_once, {"seed": Array.scalar("s", str)}, root="bad")
+        names = (await _run(schema, client, "{ jobWorkflows }"))["jobWorkflows"]
+        assert len(names) == 2 and names == sorted(names)
+        page = """query($w: String) { jobSummaries(workflow: $w) { items { id workflowName } } }"""
+        by_name = {
+            name: (await _run(schema, client, page, w=name))["jobSummaries"]["items"]
+            for name in names
+        }
+        assert sorted(item["id"] for items in by_name.values() for item in items) == sorted(
+            [str(good.job_id), str(bad.job_id)]
+        )
+        assert all(
+            [item["workflowName"] for item in items] == [name] for name, items in by_name.items()
+        )
+        everything = (await _run(schema, client, page, w=None))["jobSummaries"]["items"]
+        assert len(everything) == 2
+
+
+async def test_job_summaries_compare_each_job_with_the_others_of_its_workflow(
+    database: Database,
+) -> None:
+    """Three jobs of one workflow given seeds s, s, then t: the first has no preceding job, the
+    second was given what the first was, and the third changed its seed (under another root, so
+    the new seed is not a cache conflict). Only the third is its workflow's latest."""
+    schema = build_schema()
+    async with a_client(database, roll, roll_once) as client:
+        jobs: list[str] = []
+        for seed, root in (("s", "root"), ("s", "root"), ("t", "other")):
+            status = await client.run(roll_once, {"seed": Array.scalar(seed, str)}, root=root)
+            assert status.state == "succeeded", status
+            jobs.append(str(status.job_id))
+        data = await _run(
+            schema,
+            client,
+            "query($ids: [ID!]!) { jobSummariesByIds(ids: $ids) { id changedInputs latest } }",
+            ids=jobs,
+        )
+        assert [summary["changedInputs"] for summary in data["jobSummariesByIds"]] == [
+            [],
+            [],
+            ["seed"],
+        ]
+        assert [summary["latest"] for summary in data["jobSummariesByIds"]] == [False, False, True]
 
 
 @pytest.mark.parametrize(
@@ -883,7 +1275,7 @@ async def test_code_links_follow_the_code_version_the_job_ran(database: Database
     async with _completed_job(database) as (client, job):
         from fxtr.runner.postgres.debug_web.browse import level_overview
 
-        overview = await level_overview(client, job, "root")
+        overview = await level_overview(client.database, job, "root")
         assert overview is not None and overview["codeVersion"] is not None
         recorded = overview["codeVersion"]
         code_version = await client.entities.load(
@@ -1033,11 +1425,13 @@ def a_built_viewer(root: Path) -> Path:
     return dist
 
 
-async def test_the_viewer_is_served_from_the_root_uncached(tmp_path: Path) -> None:
+async def test_the_viewer_is_served_from_the_root_uncached_and_unframed(tmp_path: Path) -> None:
     app = Starlette(routes=[Mount("/", ViewerFiles(a_built_viewer(tmp_path)))])
     status, headers, body = await a_request(app, "/")
     assert (status, body) == (200, b"<!doctype html><title>viewer</title>")
     assert headers["cache-control"] == "no-cache"
+    # Another site's page cannot frame the viewer and configure it as a hub's page would.
+    assert headers["content-security-policy"] == "frame-ancestors 'none'"
     status, headers, body = await a_request(app, "/assets/index.js")
     assert (status, body) == (200, b"console.log(1)")
     assert headers["cache-control"] == "no-cache"
@@ -1423,3 +1817,66 @@ async def test_startup_refuses_a_checkouts_stale_viewer_but_keeps_the_api(
     async with app.router.lifespan_context(app):
         assert (await a_request(app, "/"))[0] == 503
         assert (await a_request(app, "/api/experiment_readme"))[0] == 200
+
+
+async def test_reader_app_serves_an_imported_job_without_a_project(
+    database: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from fxtr.project.job_record import read_record
+    from fxtr.runner.postgres.job_records import insert_record
+
+    record = read_record(Path(__file__).parent / "fixtures" / "job_record_v0_1.car")
+    async with database.transaction() as tx:
+        job_id = await insert_record(tx, record)
+
+    def refuse_project(*args: Any, **kwargs: Any) -> None:
+        raise AssertionError("Reading stored results must not load a runnable project")
+
+    monkeypatch.setattr(LocalProjectClient, "from_project", refuse_project)
+    reader = ViewerReader(database, stale_after=timedelta(minutes=5), scope=JobScope.all())
+    app = app_module.create_reader_app(reader)
+    async with app.router.lifespan_context(app):
+        status, _, body = await a_request(
+            app,
+            "/api/graphql/",
+            headers={"content-type": "application/json"},
+            method="POST",
+            body=json.dumps(
+                {
+                    "query": "query($id: ID!) { job(id: $id) { id state resultCid } }",
+                    "variables": {"id": str(job_id)},
+                }
+            ).encode(),
+        )
+        assert status == 200
+        answer = json.loads(body)
+        assert "errors" not in answer, answer
+        job = answer["data"]["job"]
+        assert job["id"] == str(job_id) and job["state"] == "succeeded"
+        cid = job["resultCid"]
+        status, _, body = await a_request(app, f"/api/entity/{cid}")
+        assert status == 200 and body == record.blocks[cid_from_str(cid)]
+        status, _, body = await a_request(
+            app,
+            "/api/graphql/",
+            headers={"content-type": "application/json"},
+            method="POST",
+            body=json.dumps(
+                {
+                    "query": """query($source: OutputSource!) {
+                        outputPage(source: $source) { rows { value } total }
+                    }""",
+                    "variables": {"source": {"cid": cid}},
+                }
+            ).encode(),
+        )
+        assert status == 200
+        answer = json.loads(body)
+        assert "errors" not in answer, answer
+        page = answer["data"]["outputPage"]
+        assert page["total"] == 1
+        assert codec.decode(base64.b64decode(page["rows"][0]["value"])) == 42
+        for path in ("/api/source/fixture_double", "/api/file", "/api/views/bundle.js"):
+            assert (await a_request(app, path))[0] == 404
+    # The app's lifetime does not own the shared database or its stored results.
+    assert (await reader.jobs.status(job_id)).state == "succeeded"

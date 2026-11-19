@@ -63,7 +63,7 @@ ts/
     ├── fxtr-view-kit/         building blocks renderers use (see below)
     ├── fxtr-view-cbor-tree/   a renderer package: any entity as a data tree / a type+cid link
     ├── fxtr-view-array-table/ a renderer package: Array entities as a table / a dims-summary link
-    ├── fxtr-view-behaviors/   shared views of behaviors' conversation entities (see below)
+    ├── fxtr-view-behaviors/   shared views of behaviors' conversation entities and judgments (see below)
     └── fxtr-view-default-renderers/  the core renderers every shell starts from (see below)
 ```
 
@@ -82,7 +82,8 @@ packages/fxtr-view/src/
 │                    splitCid / shortCid (display: the common "bafyrei" prefix dropped, the first
 │                    8 characters kept, git style)
 ├── data.ts          DataValue / DataMap / EntityData (decoded DRISL with EntityID leaves),
-│                    TYPE_KEY, isDataMap, isEntityData, typeNameOf
+│                    TYPE_KEY, isDataMap, isEntityData, typeNameOf; markPartial (a host marks
+│                    the parts of a streaming value still being produced) and isPartial
 ├── array_data.ts    the wire shape of a fxtr Array entity (ArrayData: dims as [name, kind]
 │                    pairs, a SchemaWire tree, rows as [...keys, value]); ARRAY_TYPE, isArrayData,
 │                    rowsOf, scalarValue / scalarEntityId (the one value of a zero-dim array),
@@ -111,6 +112,9 @@ packages/fxtr-view/src/
 │                    ViewShellProvider, useEntity, useInvocation
 ├── builtin_slots.ts EntityPanel (props: id + StorageAtom + params), EntityInlineLink (static content only:
 │                    the shell wraps it in interactive chrome), EntityHoverPreview (props: id);
+│                    PartialEntityPanel (a value slot, props: value + partial + live +
+│                    StorageAtom: a step's live preview, not stored, handed over whole),
+│                    PartialEntityInline (the same in one line, without storage);
 │                    InvocationPanel (props: invocations + StorageAtom + params); PagePanel
 │                    (props: the run + params + StorageAtom), declarePage() and page()
 ├── link.tsx         EntityLink (renders the shell's EntityLinkImpl), LinkBase / useLinkPlace
@@ -154,7 +158,17 @@ Concepts, briefly (the plan has the rationale):
   given explicitly to be targetable). Built-in entity slots: `EntityPanel`, `EntityInlineLink`, and `EntityHoverPreview`
   (a compact view a shell shows when a link is hovered; the preview is the card's main content,
   and the shell may add content of its own below it). `EntityPanel` is handed one entity with
-  per-mount storage. The
+  per-mount storage. A *value slot*'s props take the value itself (`ValueViewProps`), for a subject
+  that is not stored; its subject type is the value's type name, as for an entity. The built-in ones
+  are `PartialEntityPanel`, a step's live preview (`ctx.preview`) in place of its output: `partial`
+  says the value is still being produced, any field possibly null and nested partial values already
+  unwrapped, each part that came out of one marked so `isPartial(part)` tells it from a finished
+  part; `live` says whether the step still runs, false for the last preview of a step that failed
+  or stopped, whose partial value will never be finished. A type's renderer for it is how a renderer opts in to streaming values; a type with
+  none gets the cbor-tree wildcard, the same tree its finished entities show. `PartialEntityInline`
+  takes the same props less storage: the preview in one line, which a host shows in a running
+  invocation's table row as `EntityInlineLink` shows a finished one's result (static phrasing
+  content, like it); its cbor-tree wildcard is the type name and "partial". The
   built-in invocation slot is `InvocationPanel` (the full view, with per-mount storage; the host
   hands it the spawns its selection picks out of a run: one, several, or all of them, or a
   workflow's one invocation, and a panel shows every count it is given).
@@ -299,13 +313,16 @@ something every renderer wants can move into fxtr-view, as a deliberate change t
 
 ### `fxtr-view-shell-util`
 
-For shell authors only; renderer code never imports it. Depends on `fxtr-view`. Two entries: the
-main one for shells (`src/`), and `fxtr-view-shell-util/testing` (`testing/index.ts`) with the
+For shell authors only; renderer code never imports it. Depends on `fxtr-view`. The main entry
+provides renderer helpers. `fxtr-view-shell-util/testing` (`testing/index.ts`) provides the
 in-memory shell that renderer packages' tests mount, kept out of `src/` and off the main entry.
+`fxtr-view-shell-util/hosted` provides the hub and viewer's message constants and configuration types,
+with no runtime imports, so the hub site can use the contract without renderer components.
 
 ```
 packages/fxtr-view-shell-util/src/
 ├── index.ts
+├── hosted.ts              shared hub and viewer message constants, HostedConfig and ViewerToken
 ├── errors.ts              DispatchFault (a FxtrViewError): a duplicate registration, an unknown
 │                          renderer id, no RegistryProvider
 ├── placeholders.tsx       PlaceholderLoading, PlaceholderError, PlaceholderNoRenderer: the
@@ -320,7 +337,9 @@ packages/fxtr-view-shell-util/src/
 ├── render.tsx             RegistryProvider (the registry in context) and useRegistry;
 │                          RenderEntity (entity slots, from an id: load, read $type as the
 │                          subject type, dispatch with the id threaded in), RenderInvocation
-│                          (invocation slots, from the step / workflow name the host has), both
+│                          (invocation slots, from the step / workflow name the host has),
+│                          RenderValue (value slots, from a value the host holds: dispatch on
+│                          its $type, re-rendering rather than remounting as it changes), all
 │                          over RenderSlot (slot + subject type + optional renderer id +
 │                          props), which a host also uses for pages; DispatchFallbacks (the host's loading / error /
 │                          no-renderer views, passed as `fallbacks` where it dispatches);
@@ -339,7 +358,8 @@ packages/fxtr-view-shell-util/src/
                            createBatchedDrislEntityLoader(entitiesUrl): the EntityLoader for a
                            backend serving many entities' raw bytes per POST (debug_web's
                            /api/entities), queueing loads into batches with a few requests in
-                           flight at most
+                           flight at most; a `headers` option adds a
+                           host's authorization to each request
 testing/                   test support only, never part of a production shell
 ├── index.ts               the ./testing entry: re-exports table_shell.tsx
 └── table_shell.tsx        TableShellProvider: a whole shell (registry and view shell) over
@@ -439,7 +459,8 @@ packages/fxtr-view-cbor-tree/src/
 │               the collapsed paths live in a JSON record atom the caller hands down;
 │               ScalarValue, Container and Branch, its leaves and containers
 ├── views.tsx   CborTreePanel (type name, cid, the tree; collapsed state via
-│               validatedAtom + subAtom on the panel's storage), CborTreeInlineLink (short type name + shortCid),
+│               validatedAtom + subAtom on the panel's storage), CborTreePartialPanel (the same
+│               for a value still being produced: no cid, marked partial), CborTreeInlineLink (short type name + shortCid),
 │               CborTreeHoverPreview (type, cid, the first PREVIEW_FIELD_LIMIT fields, values via
 │               CompactValue: scalars, ids as links, containers as their size)
 ├── names.ts    shortName
@@ -509,11 +530,113 @@ present conversations, metadata, usage, and failures. `types.ts` exports the cur
 and wire shapes; rollouts, their turns, and their end records use `.v2`, and a rollout's
 `initialization` is a tagged record or explicit null. The `ChatRollout` and `Transcript`
 conversation views are declared in `selector.ts` and read a `selector` param, a `MessageSelector`
-(`{ message: n }`, the `n`th message the view draws), which `Messages` marks and scrolls to; it
+(`{ message: n }`, the `n`th message the view draws), which `Messages` marks and scrolls to,
+gliding there in half a second (`glide`). A
+selector may also pick lines of that message (`lines: [first, last]`), which the view highlights
+and scrolls to; the lines are the ones a judge can cite, counted as behaviors' `message_lines`
+counts them (each non-empty line of its text, and each tool call, which is one line). An
+`AgentRun`'s conversation view reads the same selector with a `transcript` (its place among the
+run's transcripts, in the order behaviors' `agent_run_transcripts` gives them), and opens that
+transcript, and the groups around it, at the message. It
 is provisional, and its producer's shape is kept the same by hand. Rollout and turn metadata arrives as a list
 of tagged records, each shown under its type tag, and usage totals come from the `ModelResponse`
-records models leave in their turns' metadata. `comparison.tsx` aligns pairs of rollouts;
+records models leave in their turns' metadata (`usageLine` in `messages.tsx`, which a judgment's
+conversation pane shares: input counts cached tokens too, and notes them). `ChatRolloutView` also shows a rollout still being
+produced (`partialChatRollout` reads one, filling the lists not yet known), given its
+`RolloutProgress` (whether its step still runs, and whether its last reply is in flight, read with
+`isPartial`): "In progress" or "Stopped before finishing" until its status is known, its last turn
+saying what it waits on (the reply streaming, the model, tools, or the user) or that its reply was
+cut off, a tool call's arguments not yet received said so, and the response count and usage
+covering finished replies only. Once the rollout has ended (its status is known, while its step
+has yet to store it), it reads as the stored rollout does, its last turn waiting on nothing.
+`behaviorsRenderers` registers it for
+`ChatRollout` in the `PartialEntityPanel` slot, so a step's live preview of a rollout reads as the
+conversation it is becoming, and `BehaviorPartialInline` in the `PartialEntityInline` slot, the
+same progress in one line ("turn 6 · streaming…") for its table row. A transcript or group of
+transcripts (an agent run's among them) still being produced reads the same way
+(`partialTranscript`, `partialGroup`, given a `StreamProgress`): its header in progress or stopped,
+each message or transcript still being written (`isPartial`) saying so, and counts covering
+finished messages; both slots are registered for those types too. A system prompt is never
+produced bit by bit, so it has neither. `comparison.tsx` aligns pairs of rollouts;
 its `behaviorsRenderers` registers only shared entity types. A behaviors project's own
 `views/` package adds its experiment's invocation renderers and includes `behaviorsRenderers` in
 its bundle, so stored model calls can be followed from its report
 (`example_projects/behavior_rollouts/` is the maintained example).
+
+`src/judging/` holds the views of behaviors' judge (`behaviors/src/behaviors/judging`): a
+`Judgment`'s panel, link and hover preview, and a `TextEntity`'s panel. They read `Judgment`
+entities, and are part of `behaviorsRenderers`, which a project registers in its own bundle. They
+are laid out as the conversation views are, and share their styles (`behaviors.module.css`): a
+header with the kind and status, a title, and a dim summary line, then sections under small
+headings, with request messages in their roles' colours. A judgment's answer is one tree, as
+Docent shows a judge's output. `judging.module.css` holds only what a judgment alone draws.
+
+```
+packages/fxtr-view-behaviors/src/judging/
+├── types.ts        the wire shapes of a `Judgment`, its citations and attempts, and
+│                   `TextEntity`; `judgmentOf`, which every judgment view reads its data through:
+│                   it gives null for data of another shape under the same type name, such as an
+│                   earlier judging library stored
+├── judgment_pane_params.ts
+│                   `judgment_part`, the param a judgment's panel reads to show one of its panes
+│                   (the judge conversation, `judge_conversation`, or the output schema,
+│                   `output_schema`), and the params of the links that open each
+├── output_schema.ts
+│                   the output schema, read out of the first request (`outputSchemaOf`, in the
+│                   order the judge was given its fields), the schema at a path, and what a
+│                   field holds in words
+├── request_sections.tsx
+│                   the sections `judge` writes into a request (`sectionsOf`),
+│                   `MessageWithSections`, a message's text with each section (and the citation
+│                   instructions) collapsed under its name, opening to the text sent, and
+│                   `ConversationMessage`, a message of a judgment's conversation in its role's
+│                   colours, with a note and an invalid answer's problems
+├── unsent_blocks.tsx
+│                   the blocks of a transcript or an agent run under the addresses the judge
+│                   cites (`LabelledBlock`, `blocksOf`, matching agent_run_evidence.py), and
+│                   `UnsentBlocksWarning`, which names, for each such entity a judge was given,
+│                   the blocks not sent to it (`unsentBlocks`), consecutive blocks as a range
+│                   (`addressRanges`)
+├── attempt_outcome.tsx
+│                   `AttemptOutcome`, what came of an attempt: the failed call, or why its
+│                   answer was rejected (`reasonsOf`)
+├── text_entity.tsx `TextPanel`, a `TextEntity` (a rubric, a judge's instructions) under a
+│                   header with its kind, as text to read: its markdown headings, rules, bold,
+│                   italics and code set as such, and the lines of a paragraph wrapped by hand
+│                   joined (`joinHardWrappedLines`)
+├── judgment.tsx    `JudgmentPanel`, its inline link and hover preview, registered in
+│                   `behaviorsRenderers`, and `JudgmentDetail`, the panel's default view. Its
+│                   header gives `Failed` when it has no answer (and no status otherwise), a
+│                   `judge conversation` chip that opens the conversation, how its attempts went (each answer
+│                   valid or invalid, or the call failed), and `UnsentBlocksWarning`'s blocks
+│                   the judge was not sent. Under it, the answer is one tree in the schema's order
+│                   (`AnswerEntry`): each key, then its value, a value in blue, prose after its
+│                   key, and a map or a list a group that opens and closes, its entries set in
+│                   under a rule. A key has a hover card with its schema description, what it
+│                   holds and its parent's description. The hover preview sums the answer up by
+│                   its values (`answerFields`, drawn by `AnswerLine`) and the start of the
+│                   first prose field; the inline link writes the values as one line of text. A
+│                   citation in prose is a quote-mark chip (`CitationChip` with `quote`), and a
+│                   field that is one citation a chip naming it; either opens the cited entity
+│                   in a pane of its own at those lines, through `useEntityLinks`. The addresses are behaviors'
+│                   (judging/agent_run_evidence.py): lines of a block of a transcript or of an
+│                   agent run's transcript (`B3L4`, `T1B3L4-6`), read by `selectorOf`. A
+│                   citation's place in its field's text is counted in code points, as Python
+│                   counts, which `indexOfCodePoint` turns into a string index
+├── judge_arguments.tsx
+│                   `JudgeArguments`, the arguments `judge` was given, at the foot of the
+│                   conversation pane: its entities as links (with the blocks the request is
+│                   missing), its output schema (a chip that opens it) and its sampling as
+│                   JSON; `PartChip`, a chip that opens a part of the judgment
+├── judgment_panes.tsx
+│                   the panes a judgment opens, each under a header titled by its part: its
+│                   conversation, `JudgeConversationView`, titled "Judge conversation" (its header
+│                   with the tokens its answers used;
+│                   the whole conversation with the model as one list,
+│                   `conversationOf`: the messages `judge` filled in, each answer marked valid
+│                   or invalid, the correction after an invalid one, a failed call; then
+│                   `JudgeArguments`) and its output schema as JSON; `attemptsLine`, how the
+│                   attempts went
+└── judging.module.css  what only a judgment draws: its answer's tree, keys' hover cards,
+                    citation and part chips, the conversation's parts
+```

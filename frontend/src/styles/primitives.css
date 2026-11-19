@@ -26,6 +26,9 @@
   cursor: pointer;
 }
 .icon-button:hover { background: var(--hover-strong); color: var(--fg); }
+/* Nothing to do (back with no history): faint, and no hover. */
+.icon-button:disabled,
+.icon-button:disabled:hover { background: transparent; color: var(--fg-faint); cursor: default; }
 
 /* A resize handle: 5px to grab, 1px drawn. */
 .handle {

@@ -64,7 +64,12 @@ from behaviors.types.content import ContentText
 from behaviors.types.failure import FailureCategory, ModelCallFailure
 from behaviors.types.json import JSONObject, JSONValue
 from behaviors.types.message import AssistantMessage, SystemMessage, UserMessage
-from behaviors.types.response import ModelRequest, ModelResponse, SamplingParams
+from behaviors.types.response import (
+    ModelRequest,
+    ModelResponse,
+    SamplingParams,
+    UnexpectedStopError,
+)
 from behaviors.types.retry import RetryConfig
 
 logger = logging.getLogger(__name__)
@@ -81,6 +86,7 @@ _LOCAL_READING_RESULT_COLLECTION_ID = "local"
 # Output problems worth resampling: the model produced something, but it
 # doesn't parse, validate, or citation-resolve.
 _OUTPUT_VALIDATION_ERRORS = (
+    UnexpectedStopError,
     ValidationFailedException,
     jsonschema.ValidationError,
     json.JSONDecodeError,
@@ -561,9 +567,12 @@ class DocentReadingStep:
 def _response_text(response: ModelResponse) -> str:
     """The first text block of the response's first assistant message.
 
-    Raises ValueError when the response has no assistant text, which counts
-    as an invalid output attempt.
+    Raises UnexpectedStopError when the response did not end with a finished
+    answer (a refusal, a content filter, a token limit: its text is not an
+    answer), and ValueError when it has no assistant text; either counts as an
+    invalid output attempt.
     """
+    response.raise_for_stop_reason()
     for message in response.output:
         if isinstance(message, AssistantMessage):
             for block in message.content:

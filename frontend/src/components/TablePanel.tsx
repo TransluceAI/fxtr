@@ -15,6 +15,7 @@ import { isComplex, previewValue, summarize } from '../lib/values'
 import { formatArrayType, formatSchema, schemaLabel, valueColumnKey } from '../model/schema'
 import { FailureLine } from './InvocationFailure'
 import { PendingInvocation } from './PendingInvocation'
+import { StepPreviewLine } from './StepPreview'
 import { ValueModal } from './ValueModal'
 import { FieldList } from './ValueView'
 import { useColumnWidths } from './useColumnWidths'
@@ -282,51 +283,63 @@ export function TablePanel({
             </tr>
           </thead>
           {!hideRows && <tbody ref={body}>
-            {rows.map((row) => (
-              <tr
-                key={row.id}
-                data-row
-                data-failure={row.failure ? '' : undefined}
-                data-selected={rowShown?.(row) ? '' : undefined}
-                onClick={(onSelectRow || onActivateRow) && ((event) => {
-                  if (onActivateRow && hasPrimaryModifier(event)) onActivateRow(row.id)
-                  else onSelectRow?.(row.id)
-                })}
-                onDoubleClick={onOpenRow && (() => onOpenRow(row.id))}
-                draggable={onDragRow !== undefined}
-                onDragStart={onDragRow && ((event) => onDragRow(row.id, event))}
-              >
-                {(row.failure ? keyColumns : columns).map((col) => (
-                  <td key={col.key} className={cellClass(col, row)}>
-                    <CellSummary value={row.cells[col.key] ?? null} at={linkCells && col.group === 'value' ? cellPlace(table, row, col) : undefined} />
-                  </td>
-                ))}
-                {/* A failure takes the rest of the row, the slack column's room too. */}
-                {row.failure && valueColumns.length + (gridColumns ? 1 : 0) > 0 && (
-                  <td colSpan={valueColumns.length + (gridColumns ? 1 : 0)} className={styles.tdFailure}>
-                    <FailureLine jobId={row.failure.jobId} invocation={row.failure.invocation} />
-                  </td>
-                )}
-                {gridColumns && !row.failure && <td className={styles.filler} />}
-                {trailingColumn && (
-                  <td className={cx(styles.tdExpand, row.failure && styles.tdFailure)}>
-                    {rowInvocation && <InvocationMark row={rowInvocation} invocation={rowInvocation.of(row)} />}
-                    {expandable && !rowInvocation && (
-                      <button
-                        className={cx('icon-button', styles.rowExpand)}
-                        aria-label={`Expand ${row.id}`}
-                        onClick={(e) => {
-                          e.stopPropagation()
-                          setExpandedRowId(row.id)
-                        }}
-                      >
-                        <Maximize2 size={11} />
-                      </button>
-                    )}
-                  </td>
-                )}
-              </tr>
-            ))}
+            {rows.map((row) => {
+              // A running step's empty value cells (after the ones it has, its state) hold its
+              // latest preview, in one line. Like a failed invocation's, such a row's cells are not
+              // the columns', which its mark says.
+              const previewed = row.running && !row.failure ? valueColumns.filter((col) => !(col.key in row.cells)) : []
+              return (
+                <tr
+                  key={row.id}
+                  data-row
+                  data-failure={row.failure ? '' : undefined}
+                  data-preview={previewed.length > 0 ? '' : undefined}
+                  data-selected={rowShown?.(row) ? '' : undefined}
+                  onClick={(onSelectRow || onActivateRow) && ((event) => {
+                    if (onActivateRow && hasPrimaryModifier(event)) onActivateRow(row.id)
+                    else onSelectRow?.(row.id)
+                  })}
+                  onDoubleClick={onOpenRow && (() => onOpenRow(row.id))}
+                  draggable={onDragRow !== undefined}
+                  onDragStart={onDragRow && ((event) => onDragRow(row.id, event))}
+                >
+                  {(row.failure ? keyColumns : previewed.length > 0 ? columns.filter((col) => !previewed.includes(col)) : columns).map((col) => (
+                    <td key={col.key} className={cellClass(col, row)}>
+                      <CellSummary value={row.cells[col.key] ?? null} at={linkCells && col.group === 'value' ? cellPlace(table, row, col) : undefined} />
+                    </td>
+                  ))}
+                  {row.running && previewed.length > 0 && (
+                    <td colSpan={previewed.length} className={cellClass(previewed[0]!, row)}>
+                      <StepPreviewLine jobId={row.running.jobId} cacheKey={row.running.cacheKey} fallback={<CellSummary value={null} />} />
+                    </td>
+                  )}
+                  {/* A failure takes the rest of the row, the slack column's room too. */}
+                  {row.failure && valueColumns.length + (gridColumns ? 1 : 0) > 0 && (
+                    <td colSpan={valueColumns.length + (gridColumns ? 1 : 0)} className={styles.tdFailure}>
+                      <FailureLine jobId={row.failure.jobId} invocation={row.failure.invocation} />
+                    </td>
+                  )}
+                  {gridColumns && !row.failure && <td className={styles.filler} />}
+                  {trailingColumn && (
+                    <td className={cx(styles.tdExpand, row.failure && styles.tdFailure)}>
+                      {rowInvocation && <InvocationMark row={rowInvocation} invocation={rowInvocation.of(row)} />}
+                      {expandable && !rowInvocation && (
+                        <button
+                          className={cx('icon-button', styles.rowExpand)}
+                          aria-label={`Expand ${row.id}`}
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            setExpandedRowId(row.id)
+                          }}
+                        >
+                          <Maximize2 size={11} />
+                        </button>
+                      )}
+                    </td>
+                  )}
+                </tr>
+              )
+            })}
             {Array.from({ length: padding }, (_, index) => (
               <tr key={`pad-${index}`} className={styles.padRow} style={{ height: padHeight }} aria-hidden>
                 <td colSpan={columns.length + extra}>&nbsp;</td>

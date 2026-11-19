@@ -8,6 +8,10 @@ from docent._llm_util.data_models.exceptions import (  # pyright: ignore[reportP
 from docent.data_models.chat import AssistantMessage as DocentAssistantMessage
 from docent.data_models.chat import ToolMessage as DocentToolMessage
 
+from behaviors.implementations.dialects.anthropic_messages import (
+    AnthropicRedactedThinking,
+    AnthropicSignature,
+)
 from behaviors.implementations.docent import (
     DocentReadingStep,
     DocentReadingStepConfig,
@@ -21,8 +25,6 @@ from behaviors.types import (
     CacheableContentText,
     CacheControl,
     ContentReasoning,
-    ContentRedactedReasoning,
-    ContentSummarizedReasoning,
     ContentText,
     ContentToolUse,
     JSONObject,
@@ -39,6 +41,7 @@ from behaviors.types import (
     Usage,
     UserMessage,
 )
+from fxtr.entity_defns.dynamic_data import DynamicData
 from fxtr.storage.memory_storage import MemoryStorage
 
 
@@ -376,9 +379,17 @@ def test_to_docent_message_preserves_cacheable_text_and_reasoning_variants() -> 
     message = AssistantMessage(
         content=(
             CacheableContentText(text="answer", cache_control=CacheControl(ttl="5m")),
-            ContentReasoning(text="reasoning"),
-            ContentSummarizedReasoning(text="summary", signature="signature"),
-            ContentRedactedReasoning(data="encrypted"),
+            ContentReasoning(text="reasoning", form="full"),
+            ContentReasoning(
+                text="summary",
+                form="summary",
+                reasoning_state=DynamicData.from_tagged(AnthropicSignature("signature")),
+            ),
+            ContentReasoning(
+                text="",
+                form="redacted",
+                reasoning_state=DynamicData.from_tagged(AnthropicRedactedThinking("encrypted")),
+            ),
         )
     )
     converted = to_docent_message(message)

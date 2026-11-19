@@ -54,12 +54,12 @@ import { SliceDims } from "./components/SliceDims";
 import { RunningIndicator } from "./components/RunningIndicator";
 import { JobPicker } from "./components/JobPicker";
 import { Toasts } from "./components/Toasts";
+import { ViewerSettings } from "./components/ViewerSettings";
 import { KeyboardShortcuts } from "./components/KeyboardShortcuts";
 import { LevelHeader } from "./components/LevelHeader";
 import { LiveIndicator } from "./components/LiveIndicator";
 import { LevelViews } from "./components/LevelViews";
 import { ExperimentReadmeLink } from "./components/ExperimentReadme";
-import { ThemeToggle } from "./components/ThemeToggle";
 import {
   FlowchartToggle,
   Minimap,
@@ -68,13 +68,28 @@ import {
   createViewportStore,
 } from "./components/Minimap";
 import { ReturnCard } from "./components/ReturnCard";
-import { Loading, Problem } from "./components/Status";
+import { Loading, Nothing, Problem, Shown } from "./components/Status";
 import { StepCard } from "./components/StepCard";
 import { ColumnsView } from "./panes/ColumnsView";
 import { RAIL, TRACE } from "./panes/columns";
-import { useColumns, type Centre } from "./panes/useColumns";
+import { useColumns, type Center } from "./panes/useColumns";
+import { levelAt } from "./panes/resolve";
+import {
+  centerView,
+  EMPTY_URL_STATE,
+  formatUrlState,
+  pageViewFrom,
+  parseUrlState,
+  snapshotState,
+  urlPanelsOf,
+  type PageView,
+  type UrlWorkflow,
+  type ViewState,
+} from "./lib/urlState";
+import { UrlWriter } from "./lib/urlWriter";
+import { showLinkProblem, showLinkProblems } from "./lib/linkProblem";
 import { useJobCatalog } from "./panes/catalog";
-import { VIEWS, type Params } from "./panes/address";
+import { VIEWS, formatAddress, type Params } from "./panes/address";
 import type { LinkTarget } from "./panes/drag";
 import { nodeTarget, pageTarget } from "./lib/linkBase";
 import type { EntityOpener } from "./lib/openEntity";
@@ -86,13 +101,15 @@ import { cx } from "./lib/cx";
 import styles from "./App.module.css";
 import { fetchJobPage, fetchJobSummary } from './api/graphql';
 import { useQuery } from './api/browse';
+import { keepQueryValue } from './api/useQuery';
 import { onViewerEvent } from './api/events';
 
 /** The run replay, on the dev server only: a production build leaves it, and its module, out. */
 const RunReplay = import.meta.env.DEV ? lazy(() => import("./debug/RunReplay")) : null;
 
-/** Space kept between the top of the scroller and a card scrolled to. */
-const JUMP_MARGIN = 12;
+/** Space kept between the top of the scroller and a card scrolled to: enough to clear the slice
+ *  control floating there (`.has-slice-bar`), which would otherwise cover the card's views button. */
+const JUMP_MARGIN = 46;
 /** The least of the workspace, in percent, the card column and the detail view each keep. In the
  *  trace the card column's is in pixels instead (below). */
 const CARD_PANEL_MIN = 25;
@@ -114,12 +131,16 @@ function fullyInView(scroller: HTMLElement, card: HTMLElement): boolean {
   const scrollBox = scroller.getBoundingClientRect();
   const cardBox = card.getBoundingClientRect();
   return (
-    cardBox.top >= scrollBox.top &&
+    cardBox.top >= scrollBox.top + JUMP_MARGIN &&
     cardBox.bottom <= scrollBox.top + scroller.clientHeight &&
     cardBox.left >= scrollBox.left &&
     cardBox.right <= scrollBox.left + scroller.clientWidth
   );
 }
+
+/** The name a link gives the return card (`card=return`): no step can be called `return`, a
+ *  keyword in Python. */
+const RETURN_CARD = "return";
 
 function scrollToCard(scroller: HTMLElement, card: HTMLElement) {
   const scrollBox = scroller.getBoundingClientRect();
@@ -141,54 +162,118 @@ export function App({ views }: { views: LoadedViews }) {
         <ErrorBoundary
           fallback={(error, reset) => <Problem error={error} onRetry={() => retryAndReset(reset)} />}
         >
-          <Suspense fallback={<Loading what="loading jobs…" />}>
+          <Suspense fallback={<div className={styles.body}><Loading what="Opening the job…" /></div>}>
             <Jobs views={views} />
           </Suspense>
         </ErrorBoundary>
       </main>
+      <ViewerSettings />
       <Toasts />
     </>
   );
 }
 
 /** The job named in the URL hash, so a reload or a shared link lands on the same job, and changing
- *  it picks another. */
+ *  it (back and forward among them) picks another. */
 function jobFromHash(): string | null {
-  const match = /(?:^#|&)job=([^&]+)/.exec(window.location.hash);
-  return match ? decodeURIComponent(match[1]) : null;
+  return parseUrlState(window.location.hash).state.job;
+}
+
+const jobSummaryKey = (jobId: string | null) => `job:${jobId}`;
+
+/** A summary the job picker has read, kept as the page's read of it: a job opened from the picker
+ *  shows without waiting for its summary, which is then read afresh. */
+function keepJobSummary(summary: JobSummary) {
+  keepQueryValue(jobSummaryKey(summary.id), summary);
 }
 
 function Jobs({ views }: { views: LoadedViews }) {
   const [jobId, setJobId] = useState<string | null>(
     () => jobFromHash(),
   );
-  const query = useQuery(`job:${jobId}`, (signal) => jobId
+  const query = useQuery(jobSummaryKey(jobId), (signal) => jobId
     ? fetchJobSummary(jobId, signal)
     : fetchJobPage('', null, 1, signal).then((page) => page.items[0] ?? null));
-  const [, startTransition] = useTransition();
   const job = query.value ?? null;
+  /** A link naming no job was come to by back, forward, or editing the hash, and the newest job is
+   *  being looked up for it; the number of the lookup, so only the last one counts. */
+  const [findingNewest, setFindingNewest] = useState<number | null>(null);
+  /** The job loaded is the one asked for: not the last one's summary kept while the next one's
+   *  loads, nor while the newest is being looked up. Until it is, the page shows that it is loading
+   *  rather than the job before, and writes nothing, since the URL is already the next job's. */
+  const asked = findingNewest === null && (jobId === null || job === null || job.id === jobId);
   const jobs = job ? [job] : [];
   useEffect(() => {
     if (jobId === null && job) setJobId(job.id);
   }, [jobId, job]);
   // Launches switch the page to their jobs until someone picks one here (lib/launches.tsx).
-  const pick = useFollowLaunches(job?.id ?? null, (id) =>
-    startTransition(() => setJobId(id)),
-  );
+  // Not in a transition: one would keep the job before on screen until the next one has loaded.
+  const pick = useFollowLaunches(job?.id ?? null, setJobId);
+  /** The one writer of the URL and the history (`lib/urlWriter.ts`): this says which job is shown,
+   *  the job's view what it shows. */
+  const [urlWriter] = useState(() => new UrlWriter());
+  useEffect(() => () => urlWriter.dispose(), [urlWriter]);
+  useEffect(() => {
+    if (job && asked) urlWriter.showJob(job.id);
+  }, [job?.id, asked, urlWriter]);
+
+  /** Counts the history entries come to by back, forward, or an edited link: the job's view is
+   *  opened afresh from each (`JobView` reads the entry as it opens). */
+  const [entry, setEntry] = useState(0);
+  // Back, forward, or an edited link picks the job it names (the one shown, too: someone chose to
+  // stay on it), and opens its view afresh from the entry.
+  // An edited link fires both events: only `popstate` opens the view afresh, once.
   useEffect(() => {
     const picked = () => {
       const id = jobFromHash();
       if (id !== null) pick(id);
     };
+    let lookups = 0;
+    const moved = () => {
+      urlWriter.popped();
+      const id = jobFromHash();
+      lookups += 1;
+      if (id === null) {
+        // A link naming no job means the newest, as on loading the page.
+        const lookup = lookups;
+        setFindingNewest(lookup);
+        fetchJobPage("", null, 1).then(
+          (page) => {
+            if (lookup !== lookups) return;
+            const newest = page.items[0];
+            setFindingNewest(null);
+            setEntry((current) => current + 1);
+            if (newest) pick(newest.id);
+          },
+          () => {
+            if (lookup === lookups) setFindingNewest(null);
+          },
+        );
+        return;
+      }
+      // In the render the pick is in, so the view does not open afresh before the job asked for
+      // is known: the one shown would open from the next one's entry.
+      setFindingNewest(null);
+      setEntry((current) => current + 1);
+      pick(id);
+    };
+    window.addEventListener("popstate", moved);
     window.addEventListener("hashchange", picked);
-    return () => window.removeEventListener("hashchange", picked);
-  }, [pick]);
+    return () => {
+      window.removeEventListener("popstate", moved);
+      window.removeEventListener("hashchange", picked);
+    };
+  }, [pick, urlWriter]);
+  // A resume or sync may finish between refreshes, so settled records must refresh too.
   useEffect(() => {
-    const timer = window.setInterval(query.reload, 30_000);
+    const refresh = () => {
+      query.reload();
+      pokeLive();
+    };
+    const timer = window.setInterval(refresh, 30_000);
     const stopFollowing = onViewerEvent((event) => {
       if (event.type === "job" && event.jobId === jobId) {
-        query.reload();
-        pokeLive();
+        refresh();
       }
     });
     return () => {
@@ -196,15 +281,6 @@ function Jobs({ views }: { views: LoadedViews }) {
       stopFollowing();
     };
   }, [jobId, query.reload]);
-
-  useEffect(() => {
-    if (job)
-      window.history.replaceState(
-        null,
-        "",
-        `#job=${encodeURIComponent(job.id)}`,
-      );
-  }, [job]);
 
   // The job list may know of a run the records on screen do not (a job resumed elsewhere), so a
   // job listed as running is polled even if what is on screen looks settled.
@@ -214,22 +290,53 @@ function Jobs({ views }: { views: LoadedViews }) {
 
   const picker = (
     <>
-      <JobPicker jobs={jobs} selectedId={job?.id ?? null} onSelect={pick} />
+      <JobPicker
+        jobs={jobs}
+        selectedId={job?.id ?? null}
+        onSelect={(id, summary) => {
+          if (summary) keepJobSummary(summary);
+          pick(id);
+        }}
+        // Opened as a link to the step's card is, so the job's view opens afresh at it.
+        onOpenStep={(id, card, summary) => {
+          if (summary) keepJobSummary(summary);
+          window.location.hash = formatUrlState({ ...EMPTY_URL_STATE, job: id, card });
+        }}
+      />
       <LiveIndicator />
       <ViewsNotice problem={views.problem} />
     </>
   );
-  if (!job)
+  // The view opens afresh for each entry come to, once its job is the one asked for, with what
+  // the entry says to show of the job: worked out once per entry, and kept in an object this owns
+  // from its first render, which renders thrown away (the view suspending, and
+  // retried) do not undo, as they would a memo; so every retry opens with the same panels.
+  const [view] = useState(() => ({ key: "", opening: null as PageView | null }));
+  if (job && asked && view.key !== `${job.id}:${entry}`) {
+    view.key = `${job.id}:${entry}`;
+    view.opening = pageViewFrom(job.id, window.location.hash, window.history.state, window.innerHeight);
+  }
+  const viewKey = view.key;
+  const opening = view.opening;
+  // While the job opens there is nothing to choose or browse, so its message has the whole space.
+  if (!job && query.loading)
+    return (
+      <div className={styles.body}>
+        <Loading what="Opening the job…" />
+      </div>
+    );
+  if (!job || !asked)
     return (
       <div className={styles.body}>
         <aside className={styles.rail}>{picker}</aside>
           {query.error ? <Problem error={query.error instanceof Error ? query.error : new Error(String(query.error))} onRetry={query.reload} />
-            : <Loading what={query.loading ? 'loading job…' : jobId ? 'job not found' : 'no jobs recorded'} />}
+            : job ? <Loading what="Opening the job…" />
+            : <Nothing what={jobId ? 'job not found' : 'no jobs recorded'} />}
       </div>
     );
   return (
     <ErrorBoundary
-      key={job.id}
+      key={viewKey}
       fallback={(error, reset) => (
         <div className={styles.body}>
           <aside className={styles.rail}>{picker}</aside>
@@ -240,12 +347,12 @@ function Jobs({ views }: { views: LoadedViews }) {
       <Suspense
         fallback={
           <div className={styles.body}>
-            <aside className={styles.rail}>{picker}</aside>
-            <Loading what="loading job…" />
+            <Loading what="Opening the job…" />
           </div>
         }
       >
-        <JobView job={job} picker={picker} registry={views.registry} />
+        <JobView job={job} opening={opening} picker={picker} registry={views.registry} urlWriter={urlWriter} />
+        <Shown />
       </Suspense>
     </ErrorBoundary>
   );
@@ -254,17 +361,33 @@ function Jobs({ views }: { views: LoadedViews }) {
 /** One job, shown one workflow invocation at a time: the root's DAG, or a child's opened from it. */
 function JobView({
   job,
+  opening,
   picker,
   registry,
+  urlWriter,
 }: {
   job: JobSummary;
+  opening: PageView | null;
   picker: React.ReactNode;
   registry: DispatchRegistry;
+  urlWriter: UrlWriter;
 }) {
+  /** What the URL, or the history entry, says to show of this job as it opens (`lib/urlState.ts`);
+   *  null when it names another (a job switched to starts afresh). */
+  const [initial] = useState(opening);
   /** Every invocation opened below the root, outermost first; the breadcrumbs. */
-  const [trail, setTrail] = useState<LevelRef[]>([]);
+  const [trail, setTrail] = useState<readonly LevelRef[]>(initial?.view.trail ?? []);
   /** Which breadcrumb is shown: 0 is the root, `k` is `trail[k - 1]`. */
-  const [depth, setDepth] = useState(0);
+  const [depth, setDepth] = useState(initial?.view.depth ?? 0);
+  /** A link's center at a level below the root, until the levels on the way load and say which
+   *  invocation it is. */
+  const [pendingCenter, setPendingCenter] = useState<UrlWorkflow | null>(initial?.pending ?? null);
+  /** The card a link names (`card` in the URL), kept until the level changes; `pending` until it
+   *  has been gone to, once its level is shown and the card is in it. */
+  const [linkedCard, setLinkedCard] = useState<{ name: string; pending: boolean } | null>(
+    initial?.view.card ? { name: initial.view.card, pending: true } : null,
+  );
+  const linkCard = (name: string | null) => setLinkedCard(name === null ? null : { name, pending: true });
   const pathname = depth > 0 ? trail[depth - 1].pathname : job.root;
   useLivePolling(job.id);
   // The root is always watched: it says whether the job is still live, whatever level is shown.
@@ -300,21 +423,21 @@ function JobView({
   const [jumpGlow, setJumpGlow] = useState<{ id: string; seq: number } | null>(null);
   /** The slice: the value picked for each dim sliced on, shared by every card and pane, and kept
    *  across levels, since a dim's name means the same thing in each. */
-  const [slice, setSlice] = useState<Params>({});
+  const [slice, setSlice] = useState<Params>(initial?.view.slice ?? {});
   /** Each card's table state: a store, read by each card for its own. */
   const [cardTables] = useState(
     () => new Store<ReadonlyMap<string, CardTableState>>(new Map()),
   );
   /** The `InvocationPanel` renderer chosen to show the level in place of its trace, or null for
    *  the trace. */
-  const [chosenPageView, setPageView] = useState<string | null>(null);
+  const [chosenPageView, setPageView] = useState<string | null>(initial?.view.pageView ?? null);
   /** The chosen renderer while the registry still has it: rebuilt project renderers may not. */
   const pageView = chosenRenderer(
     renderersFor(registry, InvocationPanel, loaded.workflowName),
     chosenPageView,
   );
   /** Whether the level is shown as a graph with one selected card instead of the trace list. */
-  const [flowchartMode, setFlowchartMode] = useState(false);
+  const [flowchartMode, setFlowchartMode] = useState(initial?.view.flowchartMode ?? false);
   /** The level's own invocation as the one spawn a panel renderer of it is given. */
   const levelSpawn = useMemo<Spawn>(
     () => ({
@@ -376,9 +499,9 @@ function JobView({
   );
   /** What the panels' addresses resolve against: every level of the job, and the registry. */
   const catalog = useJobCatalog(job.id, job.root, registry);
-  /** What the centre shows, as an address, and the keys of the workflows on the way to its level,
+  /** What the center shows, as an address, and the keys of the workflows on the way to its level,
    *  which a link from the trace binds. */
-  const centre = useMemo<Centre>(
+  const center = useMemo<Center>(
     () => ({
       address: {
         view: pageView ?? (flowchartMode ? VIEWS.flowchart : VIEWS.trace),
@@ -394,7 +517,12 @@ function JobView({
     [job.id, job.root],
   );
   /** The detail view: columns of panels, opened by links. */
-  const panes = useColumns(slice, catalog, centre);
+  const panes = useColumns(
+    slice,
+    catalog,
+    center,
+    initial ? { columns: initial.view.columns, check: initial.check } : undefined,
+  );
   const traceSelected = useMemo(() => panes.selectedBelowOf(TRACE), [panes.selectedBelowOf]);
   const levelState = useMemo<LevelState>(
     () => ({
@@ -428,13 +556,13 @@ function JobView({
   const entityOpener = useMemo<EntityOpener>(
     () => ({
       originId: TRACE,
-      viewId: centre.address.view,
+      viewId: center.address.view,
       relative: true,
       follow: (target, options) => panes.follow(target, TRACE, options),
       hover: (target) => panes.hover(target, TRACE),
       linkState: (target) => panes.linkState(target, TRACE),
     }),
-    [centre.address.view, panes.follow, panes.hover, panes.linkState],
+    [center.address.view, panes.follow, panes.hover, panes.linkState],
   );
 
   const cardSpotlight = useMemo<CardSpotlight>(
@@ -549,11 +677,15 @@ function JobView({
 
   useLayoutEffect(() => {
     const id = pendingJumpRef.current;
-    const card = id ? cardRefs.current.get(id) : null;
+    // The return card is not a step card, so it is found by its row.
+    const card = id === null ? null
+      : id === RETURN_CARD ? cardsRef.current?.querySelector<HTMLElement>("[data-return-card]")
+      : cardRefs.current.get(id);
     if (!card || !scrollRef.current) return;
     scrollToCard(scrollRef.current, card);
     pendingJumpRef.current = null;
-  }, [flowchartMode, level, selectedId]);
+    // `jumpGlow` changes with each jump, even to the card already selected.
+  }, [flowchartMode, level, selectedId, jumpGlow]);
 
   useLayoutEffect(() => {
     const scroller = scrollRef.current;
@@ -570,18 +702,119 @@ function JobView({
     };
   }, [pathname, flowchartMode, viewport]);
 
-  /** Show another invocation's DAG; the current one stays up while the new one loads. */
-  const showLevel = (nextTrail: LevelRef[], nextDepth: number) => {
+  /** Show another invocation's DAG (in the trace, unless `view` says otherwise); the current one
+   *  stays up while the new one loads. */
+  const showLevel = (
+    nextTrail: readonly LevelRef[],
+    nextDepth: number,
+    view: { pageView: string | null; flowchartMode?: boolean; card?: string | null } = { pageView: null },
+  ) => {
     startTransition(() => {
       setTrail(nextTrail);
       setDepth(nextDepth);
-      setSelectedId(null);
-      setMinimapHoveredId(null);
-      setJumpGlow(null);
-      setPageView(null);
-      cardTables.set(new Map());
+      linkCard(view.card ?? null);
+      setPageView(view.pageView);
+      if (view.flowchartMode !== undefined) setFlowchartMode(view.flowchartMode);
+      forgetLevel();
     });
   };
+
+  /** Forget what belongs to the level shown, as another is shown: the selected card, hovers, a
+   *  jump's glow, and the cards' tables. */
+  const forgetLevel = () => {
+    setSelectedId(null);
+    setMinimapHoveredId(null);
+    setJumpGlow(null);
+    cardTables.set(new Map());
+  };
+
+  // A link's center below the root is shown once the levels on the way say which invocation it is.
+  useEffect(() => {
+    if (pendingCenter === null) return;
+    const steps = pendingCenter.address.location?.root === "step" ? pendingCenter.address.location.steps : [];
+    const place = levelAt(steps, pendingCenter.keys, catalog);
+    if (place.status === "loading") return;
+    if (place.status === "problem") {
+      setPendingCenter(null);
+      showLinkProblem(formatAddress(pendingCenter.address, pendingCenter.keys), place.problem);
+      return;
+    }
+    const nextTrail = levelTrail(job.root, place.pathname);
+    // In one transition with the level, so the URL is next written with the level shown.
+    startTransition(() => {
+      setPendingCenter(null);
+      showLevel(nextTrail, nextTrail.length, { ...centerView(pendingCenter.address.view), card: linkedCard?.name ?? null });
+    });
+    // `showLevel` is the latest render's; what it sets does not depend on which.
+  }, [pendingCenter, catalog, job.root]);
+
+  // A linked card is scrolled to (the trace) or selected (the flowchart) once its level is shown and
+  // the card is in it: a step still to appear in a running level is waited for.
+  useEffect(() => {
+    if (!linkedCard?.pending || pendingCenter !== null) return;
+    const { name } = linkedCard;
+    if (pageView !== null) {
+      setLinkedCard(null);
+      showLinkProblems([`card=${name}: the level is shown by ${pageView}, which has no cards`]);
+      return;
+    }
+    if (name === RETURN_CARD && !flowchartMode) {
+      // The trace always has the return card, whatever it holds yet.
+      setLinkedCard({ name, pending: false });
+      pendingJumpRef.current = RETURN_CARD;
+      setJumpGlow((current) => ({ id: RETURN_CARD, seq: (current?.seq ?? 0) + 1 }));
+      return;
+    }
+    // In the flowchart, `return` selects what was returned: its own table, or the step returned.
+    const id = name === RETURN_CARD
+      ? result?.table?.id ?? result?.stepId ?? undefined
+      : level.find((step) => step.name === name)?.id;
+    if (id === undefined) {
+      if (loaded.live) return;
+      setLinkedCard(null);
+      showLinkProblems([name === RETURN_CARD
+        ? `card=${name}: this level returned nothing to select in the flowchart`
+        : `card=${name}: this level has no step ${name}`]);
+      return;
+    }
+    setLinkedCard({ name, pending: false });
+    setSelectedId(id);
+    if (!flowchartMode) {
+      pendingJumpRef.current = id;
+      setJumpGlow((current) => ({ id, seq: (current?.seq ?? 0) + 1 }));
+    }
+  }, [linkedCard, pendingCenter, pageView, level, result, loaded.live, flowchartMode]);
+
+  // What in the link did not read, once.
+  useEffect(() => {
+    if (initial && initial.problems.length > 0) showLinkProblems(initial.problems);
+  }, [initial]);
+
+  // The URL and the history entry follow what the page shows (`lib/urlWriter.ts`).
+  const viewState = useMemo<ViewState>(
+    () => ({
+      columns: panes.columns, slice, trail, depth, pageView: chosenPageView, flowchartMode, card: linkedCard?.name ?? null,
+    }),
+    [panes.columns, slice, trail, depth, chosenPageView, flowchartMode, linkedCard?.name],
+  );
+  const urlHash = useMemo(() => {
+    const atRoot = center.address.view === VIEWS.trace && levelPath.length === 0;
+    return formatUrlState({
+      job: job.id,
+      workflow: atRoot ? null : { address: center.address, keys: center.keys },
+      slice: viewState.slice,
+      card: viewState.card,
+      ...urlPanelsOf(viewState.columns),
+    });
+  }, [job.id, center, levelPath, viewState]);
+  const snapshot = useMemo(() => snapshotState(job.id, viewState), [job.id, viewState]);
+  // Nothing is written while a link is still being worked out (its level found, its panels
+  // checked): the entry keeps the link, so a reload or another opening of it works it out again.
+  const linkPending = pendingCenter !== null || panes.checking;
+  useEffect(() => {
+    if (!linkPending) urlWriter.show(job.id, urlHash, snapshot);
+  }, [urlWriter, job.id, urlHash, snapshot, linkPending]);
+
 
   /** Show the level of the workflow invocation at `target` in the trace: the breadcrumbs kept when
    *  it is among them (so the levels below it stay), else the levels down to it. */
@@ -695,7 +928,6 @@ function JobView({
                 <RunReplay jobId={job.id} />
               </Suspense>
             )}
-            <ThemeToggle />
           </aside>
         )}
         <div className={styles.workspaceScroll}>
@@ -758,7 +990,7 @@ function JobView({
                         <OpenEntityContext.Provider value={entityOpener}>
                           {selected
                             ? renderStepCard(selected, false)
-                            : <Loading what="this invocation recorded no nodes" />}
+                            : <Nothing what="this invocation recorded no nodes" />}
                         </OpenEntityContext.Provider>
                       </div>
                     </div>
@@ -836,9 +1068,9 @@ function JobView({
                             </div>
                           ))}
                           {level.length === 0 && (
-                            <Loading what="this invocation recorded no nodes" />
+                            <Nothing what="this invocation recorded no nodes" />
                           )}
-                          <div key={`${pathname}:return`} className={styles.cardRow} data-card-id={result?.table?.id}>
+                          <div key={`${pathname}:return`} className={styles.cardRow} data-card-id={result?.table?.id} data-return-card>
                             <ReturnCard
                               level={loaded}
                               steps={steps}

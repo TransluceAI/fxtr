@@ -1,0 +1,832 @@
+{"key": "anthropic|$anchor|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|$anchor|tool", "digest": "21501ebd528899bf"}
+{"key": "anthropic|$id and relative $ref|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|$id and relative $ref|tool", "digest": "90eb9bb50fed7acb"}
+{"key": "anthropic|$ref in array items|response_format", "digest": "04ee10ddc451feca"}
+{"key": "anthropic|$ref in array items|tool", "digest": "7ad37735348f12a5"}
+{"key": "anthropic|$ref into properties|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|$ref into properties|tool", "digest": "03d12554434b785b"}
+{"key": "anthropic|$ref to a nested definition|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|$ref to a nested definition|tool", "digest": "f8df58737193fcc9"}
+{"key": "anthropic|$ref under anyOf|response_format", "digest": "401b21b860d9664e"}
+{"key": "anthropic|$ref under anyOf|tool", "digest": "9aaf889ebf17c518"}
+{"key": "anthropic|$ref with sibling description|response_format", "digest": "1b287a4c9f86d4d6"}
+{"key": "anthropic|$ref with sibling description|tool", "digest": "59b599d23ad4afae"}
+{"key": "anthropic|$schema 2020-12|response_format", "digest": "d7458b7cdd4ee119"}
+{"key": "anthropic|$schema 2020-12|tool", "digest": "aa0c7cdefab6a935"}
+{"key": "anthropic|$schema draft-07|response_format", "digest": "ae02c334ff8891d6"}
+{"key": "anthropic|$schema draft-07|tool", "digest": "9b34de9e0e5bca2f"}
+{"key": "anthropic|a property named $ref|response_format", "digest": "ae1371ea1235f972"}
+{"key": "anthropic|additionalProperties schema (a map)|response_format", "digest": "d2be9c9c8e6496bb"}
+{"key": "anthropic|additionalProperties schema (a map)|tool", "digest": "4db6280f6c374370"}
+{"key": "anthropic|additionalProperties true|response_format", "digest": "d7458b7cdd4ee119"}
+{"key": "anthropic|additionalProperties true|tool", "digest": "ecb43725ff1a05a0"}
+{"key": "anthropic|allOf of closed objects|response_format", "digest": "696011a1664727ec"}
+{"key": "anthropic|allOf of closed objects|tool", "digest": "40e4be0cc9b04c0d"}
+{"key": "anthropic|allOf of inline schemas|response_format", "digest": "631debcb5ca1485c"}
+{"key": "anthropic|allOf of inline schemas|tool", "digest": "06aa6651a517e1a0"}
+{"key": "anthropic|allOf with a local $ref|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|allOf with a local $ref|tool", "digest": "d72beba9b6f41edb"}
+{"key": "anthropic|annotations|response_format", "digest": "5f50c7c096265e0b"}
+{"key": "anthropic|annotations|tool", "digest": "3bb0ae7514659894"}
+{"key": "anthropic|anyOf of closed objects|response_format", "digest": "29451fe6629c30b3"}
+{"key": "anthropic|anyOf of closed objects|tool", "digest": "e2516f74abcad75c"}
+{"key": "anthropic|anyOf of scalars|response_format", "digest": "8442d23434e07736"}
+{"key": "anthropic|anyOf of scalars|tool", "digest": "62a4dd32d3704913"}
+{"key": "anthropic|anyOf root|response_format", "digest": "9d242c7cc096ab2f"}
+{"key": "anthropic|array enum|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|array enum|tool", "digest": "b0cbe1cf5e99949d"}
+{"key": "anthropic|array of closed objects|response_format", "digest": "6ce8e9c235cfeea3"}
+{"key": "anthropic|array of closed objects|tool", "digest": "0e390ce1da7444bc"}
+{"key": "anthropic|array of open objects|response_format", "digest": "8137da25a777c4a0"}
+{"key": "anthropic|array of open objects|tool", "digest": "fd666409cdfc7a2a"}
+{"key": "anthropic|array of strings|response_format", "digest": "66b7eef33e98b577"}
+{"key": "anthropic|array of strings|tool", "digest": "b035ff753f8e15ec"}
+{"key": "anthropic|array root|response_format", "digest": "815e9491b3af4b13"}
+{"key": "anthropic|array without items|response_format", "digest": "872727f375d64747"}
+{"key": "anthropic|array without items|tool", "digest": "8dbaedae3e55e53b"}
+{"key": "anthropic|boolean subschema true|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|boolean subschema true|tool", "digest": "20d71a0db034fe84"}
+{"key": "anthropic|closed object without properties|response_format", "digest": "d70b998e9e091667"}
+{"key": "anthropic|closed object without properties|tool", "digest": "14d4b4913f45eb70"}
+{"key": "anthropic|closed object|response_format", "digest": "d7458b7cdd4ee119"}
+{"key": "anthropic|closed object|tool", "digest": "38b6ef4778247cc0"}
+{"key": "anthropic|const object|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|const object|tool", "digest": "a70a2d93e5bd59d3"}
+{"key": "anthropic|const string|response_format", "digest": "f7068fb60ebe2179"}
+{"key": "anthropic|const string|tool", "digest": "cc2e6d8ba287b813"}
+{"key": "anthropic|contains|response_format", "digest": "43947300ce41a88c"}
+{"key": "anthropic|contains|tool", "digest": "0518f9fed98ceb61"}
+{"key": "anthropic|contentEncoding / contentMediaType|response_format", "digest": "4fded7fc4e20dc9d"}
+{"key": "anthropic|contentEncoding / contentMediaType|tool", "digest": "cb47fb07619c26f3"}
+{"key": "anthropic|deep nesting|response_format", "digest": "ec067c023b87555c"}
+{"key": "anthropic|deep nesting|tool", "digest": "79baecf66cfa750d"}
+{"key": "anthropic|default on an object|response_format", "digest": "691f876bf51394c0"}
+{"key": "anthropic|default on an object|tool", "digest": "838d8c5ee0a08075"}
+{"key": "anthropic|dependentRequired|response_format", "digest": "beeaeb651cfe67bd"}
+{"key": "anthropic|dependentRequired|tool", "digest": "8c1bb8a58522e376"}
+{"key": "anthropic|enum without type|response_format", "digest": "46161b87af89f763"}
+{"key": "anthropic|enum without type|tool", "digest": "0a8fdc90a898905a"}
+{"key": "anthropic|exclusive bounds|response_format", "digest": "a859c71e7ce35442"}
+{"key": "anthropic|exclusive bounds|tool", "digest": "0f8f49cf7e0059d2"}
+{"key": "anthropic|external $ref|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|external $ref|tool", "digest": "ffd11f15d2107ae9"}
+{"key": "anthropic|format on a non-string|response_format", "digest": "2306a4e921a42692"}
+{"key": "anthropic|format on a non-string|tool", "digest": "4442b9a7eb50fd2f"}
+{"key": "anthropic|if / then / else|response_format", "digest": "d4325902aaeebd93"}
+{"key": "anthropic|if / then / else|tool", "digest": "b2ef5c816d5abcb7"}
+{"key": "anthropic|keyword-like annotation values|response_format", "digest": "983440de0f63e26e"}
+{"key": "anthropic|keyword-like annotation values|tool", "digest": "b2a8e37f0c538850"}
+{"key": "anthropic|large enum|response_format", "digest": "7d36e498bba6c366"}
+{"key": "anthropic|large enum|tool", "digest": "30919411ace4a595"}
+{"key": "anthropic|local $ref in $defs|response_format", "digest": "b6aab71b71009a3b"}
+{"key": "anthropic|local $ref in $defs|tool", "digest": "4e807183ea460718"}
+{"key": "anthropic|local $ref in definitions|response_format", "digest": "3012f5676abca358"}
+{"key": "anthropic|local $ref in definitions|tool", "digest": "1a769b306841c49a"}
+{"key": "anthropic|many properties|response_format", "digest": "286e658ba48de499"}
+{"key": "anthropic|minimum / maximum|response_format", "digest": "7dda53971b45bb16"}
+{"key": "anthropic|minimum / maximum|tool", "digest": "c82e1a5568fc9639"}
+{"key": "anthropic|minItems 1|response_format", "digest": "12e244f380b77423"}
+{"key": "anthropic|minItems 1|tool", "digest": "ce666896d9217c56"}
+{"key": "anthropic|minItems 2 / maxItems|response_format", "digest": "b7ea1540763a2686"}
+{"key": "anthropic|minItems 2 / maxItems|tool", "digest": "e57aebd39fd35d62"}
+{"key": "anthropic|minLength / maxLength|response_format", "digest": "5e6130f44e3e7e87"}
+{"key": "anthropic|minLength / maxLength|tool", "digest": "76daf5808137bc21"}
+{"key": "anthropic|minProperties / maxProperties|response_format", "digest": "acc7ae877d50bc6e"}
+{"key": "anthropic|minProperties / maxProperties|tool", "digest": "f73a75b13760107c"}
+{"key": "anthropic|mixed scalar enum|response_format", "digest": "a09138aad5c30ad9"}
+{"key": "anthropic|mixed scalar enum|tool", "digest": "73d6d44a03f41c39"}
+{"key": "anthropic|multipleOf|response_format", "digest": "e5b243b491b5c2aa"}
+{"key": "anthropic|multipleOf|tool", "digest": "ecad62ab4c66c80d"}
+{"key": "anthropic|nested arrays|response_format", "digest": "980472f0251ca2ef"}
+{"key": "anthropic|nested arrays|tool", "digest": "02a63a249b36edee"}
+{"key": "anthropic|nested closed objects|response_format", "digest": "932308bd843647b1"}
+{"key": "anthropic|nested closed objects|tool", "digest": "1de827e0d9590b51"}
+{"key": "anthropic|nested open object|response_format", "digest": "bd965ab588df6883"}
+{"key": "anthropic|nested open object|tool", "digest": "70d7b65c43ec9646"}
+{"key": "anthropic|no required list|response_format", "digest": "f678bcfc7e146a88"}
+{"key": "anthropic|no required list|tool", "digest": "8ab63513b65eea7c"}
+{"key": "anthropic|no type (any value)|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|no type (any value)|tool", "digest": "e07b9440888f71fc"}
+{"key": "anthropic|not|response_format", "digest": "394c16f99367795b"}
+{"key": "anthropic|not|tool", "digest": "7f6f8fc3a64027ad"}
+{"key": "anthropic|nullable object, closed|response_format", "digest": "cd380bd2d9fd48c3"}
+{"key": "anthropic|nullable object, closed|tool", "digest": "3c785568bff01c44"}
+{"key": "anthropic|nullable object, open|response_format", "digest": "74fddb09d85bd17c"}
+{"key": "anthropic|nullable object, open|tool", "digest": "4baca7afae7fa909"}
+{"key": "anthropic|nullable root|response_format", "digest": "ff9bb71f225179e0"}
+{"key": "anthropic|object enum|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|object enum|tool", "digest": "e297068697f31100"}
+{"key": "anthropic|object under anyOf with null|response_format", "digest": "39a8113ee05b2c34"}
+{"key": "anthropic|object under anyOf with null|tool", "digest": "50fb66c2b43ce61d"}
+{"key": "anthropic|object without properties|response_format", "digest": "d70b998e9e091667"}
+{"key": "anthropic|object without properties|tool", "digest": "16f93d4b93adf224"}
+{"key": "anthropic|oneOf|response_format", "digest": "8442d23434e07736"}
+{"key": "anthropic|oneOf|tool", "digest": "4738d5e6b6c0f28d"}
+{"key": "anthropic|open object in $defs|response_format", "digest": "e4242676d22c59f5"}
+{"key": "anthropic|open object in $defs|tool", "digest": "9590a67323d03ac2"}
+{"key": "anthropic|open object under anyOf|response_format", "digest": "c090c8fb82579be7"}
+{"key": "anthropic|open object under anyOf|tool", "digest": "84dcb1f7ebbe6325"}
+{"key": "anthropic|open object|response_format", "digest": "10fa31bc9083acfb"}
+{"key": "anthropic|open object|tool", "digest": "9694fc2724e1b824"}
+{"key": "anthropic|optional property|response_format", "digest": "c926367ec67889f3"}
+{"key": "anthropic|optional property|tool", "digest": "3d264e751e359422"}
+{"key": "anthropic|other formats|response_format", "digest": "c3c78e9766a393f7"}
+{"key": "anthropic|other formats|tool", "digest": "c3a9f310209a6612"}
+{"key": "anthropic|pattern with backreference|response_format", "digest": "ff869b6f4d7d4a0e"}
+{"key": "anthropic|pattern with backreference|tool", "digest": "90cca5ce0d93e29b"}
+{"key": "anthropic|pattern with lookahead|response_format", "digest": "4bd2a9e7354a88e9"}
+{"key": "anthropic|pattern with lookahead|tool", "digest": "51df8653ee20e1bb"}
+{"key": "anthropic|pattern with lookbehind|response_format", "digest": "cee46df07437f228"}
+{"key": "anthropic|pattern with lookbehind|tool", "digest": "28491ac2f9020193"}
+{"key": "anthropic|pattern with unicode class|response_format", "digest": "ffea3f43c62dbe66"}
+{"key": "anthropic|pattern with unicode class|tool", "digest": "553e5e6f19460b8a"}
+{"key": "anthropic|pattern with word boundary|response_format", "digest": "d2cb0c0d57af11bc"}
+{"key": "anthropic|pattern with word boundary|tool", "digest": "c48d9a722684c8db"}
+{"key": "anthropic|pattern without anchors|response_format", "digest": "9a7e8840dc6926fb"}
+{"key": "anthropic|pattern without anchors|tool", "digest": "dca310c9d1fc5ba9"}
+{"key": "anthropic|patternProperties|response_format", "digest": "c02f6bf4fc717897"}
+{"key": "anthropic|patternProperties|tool", "digest": "c022fa4563f2e970"}
+{"key": "anthropic|prefixItems|response_format", "digest": "6e0a2be5e3220f33"}
+{"key": "anthropic|prefixItems|tool", "digest": "240eed5e22da4b70"}
+{"key": "anthropic|properties without type|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|properties without type|tool", "digest": "0697a278c53ebc26"}
+{"key": "anthropic|propertyNames|response_format", "digest": "2b2fce0f00c07757"}
+{"key": "anthropic|propertyNames|tool", "digest": "bfca22c3ede7992d"}
+{"key": "anthropic|recursive $ref|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|recursive $ref|tool", "digest": "e9046ad228024f83"}
+{"key": "anthropic|recursive root $ref|response_format", "digest": "795689b95b454bd7"}
+{"key": "anthropic|recursive root $ref|tool", "digest": "1babd863925d2f00"}
+{"key": "anthropic|root $ref|response_format", "digest": "3216102bd99f5287"}
+{"key": "anthropic|scalar types|response_format", "digest": "509293b05074191a"}
+{"key": "anthropic|scalar types|tool", "digest": "dec0260c989979e6"}
+{"key": "anthropic|schema keywords as property names|response_format", "digest": "c2f17ce29b18b635"}
+{"key": "anthropic|schema keywords as property names|tool", "digest": "2df8d68c7e053bd3"}
+{"key": "anthropic|simple pattern|response_format", "digest": "1d90fd9033f53d39"}
+{"key": "anthropic|simple pattern|tool", "digest": "96e264bb40bce77b"}
+{"key": "anthropic|string enum|response_format", "digest": "f026ff2790dfd917"}
+{"key": "anthropic|string enum|tool", "digest": "4a10ebf7d5bd5085"}
+{"key": "anthropic|string root|response_format", "digest": "7f438dd128b9f033"}
+{"key": "anthropic|supported formats|response_format", "digest": "714b5869adbdbaa1"}
+{"key": "anthropic|supported formats|tool", "digest": "d89bf1ade02245cb"}
+{"key": "anthropic|type array of scalars|response_format", "digest": "b4a5b22c715b7ad2"}
+{"key": "anthropic|type array of scalars|tool", "digest": "478e701dedfa5044"}
+{"key": "anthropic|type array of three|response_format", "digest": "13c0836547c80d06"}
+{"key": "anthropic|type array of three|tool", "digest": "a46f824d80d3da7c"}
+{"key": "anthropic|unevaluatedProperties|response_format", "digest": "023f4ce90b135316"}
+{"key": "anthropic|unevaluatedProperties|tool", "digest": "7c1f61a066e33b1e"}
+{"key": "anthropic|uniqueItems|response_format", "digest": "04363496eaaf6cf9"}
+{"key": "anthropic|uniqueItems|tool", "digest": "85e720d70df463cd"}
+{"key": "anthropic|unknown format|response_format", "digest": "7129202a72a0352c"}
+{"key": "anthropic|unknown format|tool", "digest": "9cc4b10845b83e64"}
+{"key": "anthropic|unused $defs|response_format", "digest": "c6844e8fa4f77605"}
+{"key": "anthropic|unused $defs|tool", "digest": "520e25b9799a1287"}
+{"key": "anthropic|unusual property names|response_format", "digest": "e6edf2d55ee46030"}
+{"key": "gemini|$anchor|auto_tool", "digest": "f944e00a4bff345e"}
+{"key": "gemini|$anchor|response_format", "digest": "93b5150ea87060a0"}
+{"key": "gemini|$anchor|tool", "digest": "97e8a6fcafd651e9"}
+{"key": "gemini|$id and relative $ref|auto_tool", "digest": "5f0b20ab8912eed4"}
+{"key": "gemini|$id and relative $ref|response_format", "digest": "73a6104af8df82d1"}
+{"key": "gemini|$id and relative $ref|tool", "digest": "a57f055b62a13a46"}
+{"key": "gemini|$ref in array items|auto_tool", "digest": "e9d372cc16a20082"}
+{"key": "gemini|$ref in array items|response_format", "digest": "da4ddad74c60e952"}
+{"key": "gemini|$ref in array items|tool", "digest": "422c3fc9e9762363"}
+{"key": "gemini|$ref into properties|auto_tool", "digest": "ce0ece6ed30cacca"}
+{"key": "gemini|$ref into properties|response_format", "digest": "558d1ea7fe7374b0"}
+{"key": "gemini|$ref into properties|tool", "digest": "50ba9f08307fffb1"}
+{"key": "gemini|$ref to a nested definition|auto_tool", "digest": "4951903da28de93e"}
+{"key": "gemini|$ref to a nested definition|response_format", "digest": "39e68c6d38c3c842"}
+{"key": "gemini|$ref to a nested definition|tool", "digest": "3cc4ed3d49717172"}
+{"key": "gemini|$ref under anyOf|auto_tool", "digest": "60195f4e98c91528"}
+{"key": "gemini|$ref under anyOf|response_format", "digest": "150bb54385203b97"}
+{"key": "gemini|$ref under anyOf|tool", "digest": "91a73a414f564e4d"}
+{"key": "gemini|$ref with sibling description|auto_tool", "digest": "0e481f1945957228"}
+{"key": "gemini|$ref with sibling description|response_format", "digest": "3089e037c92ae408"}
+{"key": "gemini|$ref with sibling description|tool", "digest": "ad80893626c48011"}
+{"key": "gemini|$schema 2020-12|auto_tool", "digest": "46ab62affe976bc2"}
+{"key": "gemini|$schema 2020-12|response_format", "digest": "81242efefa903b64"}
+{"key": "gemini|$schema 2020-12|tool", "digest": "9ceafa85d461770e"}
+{"key": "gemini|$schema draft-07|auto_tool", "digest": "8af043cf60a531e3"}
+{"key": "gemini|$schema draft-07|response_format", "digest": "568ea4cd77a668a2"}
+{"key": "gemini|$schema draft-07|tool", "digest": "b5c36ca081cc2176"}
+{"key": "gemini|a property named $ref|auto_tool", "digest": "fcfe7ed04d0afc22"}
+{"key": "gemini|a property named $ref|response_format", "digest": "c4c36b81f3bb8ccf"}
+{"key": "gemini|a property named $ref|tool", "digest": "77261392384d0863"}
+{"key": "gemini|additionalProperties schema (a map)|auto_tool", "digest": "44e9be5ed0637ec4"}
+{"key": "gemini|additionalProperties schema (a map)|response_format", "digest": "86310b927f2f9240"}
+{"key": "gemini|additionalProperties schema (a map)|tool", "digest": "4bade239da3c9aec"}
+{"key": "gemini|additionalProperties true|auto_tool", "digest": "a4288a13352b0c20"}
+{"key": "gemini|additionalProperties true|response_format", "digest": "b5b38025d982f5a1"}
+{"key": "gemini|additionalProperties true|tool", "digest": "7892774ee4f9eb46"}
+{"key": "gemini|allOf of closed objects|auto_tool", "digest": "b9cd7b7fff273701"}
+{"key": "gemini|allOf of closed objects|response_format", "digest": "d2d434506b92f5e7"}
+{"key": "gemini|allOf of closed objects|tool", "digest": "07f6e66c19d750ea"}
+{"key": "gemini|allOf of inline schemas|auto_tool", "digest": "6c4ca722068340ac"}
+{"key": "gemini|allOf of inline schemas|response_format", "digest": "0c25d58d0ae3ec86"}
+{"key": "gemini|allOf of inline schemas|tool", "digest": "e3f3db0046d90f12"}
+{"key": "gemini|allOf with a local $ref|auto_tool", "digest": "b36397550fc9ac38"}
+{"key": "gemini|allOf with a local $ref|response_format", "digest": "27a0d84a59ba77c5"}
+{"key": "gemini|allOf with a local $ref|tool", "digest": "39f8577323ae3f23"}
+{"key": "gemini|annotations|auto_tool", "digest": "2792f25032fc09b9"}
+{"key": "gemini|annotations|response_format", "digest": "14ac3a12d39a8c33"}
+{"key": "gemini|annotations|tool", "digest": "0443fd2538accd14"}
+{"key": "gemini|anyOf of closed objects|auto_tool", "digest": "5ade92ad0ae6fa66"}
+{"key": "gemini|anyOf of closed objects|response_format", "digest": "b43d67e1d4729d12"}
+{"key": "gemini|anyOf of closed objects|tool", "digest": "3421b0fd7552d269"}
+{"key": "gemini|anyOf of scalars|auto_tool", "digest": "036aa03b1fcd559c"}
+{"key": "gemini|anyOf of scalars|response_format", "digest": "bb1c1f418f172dd4"}
+{"key": "gemini|anyOf of scalars|tool", "digest": "05a082864015769e"}
+{"key": "gemini|anyOf root|response_format", "digest": "8c593f8fc1e1103b"}
+{"key": "gemini|array enum|auto_tool", "digest": "ccabb57d3eb36570"}
+{"key": "gemini|array enum|response_format", "digest": "f6696f069a356aaa"}
+{"key": "gemini|array enum|tool", "digest": "edd14417f5e072a5"}
+{"key": "gemini|array of closed objects|auto_tool", "digest": "5c52df408f8a57b6"}
+{"key": "gemini|array of closed objects|response_format", "digest": "6613dd154c46538f"}
+{"key": "gemini|array of closed objects|tool", "digest": "ee57ca438cdf9aad"}
+{"key": "gemini|array of open objects|auto_tool", "digest": "a02994b0ee84bdd5"}
+{"key": "gemini|array of open objects|response_format", "digest": "b5308ffcf20db7af"}
+{"key": "gemini|array of open objects|tool", "digest": "9bec0d161e2f14ee"}
+{"key": "gemini|array of strings|auto_tool", "digest": "4d89deed1c0771fe"}
+{"key": "gemini|array of strings|response_format", "digest": "e76e6e38f55365cc"}
+{"key": "gemini|array of strings|tool", "digest": "85e152f1a59b25fb"}
+{"key": "gemini|array root|response_format", "digest": "a8f6a7b30042a6b1"}
+{"key": "gemini|array without items|auto_tool", "digest": "ff4aaa8dafc9a0da"}
+{"key": "gemini|array without items|response_format", "digest": "8ee2f66203ca8284"}
+{"key": "gemini|array without items|tool", "digest": "c17e2845399be866"}
+{"key": "gemini|boolean subschema true|auto_tool", "digest": "a14d1c48fd9e28f7"}
+{"key": "gemini|boolean subschema true|response_format", "digest": "28ffdb8ef8e59640"}
+{"key": "gemini|boolean subschema true|tool", "digest": "ec096563ed9eafd1"}
+{"key": "gemini|closed object without properties|auto_tool", "digest": "6363f54872dc59c3"}
+{"key": "gemini|closed object without properties|response_format", "digest": "7acba294aba469a9"}
+{"key": "gemini|closed object without properties|tool", "digest": "173d8d5a99b0e1b4"}
+{"key": "gemini|closed object|auto_tool", "digest": "cb51b38e6e484813"}
+{"key": "gemini|closed object|response_format", "digest": "28b5799420e2e3a3"}
+{"key": "gemini|closed object|tool", "digest": "84781e0d7feda594"}
+{"key": "gemini|const object|auto_tool", "digest": "d6b1a9ded0ff91ee"}
+{"key": "gemini|const object|response_format", "digest": "21c854249ab12656"}
+{"key": "gemini|const object|tool", "digest": "f51e1183ebc90a36"}
+{"key": "gemini|const string|auto_tool", "digest": "9532c621dd65e3b1"}
+{"key": "gemini|const string|response_format", "digest": "ca7654f68a3af0e7"}
+{"key": "gemini|const string|tool", "digest": "85656f218de958f7"}
+{"key": "gemini|contains|auto_tool", "digest": "b706f7d528ba3afe"}
+{"key": "gemini|contains|response_format", "digest": "fee819183bd7edaa"}
+{"key": "gemini|contains|tool", "digest": "67e4673a1f82e46c"}
+{"key": "gemini|contentEncoding / contentMediaType|auto_tool", "digest": "294a6daf9d6a9e82"}
+{"key": "gemini|contentEncoding / contentMediaType|response_format", "digest": "6d16c1f420d921f7"}
+{"key": "gemini|contentEncoding / contentMediaType|tool", "digest": "f255e9361cce227f"}
+{"key": "gemini|deep nesting|auto_tool", "digest": "fd31cfa97310a159"}
+{"key": "gemini|deep nesting|response_format", "digest": "87cc7deff71247f7"}
+{"key": "gemini|deep nesting|tool", "digest": "16c9798382ab162d"}
+{"key": "gemini|default on an object|auto_tool", "digest": "e8bb69fd9af6b1b1"}
+{"key": "gemini|default on an object|response_format", "digest": "5cdf2d532260f82b"}
+{"key": "gemini|default on an object|tool", "digest": "f986a63efc5aaaaf"}
+{"key": "gemini|dependentRequired|auto_tool", "digest": "be879dda602c4937"}
+{"key": "gemini|dependentRequired|response_format", "digest": "85c2ff075b7dd8de"}
+{"key": "gemini|dependentRequired|tool", "digest": "8a25139a76d1d163"}
+{"key": "gemini|enum without type|auto_tool", "digest": "b63cb477136cce13"}
+{"key": "gemini|enum without type|response_format", "digest": "964e86389ac934d2"}
+{"key": "gemini|enum without type|tool", "digest": "3ef833e0a5f96296"}
+{"key": "gemini|exclusive bounds|auto_tool", "digest": "4a0a76df74007d73"}
+{"key": "gemini|exclusive bounds|response_format", "digest": "053668a9d15a3a0e"}
+{"key": "gemini|exclusive bounds|tool", "digest": "7ddc80bbaad491c1"}
+{"key": "gemini|external $ref|auto_tool", "digest": "323c3897e9ffc892"}
+{"key": "gemini|external $ref|response_format", "digest": "5fb2cc19b61bfe89"}
+{"key": "gemini|external $ref|tool", "digest": "d8abf87868f234fc"}
+{"key": "gemini|format on a non-string|auto_tool", "digest": "4131391c09612713"}
+{"key": "gemini|format on a non-string|response_format", "digest": "f40429c760fa1b98"}
+{"key": "gemini|format on a non-string|tool", "digest": "6f5ce556cfa3cc3d"}
+{"key": "gemini|if / then / else|auto_tool", "digest": "638f89fb9a9eae7f"}
+{"key": "gemini|if / then / else|response_format", "digest": "7c46675498083e26"}
+{"key": "gemini|if / then / else|tool", "digest": "79e790c66077a3b8"}
+{"key": "gemini|keyword-like annotation values|auto_tool", "digest": "8ce3270e22c74515"}
+{"key": "gemini|keyword-like annotation values|response_format", "digest": "848ee7d6d5168e3b"}
+{"key": "gemini|keyword-like annotation values|tool", "digest": "061e2d85d2d9ddda"}
+{"key": "gemini|large enum|auto_tool", "digest": "3a96b50443992177"}
+{"key": "gemini|large enum|response_format", "digest": "b7e06d6cd9048f43"}
+{"key": "gemini|large enum|tool", "digest": "d3a8c5bd6296d966"}
+{"key": "gemini|local $ref in $defs|auto_tool", "digest": "66dd24e5f90c0f89"}
+{"key": "gemini|local $ref in $defs|response_format", "digest": "808dec2f1356fb0a"}
+{"key": "gemini|local $ref in $defs|tool", "digest": "26f65bce4284401f"}
+{"key": "gemini|local $ref in definitions|auto_tool", "digest": "555f99250a9b24c8"}
+{"key": "gemini|local $ref in definitions|response_format", "digest": "0d71c587f3d70369"}
+{"key": "gemini|local $ref in definitions|tool", "digest": "6e51c8ceac7375eb"}
+{"key": "gemini|many properties|auto_tool", "digest": "a5b7fb648b00a080"}
+{"key": "gemini|many properties|response_format", "digest": "78efd90c503fd21d"}
+{"key": "gemini|many properties|tool", "digest": "f9be2ac387673c14"}
+{"key": "gemini|minimum / maximum|auto_tool", "digest": "1dc6e5e06bf91400"}
+{"key": "gemini|minimum / maximum|response_format", "digest": "7e73a3afadb7c002"}
+{"key": "gemini|minimum / maximum|tool", "digest": "23ea617eb2652801"}
+{"key": "gemini|minItems 1|auto_tool", "digest": "f612d1ad69c46e49"}
+{"key": "gemini|minItems 1|response_format", "digest": "5314876eb9d5ec3a"}
+{"key": "gemini|minItems 1|tool", "digest": "e6b5bda536b247aa"}
+{"key": "gemini|minItems 2 / maxItems|auto_tool", "digest": "3fe7f7484290c460"}
+{"key": "gemini|minItems 2 / maxItems|response_format", "digest": "44df9a81122b72a6"}
+{"key": "gemini|minItems 2 / maxItems|tool", "digest": "507ad5b151f45369"}
+{"key": "gemini|minLength / maxLength|auto_tool", "digest": "d9e274e1c652eba7"}
+{"key": "gemini|minLength / maxLength|response_format", "digest": "099d90d07731cbe3"}
+{"key": "gemini|minLength / maxLength|tool", "digest": "326a4e43d80b8737"}
+{"key": "gemini|minProperties / maxProperties|auto_tool", "digest": "c2e96154d16f10cf"}
+{"key": "gemini|minProperties / maxProperties|response_format", "digest": "3f93030868cf61f8"}
+{"key": "gemini|minProperties / maxProperties|tool", "digest": "b009c311b8a85c39"}
+{"key": "gemini|mixed scalar enum|auto_tool", "digest": "de77a0535fa49f01"}
+{"key": "gemini|mixed scalar enum|response_format", "digest": "eb69e677cc7290c7"}
+{"key": "gemini|mixed scalar enum|tool", "digest": "4f17bc36ed68cb04"}
+{"key": "gemini|multipleOf|auto_tool", "digest": "32d0641d26f15bfc"}
+{"key": "gemini|multipleOf|response_format", "digest": "bbd551bb7d2860a2"}
+{"key": "gemini|multipleOf|tool", "digest": "ea53f48d0fcdb09f"}
+{"key": "gemini|nested arrays|auto_tool", "digest": "98fdfce6615d0f0d"}
+{"key": "gemini|nested arrays|response_format", "digest": "937f7c384c61a1e7"}
+{"key": "gemini|nested arrays|tool", "digest": "a13686225c34963b"}
+{"key": "gemini|nested closed objects|auto_tool", "digest": "bd85d68ba948410a"}
+{"key": "gemini|nested closed objects|response_format", "digest": "f60897e4a4234c1a"}
+{"key": "gemini|nested closed objects|tool", "digest": "144a764ab8ce7c9d"}
+{"key": "gemini|nested open object|auto_tool", "digest": "2faebff9bbd3a8ea"}
+{"key": "gemini|nested open object|response_format", "digest": "0db469db57a10dfd"}
+{"key": "gemini|nested open object|tool", "digest": "607a1922adc0b15e"}
+{"key": "gemini|no required list|auto_tool", "digest": "67e7eee12fa5b01c"}
+{"key": "gemini|no required list|response_format", "digest": "d696d402d373d7d6"}
+{"key": "gemini|no required list|tool", "digest": "11f17a19d146f9f1"}
+{"key": "gemini|no type (any value)|auto_tool", "digest": "1587f6827677dc95"}
+{"key": "gemini|no type (any value)|response_format", "digest": "05f4dacc0e765d78"}
+{"key": "gemini|no type (any value)|tool", "digest": "9c032d38690f4bc0"}
+{"key": "gemini|not|auto_tool", "digest": "822d418132296c8f"}
+{"key": "gemini|not|response_format", "digest": "34a4e56c44d9b6cf"}
+{"key": "gemini|not|tool", "digest": "79677c819fa42fed"}
+{"key": "gemini|nullable object, closed|auto_tool", "digest": "486d6ff40acdaec9"}
+{"key": "gemini|nullable object, closed|response_format", "digest": "3bbeea956ef12a8f"}
+{"key": "gemini|nullable object, closed|tool", "digest": "301025359765b262"}
+{"key": "gemini|nullable object, open|auto_tool", "digest": "28cad64e739de83b"}
+{"key": "gemini|nullable object, open|response_format", "digest": "ef180933376e1924"}
+{"key": "gemini|nullable object, open|tool", "digest": "8bb77e215a444e11"}
+{"key": "gemini|nullable root|response_format", "digest": "3af0f67b6585d38f"}
+{"key": "gemini|object enum|auto_tool", "digest": "5c108c9f46674104"}
+{"key": "gemini|object enum|response_format", "digest": "12aeedc8a188230d"}
+{"key": "gemini|object enum|tool", "digest": "a6e123c1cf4dada1"}
+{"key": "gemini|object under anyOf with null|auto_tool", "digest": "757ec01955c7889d"}
+{"key": "gemini|object under anyOf with null|response_format", "digest": "69aafdc1808cb6fa"}
+{"key": "gemini|object under anyOf with null|tool", "digest": "8795aa4f83233e3a"}
+{"key": "gemini|object without properties|auto_tool", "digest": "de4a09da4075898d"}
+{"key": "gemini|object without properties|response_format", "digest": "a13651d0eda20811"}
+{"key": "gemini|object without properties|tool", "digest": "44485320d624ce9a"}
+{"key": "gemini|oneOf|auto_tool", "digest": "b6952bf1c33ed6f5"}
+{"key": "gemini|oneOf|response_format", "digest": "821c9f1685982f2e"}
+{"key": "gemini|oneOf|tool", "digest": "937c01d412b3a13f"}
+{"key": "gemini|open object in $defs|auto_tool", "digest": "f53d58da00c675a1"}
+{"key": "gemini|open object in $defs|response_format", "digest": "30446046abe825e6"}
+{"key": "gemini|open object in $defs|tool", "digest": "e705474121a5a7d8"}
+{"key": "gemini|open object under anyOf|auto_tool", "digest": "fd55931d510c65e9"}
+{"key": "gemini|open object under anyOf|response_format", "digest": "ea2d7edbe09c0583"}
+{"key": "gemini|open object under anyOf|tool", "digest": "2550468ca1b54991"}
+{"key": "gemini|open object|auto_tool", "digest": "58bf1d68a8db2fbc"}
+{"key": "gemini|open object|response_format", "digest": "12a8d73b7dfae3c7"}
+{"key": "gemini|open object|tool", "digest": "623a64e9f2c419d9"}
+{"key": "gemini|optional property|auto_tool", "digest": "d19be241b927c01e"}
+{"key": "gemini|optional property|response_format", "digest": "a254822fcabf5dc0"}
+{"key": "gemini|optional property|tool", "digest": "6e85c2c94c41464e"}
+{"key": "gemini|other formats|auto_tool", "digest": "2e9d99349ff96032"}
+{"key": "gemini|other formats|response_format", "digest": "bb484c8247f03875"}
+{"key": "gemini|other formats|tool", "digest": "2f0409ab0b87acb2"}
+{"key": "gemini|pattern with backreference|auto_tool", "digest": "278a27488022b8b7"}
+{"key": "gemini|pattern with backreference|response_format", "digest": "f783ecb379f3e3aa"}
+{"key": "gemini|pattern with backreference|tool", "digest": "401ff2ba577996e9"}
+{"key": "gemini|pattern with lookahead|auto_tool", "digest": "14678eda9dd7145a"}
+{"key": "gemini|pattern with lookahead|response_format", "digest": "1cc748f21601b485"}
+{"key": "gemini|pattern with lookahead|tool", "digest": "5172f5c7eed83ec9"}
+{"key": "gemini|pattern with lookbehind|auto_tool", "digest": "da7ee528deadb431"}
+{"key": "gemini|pattern with lookbehind|response_format", "digest": "819f2cdd7140ce50"}
+{"key": "gemini|pattern with lookbehind|tool", "digest": "b3f15666c82c296a"}
+{"key": "gemini|pattern with unicode class|auto_tool", "digest": "3afd876a3742d4b8"}
+{"key": "gemini|pattern with unicode class|response_format", "digest": "74b8c63e602fabea"}
+{"key": "gemini|pattern with unicode class|tool", "digest": "e1ea49ffae7a08b0"}
+{"key": "gemini|pattern with word boundary|auto_tool", "digest": "6118857c64c857c0"}
+{"key": "gemini|pattern with word boundary|response_format", "digest": "457a8e6efc5c5209"}
+{"key": "gemini|pattern with word boundary|tool", "digest": "5f145abd0b3bf94d"}
+{"key": "gemini|pattern without anchors|auto_tool", "digest": "cfc5f0a2ccee010b"}
+{"key": "gemini|pattern without anchors|response_format", "digest": "585bf670f02b5eaa"}
+{"key": "gemini|pattern without anchors|tool", "digest": "b7abc5abfb6d3d19"}
+{"key": "gemini|patternProperties|auto_tool", "digest": "4198cf8a20e49d63"}
+{"key": "gemini|patternProperties|response_format", "digest": "524a65e3704f89c4"}
+{"key": "gemini|patternProperties|tool", "digest": "d776ada6732b2fbe"}
+{"key": "gemini|prefixItems|auto_tool", "digest": "02309ed25cfb8be8"}
+{"key": "gemini|prefixItems|response_format", "digest": "7c6c7f8063a0447b"}
+{"key": "gemini|prefixItems|tool", "digest": "352a0ad28dd56d2b"}
+{"key": "gemini|properties without type|auto_tool", "digest": "012ff5fea036b386"}
+{"key": "gemini|properties without type|response_format", "digest": "ad8e85f51e8c27f1"}
+{"key": "gemini|properties without type|tool", "digest": "d4d4201bd2bb200a"}
+{"key": "gemini|propertyNames|auto_tool", "digest": "aae8428bd8f62559"}
+{"key": "gemini|propertyNames|response_format", "digest": "f34df5f34d0a42f1"}
+{"key": "gemini|propertyNames|tool", "digest": "fb76b2c8f1eb4191"}
+{"key": "gemini|recursive $ref|auto_tool", "digest": "ab629b894e8f633b"}
+{"key": "gemini|recursive $ref|response_format", "digest": "94b797246f22285e"}
+{"key": "gemini|recursive $ref|tool", "digest": "b15aa384ddf12411"}
+{"key": "gemini|recursive root $ref|auto_tool", "digest": "3ca36ba7e3986f4a"}
+{"key": "gemini|recursive root $ref|response_format", "digest": "df9ea67aae1fcf14"}
+{"key": "gemini|recursive root $ref|tool", "digest": "5cd38f66af655d76"}
+{"key": "gemini|root $ref|response_format", "digest": "db054de8e49af235"}
+{"key": "gemini|scalar types|auto_tool", "digest": "510fadfe86285f10"}
+{"key": "gemini|scalar types|response_format", "digest": "64f3a92322541068"}
+{"key": "gemini|scalar types|tool", "digest": "3674e14687789628"}
+{"key": "gemini|schema keywords as property names|auto_tool", "digest": "c2a68cc174fd7535"}
+{"key": "gemini|schema keywords as property names|response_format", "digest": "26b56cda090c8ee5"}
+{"key": "gemini|schema keywords as property names|tool", "digest": "6306adbaa6a3d71b"}
+{"key": "gemini|simple pattern|auto_tool", "digest": "dfe85eb2b001ea3d"}
+{"key": "gemini|simple pattern|response_format", "digest": "f47dbe74cfe9f2a5"}
+{"key": "gemini|simple pattern|tool", "digest": "765c1503a8889ff9"}
+{"key": "gemini|string enum|auto_tool", "digest": "13ecc51b9ef17cce"}
+{"key": "gemini|string enum|response_format", "digest": "45bcdea7e378b253"}
+{"key": "gemini|string enum|tool", "digest": "c0371982e31788cf"}
+{"key": "gemini|string root|response_format", "digest": "2a6a6f4e8a85fa8f"}
+{"key": "gemini|supported formats|auto_tool", "digest": "f3aeca5bd2fb3e9c"}
+{"key": "gemini|supported formats|response_format", "digest": "52306e9ffeb1f6ce"}
+{"key": "gemini|supported formats|tool", "digest": "da02ee4cdfa5caea"}
+{"key": "gemini|type array of scalars|auto_tool", "digest": "9b96605329e70e14"}
+{"key": "gemini|type array of scalars|response_format", "digest": "f4e82270d52d12b1"}
+{"key": "gemini|type array of scalars|tool", "digest": "e4d0c25818e32f71"}
+{"key": "gemini|type array of three|auto_tool", "digest": "03da257fe5a16988"}
+{"key": "gemini|type array of three|response_format", "digest": "85d93ed79740fbc4"}
+{"key": "gemini|type array of three|tool", "digest": "efea7066f837d6c1"}
+{"key": "gemini|unevaluatedProperties|auto_tool", "digest": "44d1e8fcbb5410f2"}
+{"key": "gemini|unevaluatedProperties|response_format", "digest": "b2f904fde3dffe2a"}
+{"key": "gemini|unevaluatedProperties|tool", "digest": "854faa8132f25c62"}
+{"key": "gemini|uniqueItems|auto_tool", "digest": "88e82e09310d702c"}
+{"key": "gemini|uniqueItems|response_format", "digest": "1a95f4e92333e85c"}
+{"key": "gemini|uniqueItems|tool", "digest": "010a61b99b3712c1"}
+{"key": "gemini|unknown format|auto_tool", "digest": "dd3029c3f688a675"}
+{"key": "gemini|unknown format|response_format", "digest": "f8cf032cada16f90"}
+{"key": "gemini|unknown format|tool", "digest": "1d0812360b76c10a"}
+{"key": "gemini|unused $defs|auto_tool", "digest": "964ae25cce801e01"}
+{"key": "gemini|unused $defs|response_format", "digest": "8ab288e7d487b07e"}
+{"key": "gemini|unused $defs|tool", "digest": "56cee4cddc5d8987"}
+{"key": "gemini|unusual property names|auto_tool", "digest": "8ac5ba89eff5f9a9"}
+{"key": "gemini|unusual property names|response_format", "digest": "d8eee3cdd2cf2afa"}
+{"key": "gemini|unusual property names|tool", "digest": "c326c419016894c8"}
+{"key": "openai_chat_completions|$anchor|response_format", "digest": "4d919fb409c46042"}
+{"key": "openai_chat_completions|$anchor|tool", "digest": "0de4b398b051973b"}
+{"key": "openai_chat_completions|$id and relative $ref|response_format", "digest": "0ea7b260ec223440"}
+{"key": "openai_chat_completions|$id and relative $ref|tool", "digest": "f4b3e8c045a3e6ef"}
+{"key": "openai_chat_completions|$ref in array items|response_format", "digest": "123fe07ee413b94a"}
+{"key": "openai_chat_completions|$ref in array items|tool", "digest": "9f8df96f03d38112"}
+{"key": "openai_chat_completions|$ref into properties|response_format", "digest": "4e35295c060dd508"}
+{"key": "openai_chat_completions|$ref into properties|tool", "digest": "afbdb321011e129b"}
+{"key": "openai_chat_completions|$ref to a nested definition|response_format", "digest": "0214ecf67f84ba78"}
+{"key": "openai_chat_completions|$ref to a nested definition|tool", "digest": "438db562b5218016"}
+{"key": "openai_chat_completions|$ref under anyOf|response_format", "digest": "1914e4716db5d11b"}
+{"key": "openai_chat_completions|$ref under anyOf|tool", "digest": "9dae765d7617500a"}
+{"key": "openai_chat_completions|$ref with sibling description|response_format", "digest": "d928f1fbcd22918b"}
+{"key": "openai_chat_completions|$ref with sibling description|tool", "digest": "20a2c5b5a28dbe8d"}
+{"key": "openai_chat_completions|$schema 2020-12|response_format", "digest": "7182872ab57cf14f"}
+{"key": "openai_chat_completions|$schema 2020-12|tool", "digest": "beb96839085ecfea"}
+{"key": "openai_chat_completions|$schema draft-07|response_format", "digest": "cad28230a4922a37"}
+{"key": "openai_chat_completions|$schema draft-07|tool", "digest": "4be31582e43c140c"}
+{"key": "openai_chat_completions|a property named $ref|response_format", "digest": "506832cf32894162"}
+{"key": "openai_chat_completions|a property named $ref|tool", "digest": "86a76a9759e87f96"}
+{"key": "openai_chat_completions|additionalProperties schema (a map)|response_format", "digest": "90360cb12e22389c"}
+{"key": "openai_chat_completions|additionalProperties schema (a map)|tool", "digest": "63393496bea98d1c"}
+{"key": "openai_chat_completions|additionalProperties true|response_format", "digest": "0f0680e5da38512f"}
+{"key": "openai_chat_completions|additionalProperties true|tool", "digest": "bb9fa9ec9b0be183"}
+{"key": "openai_chat_completions|allOf of closed objects|response_format", "digest": "a1e401e3d9facba3"}
+{"key": "openai_chat_completions|allOf of closed objects|tool", "digest": "fc590d79140b6b9d"}
+{"key": "openai_chat_completions|allOf of inline schemas|response_format", "digest": "25bd20658c13a54e"}
+{"key": "openai_chat_completions|allOf of inline schemas|tool", "digest": "c728aabb253a4929"}
+{"key": "openai_chat_completions|allOf with a local $ref|response_format", "digest": "f963de36e4e718f3"}
+{"key": "openai_chat_completions|allOf with a local $ref|tool", "digest": "17fe2a0379d22c61"}
+{"key": "openai_chat_completions|annotations|response_format", "digest": "6bb713706de23080"}
+{"key": "openai_chat_completions|annotations|tool", "digest": "ecf8ee1fbfd21800"}
+{"key": "openai_chat_completions|anyOf of closed objects|response_format", "digest": "82c565dce78e4e35"}
+{"key": "openai_chat_completions|anyOf of closed objects|tool", "digest": "d4fe0aeaeb473662"}
+{"key": "openai_chat_completions|anyOf of scalars|response_format", "digest": "39d2573af058bada"}
+{"key": "openai_chat_completions|anyOf of scalars|tool", "digest": "93a0b4e4c38f9b1b"}
+{"key": "openai_chat_completions|anyOf root|response_format", "digest": "0e07b4094563cdaa"}
+{"key": "openai_chat_completions|array enum|response_format", "digest": "4fc50f3ec6999eb9"}
+{"key": "openai_chat_completions|array enum|tool", "digest": "37d4f2f8ea7d95ed"}
+{"key": "openai_chat_completions|array of closed objects|response_format", "digest": "52703c63d56872b7"}
+{"key": "openai_chat_completions|array of closed objects|tool", "digest": "10037947763293f7"}
+{"key": "openai_chat_completions|array of open objects|response_format", "digest": "13741edd20c8a9e9"}
+{"key": "openai_chat_completions|array of open objects|tool", "digest": "106b22aa68975205"}
+{"key": "openai_chat_completions|array of strings|response_format", "digest": "9e992d177ed41fc8"}
+{"key": "openai_chat_completions|array of strings|tool", "digest": "33e5090ab21c6431"}
+{"key": "openai_chat_completions|array root|response_format", "digest": "0e07b4094563cdaa"}
+{"key": "openai_chat_completions|array without items|response_format", "digest": "3637d281d4cb3aa1"}
+{"key": "openai_chat_completions|array without items|tool", "digest": "35fe6b183410bf06"}
+{"key": "openai_chat_completions|boolean subschema true|response_format", "digest": "7a099e609c8f329a"}
+{"key": "openai_chat_completions|boolean subschema true|tool", "digest": "3f8b5cff0f90bb0e"}
+{"key": "openai_chat_completions|closed object without properties|response_format", "digest": "58f96fb338a5d26b"}
+{"key": "openai_chat_completions|closed object without properties|tool", "digest": "329f10865e2dc1b7"}
+{"key": "openai_chat_completions|closed object|response_format", "digest": "2f3d15b41f9868d8"}
+{"key": "openai_chat_completions|closed object|tool", "digest": "fd191bcbd6104d50"}
+{"key": "openai_chat_completions|const object|response_format", "digest": "19325c8864cefaed"}
+{"key": "openai_chat_completions|const object|tool", "digest": "bcfeba5eac92201b"}
+{"key": "openai_chat_completions|const string|response_format", "digest": "48c3becddf849b45"}
+{"key": "openai_chat_completions|const string|tool", "digest": "28d81cddba5ab8b1"}
+{"key": "openai_chat_completions|contains|response_format", "digest": "5fc070ce6996ba19"}
+{"key": "openai_chat_completions|contains|tool", "digest": "14ee8c1675c60498"}
+{"key": "openai_chat_completions|contentEncoding / contentMediaType|response_format", "digest": "1f71be7a4c5ecea7"}
+{"key": "openai_chat_completions|contentEncoding / contentMediaType|tool", "digest": "c7dc8f325ad4a7eb"}
+{"key": "openai_chat_completions|deep nesting|response_format", "digest": "18ef6fe2496a74a7"}
+{"key": "openai_chat_completions|deep nesting|tool", "digest": "4daba3e5c9005199"}
+{"key": "openai_chat_completions|default on an object|response_format", "digest": "c161c9dab632855e"}
+{"key": "openai_chat_completions|default on an object|tool", "digest": "b5176e1988115d72"}
+{"key": "openai_chat_completions|dependentRequired|response_format", "digest": "6d9af67635933607"}
+{"key": "openai_chat_completions|dependentRequired|tool", "digest": "131d5f8b743cb9cf"}
+{"key": "openai_chat_completions|enum without type|response_format", "digest": "0780015842d93956"}
+{"key": "openai_chat_completions|enum without type|tool", "digest": "63b1a92dd5d2e3b3"}
+{"key": "openai_chat_completions|exclusive bounds|response_format", "digest": "240112b931ec21f9"}
+{"key": "openai_chat_completions|exclusive bounds|tool", "digest": "d4d2e12c6cfd94e5"}
+{"key": "openai_chat_completions|external $ref|response_format", "digest": "500d7da01143327a"}
+{"key": "openai_chat_completions|external $ref|tool", "digest": "11afd3bc004cdd03"}
+{"key": "openai_chat_completions|format on a non-string|response_format", "digest": "073e24171e69573f"}
+{"key": "openai_chat_completions|format on a non-string|tool", "digest": "c8f57e74a7a0870c"}
+{"key": "openai_chat_completions|if / then / else|response_format", "digest": "0742568e7f2b6847"}
+{"key": "openai_chat_completions|if / then / else|tool", "digest": "61bef5f0f214950d"}
+{"key": "openai_chat_completions|keyword-like annotation values|response_format", "digest": "ba6db4fc4b948f56"}
+{"key": "openai_chat_completions|keyword-like annotation values|tool", "digest": "2bfb629242d10a89"}
+{"key": "openai_chat_completions|large enum|response_format", "digest": "d3d45eeb9d0bbaf7"}
+{"key": "openai_chat_completions|large enum|tool", "digest": "ddc2e556a069cffd"}
+{"key": "openai_chat_completions|local $ref in $defs|response_format", "digest": "a444a9b75210ad0c"}
+{"key": "openai_chat_completions|local $ref in $defs|tool", "digest": "25bc93c0a0a6a6bd"}
+{"key": "openai_chat_completions|local $ref in definitions|response_format", "digest": "a7749df9a2750ca5"}
+{"key": "openai_chat_completions|local $ref in definitions|tool", "digest": "a354480c002919bc"}
+{"key": "openai_chat_completions|many properties|response_format", "digest": "39f94fb8210b3315"}
+{"key": "openai_chat_completions|many properties|tool", "digest": "b60c367b6e94ae02"}
+{"key": "openai_chat_completions|minimum / maximum|response_format", "digest": "3847bf7dbcc997b6"}
+{"key": "openai_chat_completions|minimum / maximum|tool", "digest": "35790160fbdc8a6c"}
+{"key": "openai_chat_completions|minItems 1|response_format", "digest": "96b06202779a3557"}
+{"key": "openai_chat_completions|minItems 1|tool", "digest": "2b618a480cb64d95"}
+{"key": "openai_chat_completions|minItems 2 / maxItems|response_format", "digest": "d8e860e59df064d8"}
+{"key": "openai_chat_completions|minItems 2 / maxItems|tool", "digest": "fd49742323c6eda1"}
+{"key": "openai_chat_completions|minLength / maxLength|response_format", "digest": "dbabc2f751cc8788"}
+{"key": "openai_chat_completions|minLength / maxLength|tool", "digest": "6468e3ef39e9845c"}
+{"key": "openai_chat_completions|minProperties / maxProperties|response_format", "digest": "4a306da7cf0a5bb1"}
+{"key": "openai_chat_completions|minProperties / maxProperties|tool", "digest": "855bb20a8369f177"}
+{"key": "openai_chat_completions|mixed scalar enum|response_format", "digest": "13ab3528fbb541bb"}
+{"key": "openai_chat_completions|mixed scalar enum|tool", "digest": "57f20ee62552d8bb"}
+{"key": "openai_chat_completions|multipleOf|response_format", "digest": "e719cb590e72259f"}
+{"key": "openai_chat_completions|multipleOf|tool", "digest": "15dbb247e2f915e6"}
+{"key": "openai_chat_completions|nested arrays|response_format", "digest": "7cf164a9d12cbf29"}
+{"key": "openai_chat_completions|nested arrays|tool", "digest": "57ab263c0942c355"}
+{"key": "openai_chat_completions|nested closed objects|response_format", "digest": "721e9b889398658b"}
+{"key": "openai_chat_completions|nested closed objects|tool", "digest": "4d7932c0aad5be24"}
+{"key": "openai_chat_completions|nested open object|response_format", "digest": "cc0be0fb2a65ca23"}
+{"key": "openai_chat_completions|nested open object|tool", "digest": "97c0cff7c1fc2fb9"}
+{"key": "openai_chat_completions|no required list|response_format", "digest": "5a6c864d6bda6571"}
+{"key": "openai_chat_completions|no required list|tool", "digest": "65d3a233c0251ada"}
+{"key": "openai_chat_completions|no type (any value)|response_format", "digest": "e500a78f9a2472a4"}
+{"key": "openai_chat_completions|no type (any value)|tool", "digest": "e6e977b5d74a3ca5"}
+{"key": "openai_chat_completions|not|response_format", "digest": "f5690363d9a714e5"}
+{"key": "openai_chat_completions|not|tool", "digest": "9304062867bfa12c"}
+{"key": "openai_chat_completions|nullable object, closed|response_format", "digest": "dc6f59c4b7542fa3"}
+{"key": "openai_chat_completions|nullable object, closed|tool", "digest": "69d4d7227ba9fce7"}
+{"key": "openai_chat_completions|nullable object, open|response_format", "digest": "9d71a8ef2dc3c866"}
+{"key": "openai_chat_completions|nullable object, open|tool", "digest": "b8b859a05a321cac"}
+{"key": "openai_chat_completions|nullable root|response_format", "digest": "0e07b4094563cdaa"}
+{"key": "openai_chat_completions|object enum|response_format", "digest": "1eb7bba2a1f83e7a"}
+{"key": "openai_chat_completions|object enum|tool", "digest": "cf10558722fcb5e4"}
+{"key": "openai_chat_completions|object under anyOf with null|response_format", "digest": "00bd2bb9fd79ecac"}
+{"key": "openai_chat_completions|object under anyOf with null|tool", "digest": "e230ca57b5db1706"}
+{"key": "openai_chat_completions|object without properties|response_format", "digest": "603c9a31c62e40b7"}
+{"key": "openai_chat_completions|object without properties|tool", "digest": "a628aa8cc20e89e7"}
+{"key": "openai_chat_completions|oneOf|response_format", "digest": "a88a77d4d26846a0"}
+{"key": "openai_chat_completions|oneOf|tool", "digest": "e2492752a1eb6413"}
+{"key": "openai_chat_completions|open object in $defs|response_format", "digest": "807f5baea5ffb2c0"}
+{"key": "openai_chat_completions|open object in $defs|tool", "digest": "4ee6dd3dde9bb846"}
+{"key": "openai_chat_completions|open object under anyOf|response_format", "digest": "e1419599a60f0d96"}
+{"key": "openai_chat_completions|open object under anyOf|tool", "digest": "cbe9ce30cc554d3e"}
+{"key": "openai_chat_completions|open object|response_format", "digest": "d895802cd666bb61"}
+{"key": "openai_chat_completions|open object|tool", "digest": "38d42c96e044495b"}
+{"key": "openai_chat_completions|optional property|response_format", "digest": "d41663e031485976"}
+{"key": "openai_chat_completions|optional property|tool", "digest": "9592e43d69ad37a6"}
+{"key": "openai_chat_completions|other formats|response_format", "digest": "f414a77ebf8a5ebe"}
+{"key": "openai_chat_completions|other formats|tool", "digest": "a2cc54f4fb1f460e"}
+{"key": "openai_chat_completions|pattern with backreference|response_format", "digest": "e18396301e87e4c9"}
+{"key": "openai_chat_completions|pattern with lookahead|response_format", "digest": "6a327b3ee7c686d6"}
+{"key": "openai_chat_completions|pattern with lookbehind|response_format", "digest": "713b06f48b4bb7c2"}
+{"key": "openai_chat_completions|pattern with unicode class|response_format", "digest": "6d4b8a3c8c07394b"}
+{"key": "openai_chat_completions|pattern with unicode class|tool", "digest": "e0020d6ec237aab5"}
+{"key": "openai_chat_completions|pattern with word boundary|response_format", "digest": "c94bbcc29c877826"}
+{"key": "openai_chat_completions|pattern without anchors|response_format", "digest": "da3b72a80dacb14d"}
+{"key": "openai_chat_completions|pattern without anchors|tool", "digest": "ffa79c144fdfe6d4"}
+{"key": "openai_chat_completions|patternProperties|response_format", "digest": "246d2ce250b3d0f1"}
+{"key": "openai_chat_completions|patternProperties|tool", "digest": "59783144ee1a354d"}
+{"key": "openai_chat_completions|prefixItems|response_format", "digest": "62939810eb4f4a27"}
+{"key": "openai_chat_completions|prefixItems|tool", "digest": "e93f4e9f8b1f9299"}
+{"key": "openai_chat_completions|properties without type|response_format", "digest": "45b7fabc5ac5d978"}
+{"key": "openai_chat_completions|properties without type|tool", "digest": "225d7645c7ccbc33"}
+{"key": "openai_chat_completions|propertyNames|response_format", "digest": "c8ac155c97ed9cc1"}
+{"key": "openai_chat_completions|propertyNames|tool", "digest": "a725529dc78f7346"}
+{"key": "openai_chat_completions|recursive $ref|response_format", "digest": "a94713c0097d959a"}
+{"key": "openai_chat_completions|recursive $ref|tool", "digest": "3bd86730175e8522"}
+{"key": "openai_chat_completions|recursive root $ref|response_format", "digest": "cbf12540b7ffba0e"}
+{"key": "openai_chat_completions|recursive root $ref|tool", "digest": "322135936507050b"}
+{"key": "openai_chat_completions|root $ref|response_format", "digest": "0e07b4094563cdaa"}
+{"key": "openai_chat_completions|scalar types|response_format", "digest": "dc3ac723e3c57cbd"}
+{"key": "openai_chat_completions|scalar types|tool", "digest": "a530683e9bc0d4e1"}
+{"key": "openai_chat_completions|schema keywords as property names|response_format", "digest": "9ec1aab0407eeb48"}
+{"key": "openai_chat_completions|schema keywords as property names|tool", "digest": "4378e55dd0744653"}
+{"key": "openai_chat_completions|simple pattern|response_format", "digest": "671d330502327672"}
+{"key": "openai_chat_completions|simple pattern|tool", "digest": "9301e298ce661759"}
+{"key": "openai_chat_completions|string enum|response_format", "digest": "c6f8d60449ff359a"}
+{"key": "openai_chat_completions|string enum|tool", "digest": "a44b0984bcf318eb"}
+{"key": "openai_chat_completions|string root|response_format", "digest": "0e07b4094563cdaa"}
+{"key": "openai_chat_completions|supported formats|response_format", "digest": "6104dcb41c7ad5cf"}
+{"key": "openai_chat_completions|supported formats|tool", "digest": "a093179187ecdf15"}
+{"key": "openai_chat_completions|type array of scalars|response_format", "digest": "dbef9d4a1bb8df8c"}
+{"key": "openai_chat_completions|type array of scalars|tool", "digest": "a42e3c324ddaf48e"}
+{"key": "openai_chat_completions|type array of three|response_format", "digest": "97e9b9740d37752f"}
+{"key": "openai_chat_completions|type array of three|tool", "digest": "419fd1d7d8fbbb60"}
+{"key": "openai_chat_completions|unevaluatedProperties|response_format", "digest": "7a50a5137d1e8e8a"}
+{"key": "openai_chat_completions|unevaluatedProperties|tool", "digest": "1db5be6ac9feb11c"}
+{"key": "openai_chat_completions|uniqueItems|response_format", "digest": "7b0a1e56430dac56"}
+{"key": "openai_chat_completions|uniqueItems|tool", "digest": "c8b4fd590146334d"}
+{"key": "openai_chat_completions|unknown format|response_format", "digest": "29c4f7ca0cc496b3"}
+{"key": "openai_chat_completions|unknown format|tool", "digest": "1c0c926e92f8e17c"}
+{"key": "openai_chat_completions|unused $defs|response_format", "digest": "66a279a9b840dc6f"}
+{"key": "openai_chat_completions|unused $defs|tool", "digest": "aaebe1600288743f"}
+{"key": "openai_chat_completions|unusual property names|response_format", "digest": "87b0368944de996a"}
+{"key": "openai_chat_completions|unusual property names|tool", "digest": "5ffe3763252a31a2"}
+{"key": "openai_responses|$anchor|response_format", "digest": "85dd34b4cbede2f7"}
+{"key": "openai_responses|$anchor|tool", "digest": "6c3e999bee4b4850"}
+{"key": "openai_responses|$id and relative $ref|response_format", "digest": "3fd9a27fe8ace065"}
+{"key": "openai_responses|$id and relative $ref|tool", "digest": "bf4a9c0f46eca868"}
+{"key": "openai_responses|$ref in array items|response_format", "digest": "e48209c30129da79"}
+{"key": "openai_responses|$ref in array items|tool", "digest": "6e5847673bd236a9"}
+{"key": "openai_responses|$ref into properties|response_format", "digest": "bbb90408145b88a4"}
+{"key": "openai_responses|$ref into properties|tool", "digest": "4b3dcce1f7e2b29b"}
+{"key": "openai_responses|$ref to a nested definition|response_format", "digest": "09cf105ae1672570"}
+{"key": "openai_responses|$ref to a nested definition|tool", "digest": "32f1ca8db59c6f0b"}
+{"key": "openai_responses|$ref under anyOf|response_format", "digest": "b3bc5a4ad4b04d44"}
+{"key": "openai_responses|$ref under anyOf|tool", "digest": "bf43181f510e1207"}
+{"key": "openai_responses|$ref with sibling description|response_format", "digest": "d980734d134d137f"}
+{"key": "openai_responses|$ref with sibling description|tool", "digest": "a489703ceea2d574"}
+{"key": "openai_responses|$schema 2020-12|response_format", "digest": "3d07a6566f779b5a"}
+{"key": "openai_responses|$schema 2020-12|tool", "digest": "2bc4e2a16fae418c"}
+{"key": "openai_responses|$schema draft-07|response_format", "digest": "41382fa143e178d9"}
+{"key": "openai_responses|$schema draft-07|tool", "digest": "80dc355413a9eb0a"}
+{"key": "openai_responses|a property named $ref|response_format", "digest": "0498d4bde6244dbe"}
+{"key": "openai_responses|a property named $ref|tool", "digest": "0a7167c24145239a"}
+{"key": "openai_responses|additionalProperties schema (a map)|response_format", "digest": "bbc944631ff22d77"}
+{"key": "openai_responses|additionalProperties schema (a map)|tool", "digest": "af1270fb5a56eea2"}
+{"key": "openai_responses|additionalProperties true|response_format", "digest": "f38bfd34a7e99fa6"}
+{"key": "openai_responses|additionalProperties true|tool", "digest": "ccb3b1d18bc592e4"}
+{"key": "openai_responses|allOf of closed objects|response_format", "digest": "8fdd2b1dcae11044"}
+{"key": "openai_responses|allOf of closed objects|tool", "digest": "b8e09240e0169dbb"}
+{"key": "openai_responses|allOf of inline schemas|response_format", "digest": "234070d4bf36c4f4"}
+{"key": "openai_responses|allOf of inline schemas|tool", "digest": "70f11e939ec66694"}
+{"key": "openai_responses|allOf with a local $ref|response_format", "digest": "27d47e6f8144900e"}
+{"key": "openai_responses|allOf with a local $ref|tool", "digest": "4ce36f3ba28afbb2"}
+{"key": "openai_responses|annotations|response_format", "digest": "f5e566216ca41c58"}
+{"key": "openai_responses|annotations|tool", "digest": "1be9fafcb8a4cbe0"}
+{"key": "openai_responses|anyOf of closed objects|response_format", "digest": "2b85e8a90bdd9de1"}
+{"key": "openai_responses|anyOf of closed objects|tool", "digest": "4b7fa70a548c879a"}
+{"key": "openai_responses|anyOf of scalars|response_format", "digest": "b7fe0de61a400398"}
+{"key": "openai_responses|anyOf of scalars|tool", "digest": "ec525dabfc8bcbdf"}
+{"key": "openai_responses|anyOf root|response_format", "digest": "ce4a4a9e42dfb12c"}
+{"key": "openai_responses|array enum|response_format", "digest": "1311e425c5ef9464"}
+{"key": "openai_responses|array enum|tool", "digest": "dc7ba7d957d31dce"}
+{"key": "openai_responses|array of closed objects|response_format", "digest": "7d92b27d39551fbe"}
+{"key": "openai_responses|array of closed objects|tool", "digest": "91c9a33324983d42"}
+{"key": "openai_responses|array of open objects|response_format", "digest": "85f39df1d763b4f4"}
+{"key": "openai_responses|array of open objects|tool", "digest": "eff526086cbbc684"}
+{"key": "openai_responses|array of strings|response_format", "digest": "c67b4a5dd12bde08"}
+{"key": "openai_responses|array of strings|tool", "digest": "032947541f893f68"}
+{"key": "openai_responses|array root|response_format", "digest": "ce4a4a9e42dfb12c"}
+{"key": "openai_responses|array without items|response_format", "digest": "99fdd78597a9365d"}
+{"key": "openai_responses|array without items|tool", "digest": "7414c4a633cf860d"}
+{"key": "openai_responses|boolean subschema true|response_format", "digest": "11ef395bc65b4656"}
+{"key": "openai_responses|boolean subschema true|tool", "digest": "ff5e7ba39bc6b455"}
+{"key": "openai_responses|closed object without properties|response_format", "digest": "f7c15ec4b612b3b4"}
+{"key": "openai_responses|closed object without properties|tool", "digest": "920dfbce4b5b9949"}
+{"key": "openai_responses|closed object|response_format", "digest": "0e9723d02621ba6f"}
+{"key": "openai_responses|closed object|tool", "digest": "43aa4a5ea7bd4b3d"}
+{"key": "openai_responses|const object|response_format", "digest": "5ebd376fc9c5377a"}
+{"key": "openai_responses|const object|tool", "digest": "16dfca4dafcbc65d"}
+{"key": "openai_responses|const string|response_format", "digest": "bb4a07fd49f9757a"}
+{"key": "openai_responses|const string|tool", "digest": "6f5dea7fbdd0fa42"}
+{"key": "openai_responses|contains|response_format", "digest": "9b4d16eeb6039294"}
+{"key": "openai_responses|contains|tool", "digest": "b46cbbb6d0347061"}
+{"key": "openai_responses|contentEncoding / contentMediaType|response_format", "digest": "05cac8f0fab16b72"}
+{"key": "openai_responses|contentEncoding / contentMediaType|tool", "digest": "b9f869ee9a81a7ad"}
+{"key": "openai_responses|deep nesting|response_format", "digest": "969286fb485fecb6"}
+{"key": "openai_responses|deep nesting|tool", "digest": "3d1d60930c86b950"}
+{"key": "openai_responses|default on an object|response_format", "digest": "fcdb46ad88a82c3f"}
+{"key": "openai_responses|default on an object|tool", "digest": "da7b242aece7cf9d"}
+{"key": "openai_responses|dependentRequired|response_format", "digest": "5e6d748a2e5f19f9"}
+{"key": "openai_responses|dependentRequired|tool", "digest": "fe7419b6e3f5329c"}
+{"key": "openai_responses|enum without type|response_format", "digest": "f6dbb3836b73863a"}
+{"key": "openai_responses|enum without type|tool", "digest": "73a406e7c7ae8b13"}
+{"key": "openai_responses|exclusive bounds|response_format", "digest": "35f0f3ab9a1e8e04"}
+{"key": "openai_responses|exclusive bounds|tool", "digest": "3307c3d7d3b38afa"}
+{"key": "openai_responses|external $ref|response_format", "digest": "c6b0e146271e0376"}
+{"key": "openai_responses|external $ref|tool", "digest": "f4e8e86ce12ea126"}
+{"key": "openai_responses|format on a non-string|response_format", "digest": "b2dc122ffa6000d2"}
+{"key": "openai_responses|format on a non-string|tool", "digest": "7347ce13bb962acb"}
+{"key": "openai_responses|if / then / else|response_format", "digest": "74eb1c6c0956709d"}
+{"key": "openai_responses|if / then / else|tool", "digest": "8d64e10c7deb1048"}
+{"key": "openai_responses|keyword-like annotation values|response_format", "digest": "f399607c897965b4"}
+{"key": "openai_responses|keyword-like annotation values|tool", "digest": "f533d45c0e93db7f"}
+{"key": "openai_responses|large enum|response_format", "digest": "ad0a8c961ce2d6c1"}
+{"key": "openai_responses|large enum|tool", "digest": "9e22d20987485104"}
+{"key": "openai_responses|local $ref in $defs|response_format", "digest": "45cd0b59de20bb1a"}
+{"key": "openai_responses|local $ref in $defs|tool", "digest": "5f6bcaafa41768ac"}
+{"key": "openai_responses|local $ref in definitions|response_format", "digest": "b1345cd0880f9d8c"}
+{"key": "openai_responses|local $ref in definitions|tool", "digest": "ba8d6d791dbf203e"}
+{"key": "openai_responses|many properties|response_format", "digest": "9b8af392d10a6aef"}
+{"key": "openai_responses|many properties|tool", "digest": "db9a6fe691ae485c"}
+{"key": "openai_responses|minimum / maximum|response_format", "digest": "33f1c15eb4eee856"}
+{"key": "openai_responses|minimum / maximum|tool", "digest": "966880d0a142cb5e"}
+{"key": "openai_responses|minItems 1|response_format", "digest": "900a6fe56fbc8cd4"}
+{"key": "openai_responses|minItems 1|tool", "digest": "0e383914d50488a7"}
+{"key": "openai_responses|minItems 2 / maxItems|response_format", "digest": "5d9e70c183e82bb6"}
+{"key": "openai_responses|minItems 2 / maxItems|tool", "digest": "0274de920ac2e836"}
+{"key": "openai_responses|minLength / maxLength|response_format", "digest": "d074c8565d7cfe9b"}
+{"key": "openai_responses|minLength / maxLength|tool", "digest": "2f7a5b6052d088e3"}
+{"key": "openai_responses|minProperties / maxProperties|response_format", "digest": "2c00e05b15cf9529"}
+{"key": "openai_responses|minProperties / maxProperties|tool", "digest": "b1bac75593880a86"}
+{"key": "openai_responses|mixed scalar enum|response_format", "digest": "1c559eedbdc21415"}
+{"key": "openai_responses|mixed scalar enum|tool", "digest": "f3021fee4243becb"}
+{"key": "openai_responses|multipleOf|response_format", "digest": "553336b80e550be8"}
+{"key": "openai_responses|multipleOf|tool", "digest": "760c8de80286c614"}
+{"key": "openai_responses|nested arrays|response_format", "digest": "e06e31affa002595"}
+{"key": "openai_responses|nested arrays|tool", "digest": "ee424d3f82f1aeeb"}
+{"key": "openai_responses|nested closed objects|response_format", "digest": "e531283f24101c4a"}
+{"key": "openai_responses|nested closed objects|tool", "digest": "1d28fbafb5c0da51"}
+{"key": "openai_responses|nested open object|response_format", "digest": "6f306b6ff482169d"}
+{"key": "openai_responses|nested open object|tool", "digest": "8a7dc0aa0b581fb2"}
+{"key": "openai_responses|no required list|response_format", "digest": "075bcd43fd5d3af4"}
+{"key": "openai_responses|no required list|tool", "digest": "13f148efafe0278b"}
+{"key": "openai_responses|no type (any value)|response_format", "digest": "5d219359af46c2fb"}
+{"key": "openai_responses|no type (any value)|tool", "digest": "e8c6545537982ef8"}
+{"key": "openai_responses|not|response_format", "digest": "31e58573331e5b4e"}
+{"key": "openai_responses|not|tool", "digest": "582a1ed5aa80ee57"}
+{"key": "openai_responses|nullable object, closed|response_format", "digest": "6e259f73d2a1f3c2"}
+{"key": "openai_responses|nullable object, closed|tool", "digest": "889d3ea8c23942a4"}
+{"key": "openai_responses|nullable object, open|response_format", "digest": "79b3786b7ada7988"}
+{"key": "openai_responses|nullable object, open|tool", "digest": "11bd4af680953c3b"}
+{"key": "openai_responses|nullable root|response_format", "digest": "ce4a4a9e42dfb12c"}
+{"key": "openai_responses|object enum|response_format", "digest": "a61806760eec2b7f"}
+{"key": "openai_responses|object enum|tool", "digest": "32223fec53992bda"}
+{"key": "openai_responses|object under anyOf with null|response_format", "digest": "bdd0f04bb80e605a"}
+{"key": "openai_responses|object under anyOf with null|tool", "digest": "1d54d3844dc59004"}
+{"key": "openai_responses|object without properties|response_format", "digest": "fc888c2df7709927"}
+{"key": "openai_responses|object without properties|tool", "digest": "c35c6bb7681275a3"}
+{"key": "openai_responses|oneOf|response_format", "digest": "90163d8c6a4de0d6"}
+{"key": "openai_responses|oneOf|tool", "digest": "e7ba80fcf0ead1eb"}
+{"key": "openai_responses|open object in $defs|response_format", "digest": "32999bddee51dfb3"}
+{"key": "openai_responses|open object in $defs|tool", "digest": "fec46589db48ac78"}
+{"key": "openai_responses|open object under anyOf|response_format", "digest": "1615c909aad16230"}
+{"key": "openai_responses|open object under anyOf|tool", "digest": "471f91d4be7ee3d7"}
+{"key": "openai_responses|open object|response_format", "digest": "8c69c0cdd420f20e"}
+{"key": "openai_responses|open object|tool", "digest": "ccc80c4dad121c88"}
+{"key": "openai_responses|optional property|response_format", "digest": "69f0bec49d911bf4"}
+{"key": "openai_responses|optional property|tool", "digest": "4a29be943050ddee"}
+{"key": "openai_responses|other formats|response_format", "digest": "464eee9ac47bd753"}
+{"key": "openai_responses|other formats|tool", "digest": "65798eeee6a20ee0"}
+{"key": "openai_responses|pattern with backreference|response_format", "digest": "9019b25651d14526"}
+{"key": "openai_responses|pattern with backreference|tool", "digest": "1ec48b24559e91f5"}
+{"key": "openai_responses|pattern with lookahead|response_format", "digest": "ded0cd02dc4e6a45"}
+{"key": "openai_responses|pattern with lookahead|tool", "digest": "fb1c6f3a3b81cf0d"}
+{"key": "openai_responses|pattern with lookbehind|response_format", "digest": "60cede22eae265de"}
+{"key": "openai_responses|pattern with lookbehind|tool", "digest": "0dfe3607cebb1bfa"}
+{"key": "openai_responses|pattern with unicode class|response_format", "digest": "1b47aa7eaaeb8480"}
+{"key": "openai_responses|pattern with unicode class|tool", "digest": "0a670c1655d6a8ea"}
+{"key": "openai_responses|pattern with word boundary|response_format", "digest": "885e072c59b0df1d"}
+{"key": "openai_responses|pattern with word boundary|tool", "digest": "b03d773d0f7857e8"}
+{"key": "openai_responses|pattern without anchors|response_format", "digest": "0e16bf27eb37c46b"}
+{"key": "openai_responses|pattern without anchors|tool", "digest": "6f346af39a71158c"}
+{"key": "openai_responses|patternProperties|response_format", "digest": "e82a6892f1932c7d"}
+{"key": "openai_responses|patternProperties|tool", "digest": "b9806f0b1e24a451"}
+{"key": "openai_responses|prefixItems|response_format", "digest": "9d883b0d3ae05696"}
+{"key": "openai_responses|prefixItems|tool", "digest": "c49b7a92f09d29cf"}
+{"key": "openai_responses|properties without type|response_format", "digest": "3efab34544a8ed10"}
+{"key": "openai_responses|properties without type|tool", "digest": "d2a4980e4e315df4"}
+{"key": "openai_responses|propertyNames|response_format", "digest": "ac15bfa9cbbeaed9"}
+{"key": "openai_responses|propertyNames|tool", "digest": "f2eaaaca81aadb21"}
+{"key": "openai_responses|recursive $ref|response_format", "digest": "b4b51bf34dcd3eb8"}
+{"key": "openai_responses|recursive $ref|tool", "digest": "2b37938e67b80d56"}
+{"key": "openai_responses|recursive root $ref|response_format", "digest": "810397fd921d1e08"}
+{"key": "openai_responses|recursive root $ref|tool", "digest": "dec9d432cbedfee6"}
+{"key": "openai_responses|root $ref|response_format", "digest": "ce4a4a9e42dfb12c"}
+{"key": "openai_responses|scalar types|response_format", "digest": "93b4e83676fd49eb"}
+{"key": "openai_responses|scalar types|tool", "digest": "69caef5db31c8e13"}
+{"key": "openai_responses|schema keywords as property names|response_format", "digest": "2f095794871be791"}
+{"key": "openai_responses|schema keywords as property names|tool", "digest": "03aa4a49088cff7c"}
+{"key": "openai_responses|simple pattern|response_format", "digest": "565a2f39ae6d2110"}
+{"key": "openai_responses|simple pattern|tool", "digest": "10a169fb0fbab521"}
+{"key": "openai_responses|string enum|response_format", "digest": "dcee3498f9407cf3"}
+{"key": "openai_responses|string enum|tool", "digest": "2bd704ca85976698"}
+{"key": "openai_responses|string root|response_format", "digest": "ce4a4a9e42dfb12c"}
+{"key": "openai_responses|supported formats|response_format", "digest": "5e05d08707630005"}
+{"key": "openai_responses|supported formats|tool", "digest": "a820bbe6390c9b8e"}
+{"key": "openai_responses|type array of scalars|response_format", "digest": "5aeec178d11a38a7"}
+{"key": "openai_responses|type array of scalars|tool", "digest": "3008f8c8070af213"}
+{"key": "openai_responses|type array of three|response_format", "digest": "41b16ad8f138367e"}
+{"key": "openai_responses|type array of three|tool", "digest": "1412d8c3b4235adc"}
+{"key": "openai_responses|unevaluatedProperties|response_format", "digest": "1ec81a5242b3394d"}
+{"key": "openai_responses|unevaluatedProperties|tool", "digest": "8fa60215cf83b891"}
+{"key": "openai_responses|uniqueItems|response_format", "digest": "c55a4d63a5e4ca62"}
+{"key": "openai_responses|uniqueItems|tool", "digest": "a9bb2c473c3fc226"}
+{"key": "openai_responses|unknown format|response_format", "digest": "af59f4c39276ae17"}
+{"key": "openai_responses|unknown format|tool", "digest": "7721a17d9b12a7fd"}
+{"key": "openai_responses|unused $defs|response_format", "digest": "4842d1987956f35b"}
+{"key": "openai_responses|unused $defs|tool", "digest": "ae07b833b4ee3fa3"}
+{"key": "openai_responses|unusual property names|response_format", "digest": "7cb5dd0eb5c83a01"}
+{"key": "openai_responses|unusual property names|tool", "digest": "046cffd6cf940440"}

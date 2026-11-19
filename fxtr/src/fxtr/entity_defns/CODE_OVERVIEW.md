@@ -2,7 +2,7 @@
 
 The value types fxtr programs are written in, built on the entity core
 (`../core/CODE_OVERVIEW.md`). This covers `entity_defns/` (the dataclass layer,
-`UnknownEntity`, `DynamicData`, schemas, arrays and their Arrow form, query descriptions and SQL
+`UnknownEntity`, `DynamicData`, `Partial`, schemas, arrays and their Arrow form, query descriptions and SQL
 checking), `../duckdb_engine/` (running queries in DuckDB), and `../array_sql.py` (`fxtr.sql`). A
 workflow's query nodes, which run these queries on the host, are the runner's
 (`../runner/CODE_OVERVIEW.md`). The query conventions users write against are in the
@@ -19,6 +19,7 @@ fxtr/
 │   ├── dataclass_entity.py DataclassEntity + its loaders and registry factory
 │   ├── dynamic_data.py     DynamicData: a tagged value held undecoded, read back as a
 │   │                       requested type
+│   ├── partial.py          Partial[T]: a tagged value still being produced, any field None
 │   ├── schema.py           Schema (the regular value type system), the constructors and the
 │   │                       annotation grammar, presentation, coercion, inference, assignability
 │   ├── array.py            Array (sparse named arrays: dims + one value schema), its _Backing
@@ -130,6 +131,20 @@ would have produced, so annotating a slot `DynamicData`, `Cls`, or a tagged
 union changes only the Python-side loading policy, never the content id. It is
 an untagged class implementing the serialization-hook protocol (not a
 `TaggedDataclass`), so it cannot be a member of a tagged union.
+
+**`Partial`** (`entity_defns/partial.py`) — a value of a tagged dataclass `T` that is still being
+produced, such as a rollout whose model is mid-response, for previewing results as they stream.
+`Partial[T]` holds `T`'s fields, any of which may be `None` whatever its declared type, and
+wherever a field admits a tagged dataclass `D` (directly, in a union, or inside a tuple, list,
+dict, or frozendict) the value may be a `Partial[D]`, at any depth; everything else decodes as
+`T` declares. `T`'s own declaration is untouched. A partial value is a distinct type with its
+own wire tag wrapping `T`'s tagged mapping (`{"$type": PARTIAL_TYPE_ID, "of": {...}}`, every field
+written, unknown ones `null`), so it never decodes as a finished `T` or shares a content id with
+one. Fields read as attributes; `replace` updates them, `from_value` wraps a finished value, and
+`complete()` finishes nested partials and decodes the result as `T` strictly, raising
+`IncompletePartialError` with the path of every required field still `None`. Like `DynamicData`
+it is an untagged protocol class, inline only (not an entity), usable as a field of any tagged
+dataclass; the module docstring has the rules.
 
 ## Schemas
 
@@ -447,6 +462,9 @@ slot until the native thread exits.
   integration, strictness, the hook protocol, the load-back check on serialize.
 - `tests/test_dynamic_data.py`: `DynamicData`: construction, `as_type` / `try_as_type`, the
   transparent wire form, store round trips, equality.
+- `tests/test_partial.py`: `Partial`: construction, the wire form, where partial values and
+  `None` are admitted, strict decoding, generic, recursive, and union targets, completion and its
+  errors, and an entity holding a partial value through storage.
 - `tests/test_dataclass_quoted_annotations.py`: quoted names nested in field annotations, for
   entities and plain dataclasses, run against twin classes with and without the future import
   (the ones under `from __future__ import annotations` are in `future_annotations_testing.py`).

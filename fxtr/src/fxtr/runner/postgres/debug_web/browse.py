@@ -1,7 +1,9 @@
 """Payload-free viewer reads and bounded navigation over the runner's relational records.
 
 Status comes from the runner's canonical status relations. These readers load no entity bytes
-or logs for summaries and navigation.
+or logs for summaries and navigation. Each takes the reader's :class:`JobScope` (every job by
+default): the job page is filtered by it, and a query for one job outside it answers as for a
+missing job (:mod:`.scope`).
 """
 
 from __future__ import annotations
@@ -10,25 +12,32 @@ import base64
 import hashlib
 import json
 import uuid
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Text, and_, case, cast, func, literal, or_, select, true
+from sqlalchemy import Text, and_, case, cast, exists, func, literal, or_, select, true
 from sqlalchemy.dialects.postgresql import JSONB
 
-from fxtr.core.entity_data import cid_from_str, cid_to_str
+from fxtr.core.entity_data import EntityID, cid_from_str, cid_to_str
+from fxtr.entity_defns.array import Array
+from fxtr.project.code_version import CodeVersion
 from fxtr.runner.postgres import execution, ledger
-from fxtr.runner.postgres.client import LocalProjectClient
-from fxtr.runner.postgres.database import Transaction
+from fxtr.runner.postgres.database import Database, Transaction
 from fxtr.runner.postgres.ledger import JobID
 from fxtr.runner.postgres.schema import (
     attempt_events,
     attempts,
     entities,
+    job_attempt_provenance,
     job_attempts,
+    job_step_bindings,
+    job_step_requests,
     jobs,
     nodes,
+    spawns,
+    step_requests,
+    step_results,
     workflow_invocations,
 )
 from fxtr.runner.postgres.status_queries import StatusQueries
@@ -37,17 +46,22 @@ from fxtr.runner.session import AttemptID
 from .contracts import (
     EntityMeta,
     FailureGroup,
+    JobInput,
     JobPage,
     JobSummary,
     KeyPage,
     LevelOverview,
+    NodeReuse,
     RunActivity,
     RunPage,
     SpawnView,
     StateCounts,
     state_counts,
 )
+from .git_history import Launch
 from .projections import error_view, no_activity, overview_node
+from .reader import ViewerReader
+from .scope import JobScope, require_invocation
 from .versions import read_invocation_version, read_run_versions
 
 
@@ -99,8 +113,14 @@ def spawn_dict(row: Any) -> SpawnView:
     }
 
 
-async def job_summaries(tx: Transaction, job_ids: Sequence[JobID]) -> dict[JobID, JobSummary]:
-    """One grouped status query for the requested jobs, regardless of page or history size."""
+async def job_summaries(
+    tx: Transaction, job_ids: Sequence[JobID], scope: JobScope = JobScope.all()
+) -> dict[JobID, JobSummary]:
+    """One grouped status query for the requested jobs, regardless of page or history size.
+
+    The caller passes only jobs the scope allows. ``scope`` limits the other jobs a summary is
+    compared with (:func:`_compare_with_other_jobs`).
+    """
     states = StatusQueries(job_ids)
     inv, step, context = states.invocations.c, states.steps.c, states.jobs.c
     inv_totals = (
@@ -147,6 +167,9 @@ async def job_summaries(tx: Transaction, job_ids: Sequence[JobID]) -> dict[JobID
             )
         )
     ).all()
+    failed_steps = await _failed_steps(tx, [row.id for row in rows if row.failed])
+    inputs = await _root_inputs(tx, [row.id for row in rows])
+    changed, latest = await _compare_with_other_jobs(tx, [row.id for row in rows], inputs, scope)
     return {
         row.id: {
             "id": str(row.id),
@@ -155,19 +178,288 @@ async def job_summaries(tx: Transaction, job_ids: Sequence[JobID]) -> dict[JobID
             "createdAt": row.created_at,
             "state": row.state,
             "failed": row.failed,
+            "failedSteps": failed_steps.get(row.id, []),
+            "inputs": inputs.get(row.id, []),
+            "changedInputs": changed.get(row.id, []),
+            "latest": row.id in latest,
         }
         for row in rows
     }
 
 
+MAX_FAILED_STEPS = 3
+"""The most failed steps a job summary names."""
+
+
+async def _failed_steps(tx: Transaction, job_ids: Sequence[JobID]) -> dict[JobID, list[str]]:
+    """For each failed job, the names of the steps with a failed invocation, the most failures
+    first, at most :data:`MAX_FAILED_STEPS`; for a job none of whose steps failed (a workflow's
+    own body raised), the names of its failed workflows instead."""
+    if not job_ids:
+        return {}
+    states = StatusQueries(job_ids)
+    step, inv = states.steps.c, states.invocations.c
+    step_rows = (
+        await tx.execute(
+            select(step.job_id, step_requests.c.step_name.label("name"), func.count().label("n"))
+            .select_from(
+                states.steps.join(
+                    job_step_requests,
+                    and_(
+                        job_step_requests.c.job_id == step.job_id,
+                        job_step_requests.c.cache_key == step.cache_key,
+                    ),
+                ).join(
+                    step_requests, step_requests.c.request_cid == job_step_requests.c.request_cid
+                )
+            )
+            .where(step.display_state == "failed")
+            .group_by(step.job_id, step_requests.c.step_name)
+        )
+    ).all()
+    names: dict[JobID, list[tuple[int, str]]] = {}
+    for row in step_rows:
+        names.setdefault(row.job_id, []).append((-row.n, row.name))
+    without = [job_id for job_id in job_ids if job_id not in names]
+    if without:
+        inv_rows = (
+            await tx.execute(
+                select(inv.job_id, inv.workflow_name.label("name"), func.count().label("n"))
+                .where(inv.display_state == "failed", inv.job_id.in_(without))
+                .group_by(inv.job_id, inv.workflow_name)
+            )
+        ).all()
+        for row in inv_rows:
+            names.setdefault(row.job_id, []).append((-row.n, row.name))
+    return {
+        job_id: [name for _, name in sorted(found)[:MAX_FAILED_STEPS]]
+        for job_id, found in names.items()
+    }
+
+
+async def _root_inputs(tx: Transaction, job_ids: Sequence[JobID]) -> dict[JobID, list[JobInput]]:
+    """Each job's root workflow arguments by name: the array given (its cid) and whether it is a
+    single value (an array with no dims), which :func:`input_texts` can then show."""
+    if not job_ids:
+        return {}
+    rows = (
+        await tx.execute(
+            select(
+                workflow_invocations.c.job_id,
+                nodes.c.params["name"].astext.label("name"),
+                nodes.c.value_cid,
+                func.jsonb_array_length(nodes.c.type["dims"]).label("dims"),
+            )
+            .select_from(
+                jobs.join(
+                    workflow_invocations,
+                    and_(
+                        workflow_invocations.c.job_id == jobs.c.id,
+                        workflow_invocations.c.pathname == jobs.c.root,
+                    ),
+                ).join(nodes, nodes.c.invocation_id == workflow_invocations.c.id)
+            )
+            .where(jobs.c.id.in_(job_ids), nodes.c.kind == "input")
+            .order_by(nodes.c.params["name"].astext)
+        )
+    ).all()
+    found: dict[JobID, list[JobInput]] = {}
+    for row in rows:
+        found.setdefault(row.job_id, []).append(
+            {
+                "name": row.name,
+                "cid": cid_to_str(row.value_cid),
+                "single": row.dims == 0,
+                "text": None,
+            }
+        )
+    return found
+
+
+async def _compare_with_other_jobs(
+    tx: Transaction,
+    job_ids: Sequence[JobID],
+    inputs: dict[JobID, list[JobInput]],
+    scope: JobScope,
+) -> tuple[dict[JobID, list[str]], set[JobID]]:
+    """The two parts of a job summary that read other jobs than the one summarized, which every
+    other part leaves alone: for each job, the names of its root inputs given a different array
+    than in the job of the same workflow created just before it, or not given to that job at all
+    (none for a job with no earlier job of its workflow); and the jobs no job of the same
+    workflow was created after. Only jobs in ``scope`` count as other jobs, so a summary says
+    nothing of a job the reader may not show."""
+    if not job_ids:
+        return {}, set()
+    later, earlier, newer = jobs.alias("later"), jobs.alias("earlier"), jobs.alias("newer")
+    is_latest = ~exists().where(
+        newer.c.workflow_name == later.c.workflow_name,
+        newer.c.created_at > later.c.created_at,
+        scope.restrict(newer.c.id),
+    )
+    preceding = (
+        select(earlier.c.id)
+        .where(
+            earlier.c.workflow_name == later.c.workflow_name,
+            earlier.c.created_at < later.c.created_at,
+            scope.restrict(earlier.c.id),
+        )
+        .order_by(earlier.c.created_at.desc())
+        .limit(1)
+        .scalar_subquery()
+    )
+    rows = (
+        await tx.execute(
+            select(later.c.id, preceding.label("preceding"), is_latest.label("latest")).where(
+                later.c.id.in_(list(job_ids))
+            )
+        )
+    ).all()
+    before = {row.id: row.preceding for row in rows if row.preceding is not None}
+    their = await _root_inputs(tx, sorted(set(before.values())))
+    changed: dict[JobID, list[str]] = {}
+    for job_id, preceding_id in before.items():
+        given = {item["name"]: item["cid"] for item in their.get(preceding_id, [])}
+        changed[job_id] = [
+            item["name"]
+            for item in inputs.get(job_id, [])
+            if given.get(item["name"]) != item["cid"]
+        ]
+    return changed, {row.id for row in rows if row.latest}
+
+
+MAX_INPUT_TEXT = 80
+"""The longest text a job summary shows for an input's value."""
+
+_input_texts: dict[str, str | None] = {}
+"""What :func:`input_texts` worked out, by array cid: content-addressed, so never stale."""
+
+
+async def input_texts(reader: ViewerReader, summaries: Iterable[JobSummary]) -> None:
+    """Fill in ``text`` on the summaries' inputs that are a single string, number, boolean, or
+    null: the value, cut to :data:`MAX_INPUT_TEXT`. Any other input keeps ``None`` (a dataset, a
+    struct), and is told apart from another job's by its cid alone. Each array is read once.
+
+    An input's array is an entity, so its text is given only where the reader's scope reaches
+    the array (:meth:`ViewerReader.reachable`); elsewhere it keeps ``None``.
+    """
+    summaries = list(summaries)
+    single = {
+        item["cid"]: EntityID(cid=cid_from_str(item["cid"]))
+        for summary in summaries
+        for item in summary["inputs"]
+        if item["single"]
+    }
+    reached = await reader.reachable(list(single.values())) if single else set()
+    for summary in summaries:
+        for item in summary["inputs"]:
+            cid = item["cid"]
+            if not item["single"] or single[cid].cid not in reached:
+                continue
+            if cid not in _input_texts:
+                if len(_input_texts) > 10_000:
+                    _input_texts.clear()
+                array = await reader.entities.load(single[cid].bind_type(Array[Any]))
+                values = [value for _, value in array.items()]
+                value = values[0] if len(values) == 1 else ...
+                if isinstance(value, str):
+                    _input_texts[cid] = value[:MAX_INPUT_TEXT]
+                elif value is None or isinstance(value, (bool, int, float)):
+                    _input_texts[cid] = json.dumps(value)
+                else:
+                    _input_texts[cid] = None
+            item["text"] = _input_texts.get(cid)
+
+
+MAX_JOBS_BY_ID = 200
+"""The most jobs one ``jobSummariesByIds`` may ask for."""
+
+
+async def job_summaries_by_ids(reader: ViewerReader, job_ids: Sequence[JobID]) -> list[JobSummary]:
+    """The summaries of the jobs named, in the order named, leaving out any the project does not
+    have or the reader's scope does not allow: what the job picker's commit view reads for the
+    jobs on screen."""
+    if len(job_ids) > MAX_JOBS_BY_ID:
+        raise ValueError(f"at most {MAX_JOBS_BY_ID} jobs per request")
+    allowed = [job_id for job_id in job_ids if reader.scope.allows(job_id)]
+    async with reader.database.transaction(snapshot=True) as tx:
+        summaries = await job_summaries(tx, allowed, reader.scope)
+    found = [summaries[job_id] for job_id in allowed if job_id in summaries]
+    await input_texts(reader, found)
+    return found
+
+
+async def job_reuse(reader: ViewerReader, job_id: JobID) -> list[NodeReuse]:
+    """For each run node of the job's root workflow, how many of the step results the job uses
+    under it (in the node's own steps, or anywhere inside the child workflows it started) the job
+    ran itself, and how many it took from the cache, which another job had run. A step with no
+    result yet counts as neither. A job outside the reader's scope has no nodes here, as a job
+    the database does not have."""
+    if not reader.scope.allows(job_id):
+        return []
+    root = (
+        select(workflow_invocations.c.id)
+        .join(jobs, jobs.c.id == workflow_invocations.c.job_id)
+        .where(jobs.c.id == job_id, workflow_invocations.c.pathname == jobs.c.root)
+        .scalar_subquery()
+    )
+    under = (
+        select(
+            spawns.c.node_identity.label("top"),
+            spawns.c.child_invocation_id.label("invocation"),
+            spawns.c.step_cache_key.label("key"),
+        )
+        .where(spawns.c.invocation_id == root)
+        .cte("under", recursive=True)
+    )
+    inner = spawns.alias("inner_spawn")
+    under = under.union_all(
+        select(under.c.top, inner.c.child_invocation_id, inner.c.step_cache_key).where(
+            inner.c.invocation_id == under.c.invocation
+        )
+    )
+    ours = job_attempt_provenance.c.job_id == job_id
+    async with reader.database.transaction(snapshot=True) as tx:
+        rows = (
+            await tx.execute(
+                select(
+                    under.c.top,
+                    func.count().filter(ours).label("ran"),
+                    func.count().filter(~ours).label("reused"),
+                )
+                .select_from(
+                    under.join(
+                        job_step_bindings,
+                        and_(
+                            job_step_bindings.c.job_id == job_id,
+                            job_step_bindings.c.cache_key == under.c.key,
+                        ),
+                    )
+                    .join(step_results, step_results.c.id == job_step_bindings.c.step_result_id)
+                    .join(
+                        job_attempt_provenance,
+                        job_attempt_provenance.c.id == step_results.c.job_attempt_id,
+                    )
+                )
+                .group_by(under.c.top)
+            )
+        ).all()
+    return [{"identity": cid_to_str(row.top), "ran": row.ran, "reused": row.reused} for row in rows]
+
+
 async def job_page(
-    client: LocalProjectClient, first: int, after: str | None, search: str = ""
+    reader: ViewerReader,
+    first: int,
+    after: str | None,
+    search: str = "",
+    workflow: str | None = None,
 ) -> JobPage:
-    scope = ["jobs", search]
-    last = position(after, scope)
+    """The jobs the reader's scope allows that match ``search`` (in their workflow's name or
+    their id), of ``workflow`` alone when it is given, newest first."""
+    cursor_scope = ["jobs", search, workflow or ""]
+    last = position(after, cursor_scope)
     page_size(first)
-    async with client.database.transaction(snapshot=True) as tx:
-        query = select(jobs)
+    async with reader.database.transaction(snapshot=True) as tx:
+        query = select(jobs).where(reader.scope.restrict(jobs.c.id))
         if last is not None:
             created_at, job_id = datetime.fromisoformat(last[0]), uuid.UUID(last[1])
             query = query.where(
@@ -176,6 +468,8 @@ async def job_page(
                     and_(jobs.c.created_at == created_at, jobs.c.id > job_id),
                 )
             )
+        if workflow is not None:
+            query = query.where(jobs.c.workflow_name == workflow)
         if search:
             needle = (
                 "%" + search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
@@ -186,22 +480,91 @@ async def job_page(
         records = (
             await tx.execute(query.order_by(jobs.c.created_at.desc(), jobs.c.id).limit(first + 1))
         ).all()
-        summaries = await job_summaries(tx, [record.id for record in records[:first]])
+        summaries = await job_summaries(tx, [record.id for record in records[:first]], reader.scope)
         items = [summaries[record.id] for record in records[:first]]
+    await input_texts(reader, items)
     return {
         "items": items,
         "next": cursor(
-            scope, [records[first - 1].created_at.isoformat(), str(records[first - 1].id)]
+            cursor_scope, [records[first - 1].created_at.isoformat(), str(records[first - 1].id)]
         )
         if len(records) > first
         else None,
     }
 
 
+async def job_workflows(reader: ViewerReader) -> list[str]:
+    """The names of the workflows that the jobs the reader's scope allows are of, in order."""
+    async with reader.database.transaction(snapshot=True) as tx:
+        rows = await tx.execute(
+            select(jobs.c.workflow_name)
+            .where(reader.scope.restrict(jobs.c.id))
+            .distinct()
+            .order_by(jobs.c.workflow_name)
+        )
+        return [row.workflow_name for row in rows]
+
+
+JOB_COMMITS_LIMIT = 2000
+"""The most jobs, newest first, the commit view places: enough for a project's working history
+while keeping the page's one read of it small."""
+
+
+async def job_launches(
+    reader: ViewerReader,
+    code_versions: dict[bytes, CodeVersion],
+    limit: int = JOB_COMMITS_LIMIT,
+) -> list[Launch]:
+    """The newest ``limit`` jobs the reader's scope allows, with the code each launched at (its
+    first job attempt's), newest first, in one query plus a load of the code versions not in
+    ``code_versions`` yet. The local viewer's commit view reads this; no route of the reader
+    app does.
+
+    ``code_versions`` is the caller's, kept between calls: a code version is content-addressed,
+    so one read never goes stale. A job with no job attempt is left out.
+    """
+    first = job_attempt_provenance.alias("first_job_attempt")
+    launched_at = (
+        select(first.c.code_version_cid)
+        .where(first.c.job_id == jobs.c.id)
+        .order_by(first.c.created_at, first.c.id)
+        .limit(1)
+        .scalar_subquery()
+    )
+    async with reader.database.transaction(snapshot=True) as tx:
+        rows = (
+            await tx.execute(
+                select(
+                    jobs.c.id, jobs.c.workflow_name, jobs.c.created_at, launched_at.label("code")
+                )
+                .where(reader.scope.restrict(jobs.c.id))
+                .order_by(jobs.c.created_at.desc(), jobs.c.id)
+                .limit(limit)
+            )
+        ).all()
+    for cid in {bytes(row.code) for row in rows if row.code is not None} - code_versions.keys():
+        code_versions[cid] = await reader.entities.load(EntityID(cid=cid), as_type=CodeVersion)
+    return [
+        Launch(
+            job_id=str(row.id),
+            workflow_name=row.workflow_name,
+            created_at=row.created_at,
+            commit=code_versions[bytes(row.code)].commit,
+            tree=code_versions[bytes(row.code)].tree,
+            ephemeral=code_versions[bytes(row.code)].ephemeral,
+            project_path=code_versions[bytes(row.code)].project_path,
+        )
+        for row in rows
+        if row.code is not None
+    ]
+
+
 async def level_overview(
-    client: LocalProjectClient, job_id: JobID, pathname: str
+    database: Database, job_id: JobID, pathname: str, scope: JobScope = JobScope.all()
 ) -> LevelOverview | None:
-    async with client.database.transaction(snapshot=True) as tx:
+    if not scope.allows(job_id):
+        return None
+    async with database.transaction(snapshot=True) as tx:
         states = StatusQueries([job_id])
         inv = (
             await tx.execute(
@@ -358,7 +721,16 @@ def _latest(a: datetime | None, b: datetime | None) -> datetime | None:
     return b if a is None else a if b is None else max(a, b)
 
 
-async def run_context(tx: Transaction, job_id: JobID, pathname: str, node_id: str):
+async def run_context(
+    tx: Transaction, job_id: JobID, pathname: str, node_id: str, scope: JobScope = JobScope.all()
+):
+    """The spawns of a run node as a subquery, the node's dims, and its type.
+
+    Raises:
+        NotFoundError: If the job has no invocation at ``pathname``, or the scope does not
+            allow the job (the same error either way).
+    """
+    require_invocation(scope, job_id, pathname)
     invocation = await ledger.find_invocation(tx, job_id, pathname)
     node = (
         await tx.execute(
@@ -384,7 +756,7 @@ def selected(query: Any, key: Any, dims: list[str], selection: dict[str, Any]):
 
 
 async def run_page(
-    client: LocalProjectClient,
+    database: Database,
     job_id: JobID,
     pathname: str,
     node_id: str,
@@ -394,6 +766,7 @@ async def run_page(
     state: str | None = None,
     unfinished: bool = False,
     offset: int | None = None,
+    scope: JobScope = JobScope.all(),
 ) -> RunPage:
     """A page of the run's invocations the selection picks out, in key order: the first, the
     ones after a cursor, or, by `offset`, the page holding that row (the last page for an offset
@@ -403,10 +776,10 @@ async def run_page(
         raise ValueError("a run page filters on a state or on unfinished, not both")
     if offset is not None and (type(offset) is not int or offset < 0 or after is not None):
         raise ValueError("invalid run offset; use either an offset or a cursor")
-    scope = [str(job_id), pathname, node_id, selection, state, unfinished]
-    last = position(after, scope)
-    async with client.database.transaction(snapshot=True) as tx:
-        targets, dims, _ = await run_context(tx, job_id, pathname, node_id)
+    cursor_scope = [str(job_id), pathname, node_id, selection, state, unfinished]
+    last = position(after, cursor_scope)
+    async with database.transaction(snapshot=True) as tx:
+        targets, dims, _ = await run_context(tx, job_id, pathname, node_id, scope)
         query = selected(select(targets), targets.c.key, dims, selection)
         if state:
             query = query.where(targets.c.state == state)
@@ -424,12 +797,12 @@ async def run_page(
         "items": [spawn_dict(row) for row in rows[:first]],
         "total": total,
         "offset": offset,
-        "next": cursor(scope, rows[first - 1].key) if len(rows) > first else None,
+        "next": cursor(cursor_scope, rows[first - 1].key) if len(rows) > first else None,
     }
 
 
 async def key_page(
-    client: LocalProjectClient,
+    database: Database,
     job_id: JobID,
     pathname: str,
     node_id: str,
@@ -439,15 +812,16 @@ async def key_page(
     first: int,
     after: str | None,
     offset: int | None = None,
+    scope: JobScope = JobScope.all(),
 ) -> KeyPage:
     page_size(first, KEY_LIST_LIMIT)
     if offset is not None and (type(offset) is not int or offset < 0 or after is not None):
         raise ValueError("invalid key offset; use either an offset or a cursor")
     # Other selections affect compatibility, not which values occupy this page.
-    scope = [str(job_id), pathname, node_id, dim, search]
-    last = position(after, scope)
-    async with client.database.transaction(snapshot=True) as tx:
-        targets, dims, _ = await run_context(tx, job_id, pathname, node_id)
+    cursor_scope = [str(job_id), pathname, node_id, dim, search]
+    last = position(after, cursor_scope)
+    async with database.transaction(snapshot=True) as tx:
+        targets, dims, _ = await run_context(tx, job_id, pathname, node_id, scope)
         if dim not in dims:
             raise ValueError("unknown dimension")
         key = targets.c.key[dims.index(dim)]
@@ -503,12 +877,12 @@ async def key_page(
         ],
         "total": total,
         "offset": offset,
-        "next": cursor(scope, page[first - 1]) if len(page) > first else None,
+        "next": cursor(cursor_scope, page[first - 1]) if len(page) > first else None,
     }
 
 
-async def entity_meta(client: LocalProjectClient, cid: str) -> EntityMeta | None:
-    async with client.database.transaction() as tx:
+async def entity_meta(database: Database, cid: str) -> EntityMeta | None:
+    async with database.transaction() as tx:
         row = (
             await tx.execute(select(entities.c.type_tag).where(entities.c.cid == cid_from_str(cid)))
         ).first()

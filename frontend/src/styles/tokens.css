@@ -124,6 +124,13 @@
   --chart-div-mid: light-dark(#f0efec, #383835);
   --chart-div-pos: light-dark(#184f95, #9ec5f4);
 
+  /* Branches in the job picker's commit graph (the default branch is --state-ink). Muted, and
+     none of the hues that mean something there: blue (selection), red (failure), amber (a star). */
+  --branch-1: light-dark(#0f857a, #3fb8a8);
+  --branch-2: light-dark(#9b4a9f, #d08ad4);
+  --branch-3: light-dark(#6b7a1a, #a8b84a);
+  --branch-4: light-dark(#876a55, #b89c86);
+
   --minimap-card-bg: light-dark(#ffffff, #222221);
   /* The part of the card column scrolled into view, drawn over the minimap's rows. */
   --minimap-viewport-bg: light-dark(rgba(0, 0, 0, 0.06), rgba(255, 255, 255, 0.06));

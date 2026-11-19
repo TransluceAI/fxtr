@@ -5,13 +5,16 @@
 only to read. Everything the viewer asks for is under ``/api``: Ariadne's GraphQL handler, over
 HTTP only (:func:`http_only`), at ``/api/graphql``, raw entity bytes at
 ``GET /api/entity/{cid}`` (and many at once at ``POST /api/entities``, see
-:func:`entities_request_ids`), the project's view bundle at ``GET /api/views/{file}``
+:func:`entities_request_ids`), a step attempt's latest preview at
+``GET /api/previews/{attempt_id}``, the project's view bundle at ``GET /api/views/{file}``
 (:func:`views_response`), where a function is implemented at ``GET /api/source/{name}`` (as a
 job's code version records it, :func:`recorded_source_response`, else as the viewer's registry has
 it, :func:`source_response`), a file of the project's repository at a commit or in the working
 tree at ``GET /api/file`` (:func:`file_response`), what the server serves at ``GET /api/info``
 (the project's identity, which :mod:`fxtr.project.viewer` finds the viewer by), the project's
-EXPERIMENT.md at ``GET /api/experiment_readme`` (:func:`experiment_readme_response`), the view
+EXPERIMENT.md at ``GET /api/experiment_readme`` (:func:`experiment_readme_response`), the
+commits the jobs ran at at ``GET /api/job_commits`` (:mod:`.git_history`), the starred jobs at
+``/api/starred`` (:mod:`.starred`), the view
 bundle's state at ``GET /api/views/status``, and the viewer's events on the WebSocket
 ``/api/events`` (:mod:`.events`): the view bundle's changes, and each job a launcher announces at
 ``POST /api/launches``. Every other path is the viewer (:class:`Viewer`), so the viewer and its
@@ -21,9 +24,14 @@ checkout); or, given a dev server configuration in a checkout (:func:`checkout_f
 redirect to the viewer's Vite dev server (:mod:`.dev_server`), which the app runs for its lifetime
 and which proxies ``/api`` back here.
 
-The server never writes: it uses the client's inspection surface (``client.jobs``) and its entity
-store, with the ordinary role; a launch announced to it goes only to the open pages. Without a
-client of your own it serves the project the working directory belongs to
+The data routes use :class:`ViewerReader` for jobs and entities, and show only the jobs its
+:class:`~fxtr.runner.postgres.debug_web.scope.JobScope` allows (every job, for the local app).
+:func:`create_reader_app` serves those routes from an existing database without a project
+client. The local app composes them with preview, job picker, source, bundle, and event routes.
+The data handlers only read; the local app may create or migrate tables when it enters its
+project client. A launch announced to the local app goes only to its open pages, and a starred
+job is kept in a file of the project's. Without a client of your own, the
+local app serves the project the working directory belongs to
 (:meth:`LocalProjectClient.from_project`; ``FXTR_DATABASE_URL`` overrides the project's local
 configuration as usual).
 """
@@ -32,18 +40,23 @@ from __future__ import annotations
 
 import ast
 import contextlib
+import functools
 import importlib.metadata
 import inspect
 import json
 import re
+import uuid
 from collections.abc import AsyncIterator
 from pathlib import Path, PurePosixPath
+from typing import Any
 
 import anyio.to_thread
-from ariadne import make_executable_schema
+from ariadne import format_error, make_executable_schema
 from ariadne.asgi import GraphQL
-from graphql import GraphQLSchema
+from graphql import GraphQLError, GraphQLSchema
+from sqlalchemy.exc import SQLAlchemyError
 from starlette.applications import Starlette
+from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import (
     JSONResponse,
@@ -64,7 +77,7 @@ from fxtr.project.config import Project
 from fxtr.project.viewer import project_identity
 from fxtr.project.views import VIEW_BUNDLE_MANIFEST_FILENAME
 from fxtr.runner.postgres.client import LocalProjectClient
-from fxtr.runner.postgres.debug_web import resolvers
+from fxtr.runner.postgres.debug_web import browse, resolvers, starred
 from fxtr.runner.postgres.debug_web.dev_server import DevServerConfig, run_dev_server
 from fxtr.runner.postgres.debug_web.events import (
     EventHub,
@@ -74,12 +87,21 @@ from fxtr.runner.postgres.debug_web.events import (
     same_origin,
     serve_events,
 )
+from fxtr.runner.postgres.debug_web.git_history import read_history
 from fxtr.runner.postgres.debug_web.output import OutputStore
+from fxtr.runner.postgres.debug_web.reader import ViewerReader
+from fxtr.runner.postgres.debug_web.scope import JobScope
 from fxtr.runner.postgres.debug_web.viewer_build import refresh_viewer
 from fxtr.runner.postgres.debug_web.views_watch import ViewsWatcher
+from fxtr.runner.session import AttemptID
 
 _NO_CACHE = {"Cache-Control": "no-cache"}
 """Every view bundle and viewer response is revalidated, so a page reload picks up a rebuild."""
+
+_VIEWER_FILE_HEADERS = {**_NO_CACHE, "Content-Security-Policy": "frame-ancestors 'none'"}
+"""The viewer's files refuse to be framed: framed with ``?hosted``, the viewer takes its
+configuration, including the renderer bundle it runs, from the framing page
+(``frontend/src/hosted.ts``)."""
 
 VIEWS_VERSION_HEADER = "X-Fxtr-Views-Version"
 """On a bundle's manifest: the bundle's version (:func:`~fxtr.project.views.bundle_version`), what
@@ -131,7 +153,7 @@ class ViewerFiles(StaticFiles):
                 headers=_NO_CACHE,
             )
         response = await super().get_response(path, scope)
-        response.headers.update(_NO_CACHE)
+        response.headers.update(_VIEWER_FILE_HEADERS)
         return response
 
 
@@ -369,9 +391,149 @@ def http_only(app: ASGIApp) -> ASGIApp:
     return serve
 
 
+@functools.cache
 def build_schema() -> GraphQLSchema:
-    """The executable schema (the SDL bound to the resolvers)."""
+    """The executable schema (the SDL bound to the resolvers). It holds no request's state, so
+    it is built once: a hub builds a reader app for each viewer request."""
     return make_executable_schema(_load_sdl(), *resolvers.BINDABLES)
+
+
+def _format_graphql_error(error: GraphQLError, debug: bool = False) -> dict[str, Any]:
+    """Ariadne's answer for a GraphQL error, without a database error's text, which holds the
+    statement that failed."""
+    formatted = format_error(error, debug)
+    if isinstance(error.original_error, SQLAlchemyError):
+        formatted["message"] = "The database could not answer this query"
+    return formatted
+
+
+def _data_routes(
+    reader: ViewerReader,
+    outputs: OutputStore,
+    *,
+    max_entity_response_bytes: int | None = None,
+    max_single_entity_bytes: int | None = None,
+) -> list[Route | Mount]:
+    schema = build_schema()
+
+    graphql_app = GraphQL(
+        schema,
+        context_value=lambda request, *_args, **_kwargs: {
+            "reader": reader,
+            "outputs": outputs,
+            "request": request,
+        },
+        error_formatter=_format_graphql_error,
+    )
+
+    async def check_entity_size(
+        entity_ids: list[EntityID], allowed: set[bytes], *, batch: bool
+    ) -> None:
+        limit = (
+            max_entity_response_bytes
+            if batch or max_single_entity_bytes is None
+            else max_single_entity_bytes
+        )
+        if limit is None:
+            return
+        sizes = await reader.entity_sizes(allowed)
+        total = len(codec.encode(len(entity_ids))) if batch else 0
+        for entity_id in entity_ids:
+            size = sizes.get(entity_id.cid)
+            if size is None:
+                total += int(batch)
+            else:
+                # A CBOR byte string and an unsigned integer use the same length header.
+                total += size + (len(codec.encode(size)) if batch else 0)
+        if total > limit:
+            raise HTTPException(413, "Entity response exceeds its byte limit")
+
+    async def entity_bytes(request: Request) -> Response:
+        """The stored DRISL (DAG-CBOR) bytes of one entity, for the browser to decode; 404 for
+        one the reader's scope does not reach, as for one not stored."""
+        try:
+            entity_id = EntityID(cid=cid_from_str(request.path_params["cid"]))
+        except ValueError:
+            return Response(status_code=400)
+        allowed = await reader.reachable([entity_id])
+        if not allowed:
+            return Response(status_code=404)
+        await check_entity_size([entity_id], allowed, batch=False)
+        result = await reader.entities.load_raw_bytes(entity_id)
+        if result is None:
+            return Response(status_code=404)
+        return Response(content=result[0], media_type="application/cbor")
+
+    async def entities_bytes(request: Request) -> Response:
+        """Many entities' stored bytes in one response; see :func:`entities_request_ids`. One
+        the reader's scope does not reach is null, as one not stored is."""
+        try:
+            entity_ids = entities_request_ids(await request.body())
+        except ValueError as exc:
+            return Response(str(exc), 400, media_type="text/plain")
+        allowed = await reader.reachable(entity_ids)
+        await check_entity_size(entity_ids, allowed, batch=True)
+        results = await reader.entities.load_raw_bytes_many(
+            [entity_id for entity_id in entity_ids if entity_id.cid in allowed]
+        )
+        loaded = iter(results)
+        body = codec.encode(
+            [
+                None
+                if entity_id.cid not in allowed or (result := next(loaded)) is None
+                else result[0]
+                for entity_id in entity_ids
+            ]
+        )
+        return Response(content=body, media_type="application/cbor")
+
+    return [
+        Route("/entity/{cid}", entity_bytes),
+        Route("/entities", entities_bytes, methods=["POST"]),
+        Mount("/graphql", http_only(graphql_app)),
+    ]
+
+
+def create_reader_app(
+    reader: ViewerReader,
+    *,
+    max_entity_response_bytes: int | None = None,
+    max_single_entity_bytes: int | None = None,
+) -> Starlette:
+    """Serve GraphQL and entity bytes under ``/api`` from an existing database schema.
+
+    The caller owns the database's lifetime and access control. This app serves the data in its
+    schema that the reader's scope allows, without authentication; mount it only behind the
+    caller's authorization checks, which compute that scope. It imports no project modules,
+    starts no runner, and exposes no local source or bundle routes.
+
+    ``max_entity_response_bytes`` limits single and batched entity responses, and
+    ``max_single_entity_bytes``, when given, single ones in its place, before their
+    contents are read or encoded. It does not limit GraphQL responses.
+    """
+    outputs = OutputStore(reader.database, reader.scope)
+
+    @contextlib.asynccontextmanager
+    async def lifespan(_: Starlette) -> AsyncIterator[None]:
+        try:
+            yield
+        finally:
+            outputs.close()
+
+    return Starlette(
+        routes=[
+            Mount(
+                "/api",
+                routes=_data_routes(
+                    reader,
+                    outputs,
+                    max_entity_response_bytes=max_entity_response_bytes,
+                    max_single_entity_bytes=max_single_entity_bytes,
+                ),
+            )
+        ],
+        lifespan=lifespan,
+    )
 
 
 def create_app(
@@ -399,38 +561,30 @@ def create_app(
     it (unless ``frontend_dist`` is given); if that fails, only the API is served.
     """
     client = LocalProjectClient.from_project(handle_sigint=False) if client is None else client
-    schema = build_schema()
-    outputs = OutputStore(client)
-
-    graphql_app = GraphQL(
-        schema,
-        context_value=lambda request, *_args, **_kwargs: {
-            "client": client,
-            "outputs": outputs,
-            "request": request,
-        },
+    # fxtr view shows every job of the checkout's database.
+    reader = ViewerReader(
+        client.database, stale_after=client.project.stale_after, scope=JobScope.all()
     )
+    outputs = OutputStore(reader.database, reader.scope)
 
-    async def entity_bytes(request: Request) -> Response:
-        """The stored DRISL (DAG-CBOR) bytes of one entity, for the client to decode itself."""
+    async def preview_bytes(request: Request) -> Response:
+        """A step attempt's latest preview as its DAG-CBOR bytes, for the client to decode itself;
+        its seq in the ``X-Fxtr-Preview-Seq`` header. The URL may carry the seq the client
+        expects (``?seq=``) so each preview has a URL of its own; the server always answers with
+        the latest."""
         try:
-            entity_id = EntityID(cid=cid_from_str(request.path_params["cid"]))
+            attempt_id = AttemptID(str(uuid.UUID(request.path_params["attempt_id"])))
         except ValueError:
             return Response(status_code=400)
-        result = await client.entities.load_raw_bytes(entity_id)
-        if result is None:
-            return Response(status_code=404)
-        return Response(content=result[0], media_type="application/cbor")
-
-    async def entities_bytes(request: Request) -> Response:
-        """Many entities' stored bytes in one response; see :func:`entities_request_ids`."""
-        try:
-            entity_ids = entities_request_ids(await request.body())
-        except ValueError as exc:
-            return Response(str(exc), 400, media_type="text/plain")
-        results = await client.entities.load_raw_bytes_many(entity_ids)
-        body = codec.encode([None if result is None else result[0] for result in results])
-        return Response(content=body, media_type="application/cbor")
+        found = await client.jobs.get_preview(attempt_id)
+        if found is None:
+            return Response(status_code=404, headers=_NO_CACHE)
+        record, data = found
+        return Response(
+            content=data,
+            media_type="application/cbor",
+            headers={**_NO_CACHE, "X-Fxtr-Preview-Seq": str(record.seq)},
+        )
 
     async def views_file(request: Request) -> Response:
         name = request.path_params["name"]
@@ -517,6 +671,47 @@ def create_app(
             return Response(f"the project has no job {job_id}", 404, media_type="text/plain")
         return JSONResponse({"listeners": hub.publish(event)}, headers=_NO_CACHE)
 
+    code_versions: dict[bytes, CodeVersion] = {}
+
+    async def job_commits(_: Request) -> Response:
+        """The commits the project's jobs ran at, for the job picker's commit view
+        (:func:`~.git_history.read_history`'s answer, with ``truncated``: whether the project has
+        more jobs than the :data:`~.browse.JOB_COMMITS_LIMIT` newest it places). 404 when the
+        project is in no git repository."""
+        launches = await browse.job_launches(reader, code_versions)
+        history = await read_history(client.project.root.resolve(), launches)
+        if history is None:
+            return Response("the project is not in a git repository", 404, media_type="text/plain")
+        history["truncated"] = len(launches) >= browse.JOB_COMMITS_LIMIT
+        return JSONResponse(history, headers=_NO_CACHE)
+
+    async def starred_jobs(_: Request) -> Response:
+        return JSONResponse({"jobs": starred.read_starred(client.project)}, headers=_NO_CACHE)
+
+    async def set_starred(request: Request) -> Response:
+        """Star a job (``PUT``, JSON ``{"name": ...}``, also renaming a starred one) or remove
+        its star (``DELETE``), answering the starred jobs afterwards. Only the viewer's own pages
+        may, as for an announced launch; this writes a file in the project, never the database."""
+        if not same_origin(request.headers):
+            return Response(
+                "only the viewer's own pages may star a job", 403, media_type="text/plain"
+            )
+        try:
+            job_id, name = starred.star_request(
+                request.path_params["job_id"],
+                await request.body() if request.method == "PUT" else b"",
+            )
+        except ValueError as exc:
+            return Response(str(exc), 400, media_type="text/plain")
+        if request.method == "PUT":
+            content_type = request.headers.get("content-type", "").partition(";")[0]
+            if content_type.strip().lower() != "application/json":
+                return Response("a star is sent as JSON", 415, media_type="text/plain")
+            jobs = await anyio.to_thread.run_sync(starred.star, client.project, job_id, name)
+        else:
+            jobs = await anyio.to_thread.run_sync(starred.unstar, client.project, job_id)
+        return JSONResponse({"jobs": jobs}, headers=_NO_CACHE)
+
     viewer = Viewer(ViewerFiles(frontend_dist or default_frontend_dist()))
 
     @contextlib.asynccontextmanager
@@ -550,8 +745,8 @@ def create_app(
     # (with the trailing slash); the bare path redirects to it. The viewer's files come last, so
     # they never shadow the API.
     api = [
-        Route("/entity/{cid}", entity_bytes),
-        Route("/entities", entities_bytes, methods=["POST"]),
+        *_data_routes(reader, outputs),
+        Route("/previews/{attempt_id}", preview_bytes),
         Route("/views/status", views_status),
         Route("/views/{name}", views_file),
         WebSocketRoute("/events", events),
@@ -560,7 +755,9 @@ def create_app(
         Route("/file", file),
         Route("/experiment_readme", experiment_readme),
         Route("/info", info),
-        Mount("/graphql", http_only(graphql_app)),
+        Route("/job_commits", job_commits),
+        Route("/starred", starred_jobs),
+        Route("/starred/{job_id}", set_starred, methods=["PUT", "DELETE"]),
     ]
     return Starlette(
         routes=[Mount("/api", routes=api), Mount("/", viewer)],

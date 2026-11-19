@@ -38,3 +38,27 @@ export function formatEstimate(seconds: number): string {
 export function formatClock(ms: number): string {
   return new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })
 }
+
+/**
+ * When something happened, as someone would say it: `just now`, `2 min ago`, `3 hr ago` (the same
+ * day, or within twelve hours), `yesterday`, then the date (`Oct 14`, with the year once it is not
+ * this one). `now` is `Date.now()`-style milliseconds.
+ */
+export function formatRelative(iso: string | null, now: number): string {
+  if (!iso) return '—'
+  const then = new Date(iso)
+  if (Number.isNaN(then.getTime())) return iso
+  const seconds = (now - then.getTime()) / 1000
+  if (seconds < 60) return 'just now'
+  if (seconds < 3600) return `${Math.floor(seconds / 60)} min ago`
+  const today = new Date(now)
+  const days = Math.round((startOfDay(today) - startOfDay(then)) / 86_400_000)
+  if (days === 0 || seconds < 12 * 3600) return `${Math.floor(seconds / 3600)} hr ago`
+  if (days === 1) return 'yesterday'
+  const sameYear = then.getFullYear() === today.getFullYear()
+  return then.toLocaleDateString('en-US', { month: 'short', day: 'numeric', ...(sameYear ? {} : { year: 'numeric' }) })
+}
+
+function startOfDay(date: Date): number {
+  return new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime()
+}

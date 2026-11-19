@@ -40,6 +40,8 @@ export interface BatchOptions {
   readonly batchSize?: number;
   /** The most requests awaiting a response at once. */
   readonly maxInFlight?: number;
+  /** Headers to send with each request, read when it is sent (an authorization a host supplies). */
+  readonly headers?: () => Record<string, string>;
 }
 
 interface Waiter {
@@ -60,7 +62,7 @@ interface Waiter {
  */
 export function createBatchedDrislEntityLoader(
   entitiesUrl: string,
-  { batchSize = 100, maxInFlight = 4 }: BatchOptions = {},
+  { batchSize = 100, maxInFlight = 4, headers = () => ({}) }: BatchOptions = {},
 ): EntityLoader {
   if (!(Number.isInteger(batchSize) && batchSize >= 1))
     throw new RangeError(`batchSize must be a positive integer, got ${batchSize}`);
@@ -73,7 +75,7 @@ export function createBatchedDrislEntityLoader(
     scheduled = false;
     while (inFlight < maxInFlight && queue.length > 0) {
       inFlight += 1;
-      void loadBatch(entitiesUrl, queue.splice(0, batchSize)).finally(() => {
+      void loadBatch(entitiesUrl, queue.splice(0, batchSize), headers()).finally(() => {
         inFlight -= 1;
         pump();
       });
@@ -89,16 +91,46 @@ export function createBatchedDrislEntityLoader(
     });
 }
 
+/** One entity on its own route, `entity/{cid}` beside `entities`; never rejects. */
+async function loadAlone(
+  entitiesUrl: string,
+  waiter: Waiter,
+  headers: Record<string, string>,
+): Promise<void> {
+  try {
+    const res = await fetch(`${entitiesUrl.replace(/entities$/, "entity")}/${waiter.cid}`, { headers });
+    if (!res.ok) throw new Error(`entity request: ${res.status} ${res.statusText}: ${await res.text()}`);
+    waiter.resolve(decodeEntityData(new Uint8Array(await res.arrayBuffer()), waiter.cid));
+  } catch (error) {
+    waiter.reject(error);
+  }
+}
+
 /** One request for a batch, settling every waiter in it; never rejects. A failed request fails
- *  each of its entities; otherwise each settles on its own bytes. */
-async function loadBatch(entitiesUrl: string, batch: readonly Waiter[]): Promise<void> {
+ *  each of its entities; otherwise each settles on its own bytes. A backend that answers 413 holds
+ *  a response to a size, so a batch over it is asked for in halves, and one entity alone on its
+ *  own route, which may allow more. */
+async function loadBatch(
+  entitiesUrl: string,
+  batch: readonly Waiter[],
+  headers: Record<string, string>,
+): Promise<void> {
   let items: unknown[];
   try {
     const res = await fetch(entitiesUrl, {
       method: "POST",
-      headers: { "content-type": "application/json" },
+      headers: { "content-type": "application/json", ...headers },
       body: JSON.stringify({ cids: batch.map((waiter) => waiter.cid) }),
     });
+    if (res.status === 413) {
+      if (batch.length === 1) return await loadAlone(entitiesUrl, batch[0]!, headers);
+      const half = Math.ceil(batch.length / 2);
+      await Promise.all([
+        loadBatch(entitiesUrl, batch.slice(0, half), headers),
+        loadBatch(entitiesUrl, batch.slice(half), headers),
+      ]);
+      return;
+    }
     if (!res.ok) throw new Error(`entities request: ${res.status} ${res.statusText}: ${await res.text()}`);
     const decoded: unknown = dagCbor.decode(new Uint8Array(await res.arrayBuffer()));
     if (!Array.isArray(decoded) || decoded.length !== batch.length)

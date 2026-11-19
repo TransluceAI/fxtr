@@ -25,3 +25,22 @@
 .compare-actions button:disabled { opacity: 0.5; cursor: default; }
 .longest { display: grid; gap: 6px; padding: 8px; }
 .longest p { margin: 0; white-space: pre-wrap; }
+.subhead { margin: 14px 0 6px; font-size: var(--text-sm); font-weight: 600; }
+.results { border-collapse: collapse; font-size: var(--text-sm); margin-bottom: 6px; }
+.results th, .results td { text-align: left; vertical-align: top; padding: 5px 12px 5px 0; border-bottom: 1px solid var(--line-soft); }
+.results thead th { color: var(--fg-dim); font-weight: 600; border-bottom-color: var(--line); }
+.results tbody th { font-weight: 600; overflow-wrap: anywhere; }
+.rate { font-size: var(--text-base); font-variant-numeric: tabular-nums; }
+.conversation { min-width: 9em; }
+.verdicts { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 2px 8px; }
+.verdict, .open { font: inherit; color: var(--fg); background: none; border: 1px solid transparent; border-radius: 3px; padding: 0 3px; cursor: pointer; }
+.verdict { min-width: 1.6em; font-variant-numeric: tabular-nums; }
+.verdict[data-verdict="true"] { color: var(--danger); }
+.verdict[data-verdict="false"] { color: var(--fg-dim); }
+.verdict:hover, .open:hover { background: var(--hover); }
+.verdict[data-open="true"], .open[data-open="true"] { border-color: var(--select-line); background: var(--select-bg); color: var(--select-fg); }
+.verdict:disabled { cursor: default; }
+.verdict sup { font-size: 0.7em; }
+.open { color: var(--select-accent); padding: 0; margin-bottom: 2px; }
+.judge-samples { display: flex; flex-wrap: wrap; gap: 4px; }
+.sampling { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; font-size: var(--text-sm); }

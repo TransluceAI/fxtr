@@ -16,8 +16,11 @@ You control the messages, tools, and stopping conditions of an interaction. beha
 the conversation loop and provides configurable retries and failure recording. Users can be
 scripted, or simulated by models: a base model writing the user's messages, optionally steered
 by a chat model (see [Simulated users](/behaviors/guides/policies-and-tools#simulated-users)).
-behaviors supplies no general-purpose judge: you write one for your experiment from its
-interfaces, as the [judge step](/behaviors/guides/language-models#a-judge-step) does.
+To have a model judge another model's output, `judge` asks a model to assess evidence against
+a rubric and returns its answer, checked against a schema, with its citations (see
+[Judging](/behaviors/reference/api#judging)). The
+[judge step](/behaviors/guides/language-models#a-judge-step) shows `judge` grading a
+conversation in an fxtr step.
 
 behaviors works with [fxtr](/fxtr): conversation records can be stored as fxtr entities,
 returned from steps, and inspected in the experiment viewer. fxtr manages the experiment's
@@ -34,6 +37,7 @@ execution, caching, and provenance. For the shortest example of a step that call
 </Columns>
 
 The other guides go further: [choosing models](/behaviors/guides/choosing-models),
+[dialects and adaptation](/behaviors/guides/dialects-and-adaptation),
 [policies and tools](/behaviors/guides/policies-and-tools),
 [rollout outcomes and retries](/behaviors/guides/rollout-outcomes),
 [conversation records and checkpoints](/behaviors/guides/conversation-records), and

@@ -175,6 +175,22 @@ function walk(steps: readonly string[], env: Params, catalog: Catalog): { level:
   return { level, keys }
 }
 
+/** Where the level reached along `steps` (workflow steps from the root, entered at the keys `env`
+ *  binds) is: its pathname, or why it can't be told yet (`loading`) or at all. */
+export type LevelPlace =
+  | { status: 'ready'; pathname: string }
+  | { status: 'loading' }
+  | { status: 'problem'; problem: string }
+
+export function levelAt(steps: readonly string[], env: Params, catalog: Catalog): LevelPlace {
+  try {
+    return { status: 'ready', pathname: walk(steps, env, catalog).level.pathname }
+  } catch (error) {
+    if (!(error instanceof Unresolved)) throw error
+    return error.loading ? { status: 'loading' } : { status: 'problem', problem: error.message }
+  }
+}
+
 function lookup(catalog: Catalog, pathname: string, what: string): Level {
   const found = catalog.level(pathname)
   if (found.status === 'pending') throw new Unresolved(`loading ${what}…`, false, true)
@@ -194,7 +210,7 @@ export function resolve(address: Address, env: Params, catalog: Catalog, own: re
   let loading = false
   try {
     const { location, view } = address
-    if (view === VIEWS.trace || view === VIEWS.flowchart) throw new Unresolved(`the ${view} shows only in the centre`, true)
+    if (view === VIEWS.trace || view === VIEWS.flowchart) throw new Unresolved(`the ${view} shows only in the center`, true)
     if (location === null) {
       if (view === VIEWS.experimentReadme) target = { kind: 'experiment_readme' }
       else if (isPage(catalog.registry, view)) {

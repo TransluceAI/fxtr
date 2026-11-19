@@ -8,6 +8,7 @@ class Backend {
   invocation: GqlInvocation = inProgress()
   stepReads = 0
   stepState = 'failed'
+  stepPreview: unknown = null
   failSteps = false
   failVersions = false
   calls = { versions: 0, invocation: 0, array: 0, overview: 0 }
@@ -34,7 +35,7 @@ class Backend {
       this.stepReads += 1
       if (this.failSteps) throw new Error('step temporarily unavailable')
       return reply({step: {stepName: 'roll', requestCid: 'request', state: this.stepState,
-        resultCid: null, attempt: null, logs: []}})
+        resultCid: null, resultTaken: false, attempt: null, logs: [], preview: this.stepPreview}})
     }
     if (query.includes('array(')) {
       this.calls.array += 1
@@ -78,6 +79,39 @@ async function watchRoot() {
 }
 
 describe('the live store', () => {
+  it('revalidates previews after completion and publishes them for the job view', async () => {
+    expect((await live.readOverview('job', 'root')).version).toBe('v1')
+    expect(backend.calls.overview).toBe(1)
+    const level = live.levelEntry('job', 'root')
+    backend.version = 'v2'
+    expect((await live.readOverview('job', 'root')).version).toBe('v2')
+    expect(live.overviewEntry('job', 'root').value!.version).toBe('v2')
+
+    backend.version = 'completed'
+    backend.invocation = {
+      ...inProgress(), state: 'completed', resultCid: 'cid-a',
+      spawns: inProgress().spawns.map((spawn) => ({ ...spawn, state: 'completed', resultCid: 'cid-a' })),
+    }
+    expect((await live.readOverview('job', 'root')).version).toBe('completed')
+    expect(level.value!.live).toBe(false)
+    // A settled cached invocation can also resume while another job is being viewed.
+    backend.version = 'resumed'
+    backend.invocation = inProgress()
+    expect((await live.readOverview('job', 'root')).version).toBe('resumed')
+    expect(level.value!.live).toBe(true)
+  })
+
+  it('repairs a failed overview entry when its preview is retried', async () => {
+    backend.failVersions = true
+    await expect(live.readOverview('job', 'root')).rejects.toThrow('backend down')
+    const level = live.levelEntry('job', 'root')
+    expect(level.state.status).toBe('error')
+    backend.failVersions = false
+    expect((await live.readOverview('job', 'root')).version).toBe('v1')
+    expect(level.state.status).toBe('ready')
+    expect(live.overviewEntry('job', 'root').value!.version).toBe('v1')
+  })
+
   it('publishes the graph without requesting outputs or full invocation records', async () => {
     backend.invocation.spawns = Array.from({ length: 100_000 }, (_, i) => ({
       ...inProgress().spawns[0], key: [String(i)], resultCid: `output-${i}`,
@@ -269,4 +303,56 @@ it('retries a failed pin refresh even after publishing its changed overview', as
   expect(step.value!.state).toBe('running')
   expect(backend.stepReads).toBe(3)
   expect(live.liveStatus().reconnecting).toBe(false)
+})
+
+it('refreshes a stopped overview and pin directly to completion without remounting', async () => {
+  backend.stepState = 'stopped'
+  backend.invocation = inProgress({state: 'interrupted', attempts: [],
+    spawns: [{...inProgress().spawns[1], state: 'stopped'}]})
+  const {invocation, level} = await watchRoot()
+  const step = live.stepEntry('job', 'k/b')
+  step.watchers++
+  live.startPolling('job')
+  await vi.advanceTimersByTimeAsync(0)
+  expect(live.liveStatus().polling).toBe(false)
+  const previousLevel = level.value
+  const reads = backend.calls.overview
+
+  backend.version = 'completed'
+  backend.stepState = 'completed'
+  backend.invocation = {...backend.invocation, state: 'completed', resultCid: 'cid-a',
+    spawns: backend.invocation.spawns.map(spawn => ({...spawn, state: 'completed', resultCid: 'cid-a'}))}
+  // Jobs' periodic refresh asks for settled records even when it never saw a running state.
+  live.pokeLive()
+  await vi.advanceTimersByTimeAsync(0)
+  expect(invocation.value!.version).toBe('completed')
+  expect(level.value).not.toBe(previousLevel)
+  expect(level.value!.status.state).toBe('completed')
+  expect(step.value!.state).toBe('completed')
+  expect(backend.calls.overview).toBe(reads + 1)
+  expect(backend.stepReads).toBe(2)
+  await vi.advanceTimersByTimeAsync(live.POLL_INTERVAL * 4)
+  expect(live.liveStatus().polling).toBe(false)
+  expect(backend.calls.overview).toBe(reads + 1)
+})
+
+it('polls every PREVIEW_POLL_INTERVAL while a watched running step publishes previews', async () => {
+  backend.stepState = 'running'
+  await watchRoot()
+  const step = live.stepEntry('job', 'k/b')
+  step.watchers++
+  live.startPolling('job')
+  await vi.advanceTimersByTimeAsync(0)
+  // Without a preview, one read per POLL_INTERVAL.
+  let reads = backend.stepReads
+  await vi.advanceTimersByTimeAsync(live.POLL_INTERVAL * 2)
+  expect(backend.stepReads - reads).toBe(2)
+
+  backend.stepPreview = {attemptId: 'a', seq: 1, at: '2026-09-24T00:00:00Z'}
+  await vi.advanceTimersByTimeAsync(live.POLL_INTERVAL)
+  expect(step.value!.preview).not.toBeNull()
+  // With one, a read every PREVIEW_POLL_INTERVAL.
+  reads = backend.stepReads
+  await vi.advanceTimersByTimeAsync(live.PREVIEW_POLL_INTERVAL * 4)
+  expect(backend.stepReads - reads).toBe(4)
 })

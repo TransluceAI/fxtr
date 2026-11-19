@@ -1,7 +1,7 @@
 /* At the foot of its card: its corners are the card's bottom corners. */
 .card-table { position: relative; }
 .error { padding: 6px 12px; font-size: var(--text-sm); }
-/* The rows' toggle: a badge centred on the card's bottom border (the table is the card's foot, so
+/* The rows' toggle: a badge centered on the card's bottom border (the table is the card's foot, so
    its bottom edge is one border width above the card's), shown while the card (its `article`) is
    hovered or the badge has focus. */
 .rows-toggle {

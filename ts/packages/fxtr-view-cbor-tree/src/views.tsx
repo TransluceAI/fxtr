@@ -1,6 +1,6 @@
-// The renderers: a panel showing an entity's type name and its data as a tree, an inline link
-// naming the type and a shortened cid, and a hover preview with the type, cid, and the first few
-// fields. All work for any type, so a shell registers them as the built-in entity slots' wildcard renderers
+// The renderers: a panel showing an entity's type name and its data as a tree, the same panel for
+// a value a step is still producing (its live preview, with no cid), an inline link naming the
+// type and a shortened cid, and a hover preview with the type, cid, and the first few fields. All work for any type, so a shell registers them as the built-in entity slots' wildcard renderers
 // (see `cborTreeRenderers` in index.ts).
 
 import {
@@ -19,6 +19,8 @@ import {
   type HoverPreviewProps,
   type LinkProps,
   type EntityPanelProps,
+  type PartialEntityInlineProps,
+  type PartialEntityPanelProps,
 } from "fxtr-view";
 import { useMemo } from "react";
 import { shortName } from "./names";
@@ -44,6 +46,34 @@ export function CborTreePanel({ id, storage }: EntityPanelProps) {
       </div>
       <DataTree value={data} collapsed={collapsed} linkPaths />
     </div>
+  );
+}
+
+/** Any value a step is still producing, as `CborTreePanel` shows a finished entity: its type name
+ *  and its data as the same collapsible tree, so a streaming value reads like the entity it will
+ *  become. It is not stored, so it has no cid; a partial one says so in its place (and, once its
+ *  step has stopped, that it will not be finished), and its fields not yet known show as null. */
+export function CborTreePartialPanel({ value, partial, live, storage }: PartialEntityPanelProps) {
+  const collapsed = useMemo(() => subAtom(validatedAtom(storage, INITIAL_STATE, isTreePanelState), "collapsed"), [storage]);
+  return (
+    <div className={styles.panel}>
+      <div className={styles.header}>
+        <span className={styles.type}>{typeNameOf(value)}</span>{" "}
+        {partial && <span className={styles.summary}>{live ? "partial" : "partial: stopped before finishing"}</span>}
+      </div>
+      <DataTree value={value} collapsed={collapsed} linkPaths />
+    </div>
+  );
+}
+
+/** Any value a step is still producing, in one line: its short type name, and whether it is
+ *  partial (its preview's data tree is the panel's, `CborTreePartialPanel`). */
+export function CborTreePartialInline({ value, partial, live }: PartialEntityInlineProps) {
+  return (
+    <span className={styles.link}>
+      <span className={styles.linkType}>{shortName(typeNameOf(value))}</span>
+      {partial && <span className={styles.linkCid}> {live ? "partial" : "partial: stopped"}</span>}
+    </span>
   );
 }
 

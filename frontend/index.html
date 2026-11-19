@@ -5,13 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="icon" href="data:," />
     <title>fxtr ide</title>
-    <script>
-      // The theme picked in the rail (src/lib/theme.ts), applied before the first paint.
-      try {
-        const theme = localStorage.getItem('fxtr-theme')
-        if (theme === 'light' || theme === 'dark') document.documentElement.dataset.theme = theme
-      } catch {}
-    </script>
+    <!-- A file rather than inline code, so a hub's content policy (scripts from the viewer's
+         origin only) allows it; it lives under /assets/ because a hub serves the built viewer's
+         files from /viewer/ and /assets/ alone. -->
+    <script src="/assets/theme.js"></script>
   </head>
   <body>
     <div id="root"></div>

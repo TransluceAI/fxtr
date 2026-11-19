@@ -23,8 +23,9 @@ interface Options {
   hasRows: boolean
   scroller: RefObject<HTMLElement>
   headRow: RefObject<HTMLTableRowElement>
-  /** The body, whose data rows are marked `data-row` (and a failed invocation's, which has no
-   *  value cells to measure, `data-failure`). */
+  /** The body, whose data rows are marked `data-row` (and the rows with no value cells to
+   *  measure too: a failed invocation's `data-failure`, a running one's that shows its preview
+   *  across them `data-preview`). */
   body: RefObject<HTMLTableSectionElement>
   /** The width of fixed columns after the sized ones (the expand buttons'), left out of the width
    *  the defaults share. */
@@ -34,8 +35,9 @@ interface Options {
 /**
  * A table's column widths: each column's default width (`defaultWidths`, from the table's width
  * and the width of each column's content, measured once, from the first page with rows other than
- * failed invocations', so paging does not move them), or the width it was resized to by hand. A column being resized snaps to its
- * default within `SNAP_PX`, and while it is wider than its default, `guide` is where that is.
+ * failed invocations' and running ones showing a preview, so paging does not move them), or the
+ * width it was resized to by hand. A column being resized snaps to its default within `SNAP_PX`,
+ * and while it is wider than its default, `guide` is where that is.
  */
 export function useColumnWidths({ grid, columns, hasRows, scroller, headRow, body, reserved }: Options) {
   const [resized, setResized] = useState<Record<string, number>>({})
@@ -63,8 +65,10 @@ export function useColumnWidths({ grid, columns, hasRows, scroller, headRow, bod
     const bodyEl = body.current
     const unmeasured = measured.filter((column) => content[column.key] === undefined)
     if (!grid || !hasRows || !head || !bodyEl || unmeasured.length === 0) return
-    const rows = Array.from(bodyEl.querySelectorAll<HTMLTableRowElement>(':scope > tr[data-row]:not([data-failure])'))
-    // A page of failed invocations alone says nothing of the values: wait for one with rows.
+    // A failed invocation's row, and a running one's showing its preview, have one cell across
+    // the value columns: their cells are not the columns', and hold no values to measure.
+    const rows = Array.from(bodyEl.querySelectorAll<HTMLTableRowElement>(':scope > tr[data-row]:not([data-failure]):not([data-preview])'))
+    // A page of those alone says nothing of the values: wait for one with rows.
     if (rows.length === 0) return
     const next = { ...content }
     for (const column of unmeasured) {

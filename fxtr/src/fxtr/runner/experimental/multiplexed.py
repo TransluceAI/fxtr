@@ -44,6 +44,7 @@ import anyio
 
 from fxtr.core.entity_data import EntityID, FxtrDataValue, StorableFxtrDataValue
 from fxtr.entity_defns.array import Array, ArrayType, CombineJoin, Join, KeyValue
+from fxtr.experiment.steps import PreviewSource
 from fxtr.runner.session import (
     Assignment,
     AttemptClosedError,
@@ -350,6 +351,17 @@ class WorkerSession(Protocol):
         ...
 
     # -- step attempts --
+
+    def preview_step(self, attempt_id: AttemptID, value: PreviewSource) -> None:
+        """Replace a step attempt's preview (see
+        :meth:`~fxtr.runner.session.StepRunSession.preview_step`). Synchronous and fire-and-forget;
+        a session that cannot carry previews may drop them.
+
+        Args:
+            attempt_id: The step attempt.
+            value: The preview.
+        """
+        ...
 
     async def complete_step(self, attempt_id: AttemptID, result: Array[Any]) -> None:
         """Record a step's result; the host stores it.
@@ -721,6 +733,9 @@ class MultiplexedHost:
         finally:
             self._finish_by_id(attempt_id)
 
+    def preview_step(self, attempt_id: AttemptID, value: PreviewSource) -> None:
+        self._step_run(attempt_id).preview_step(value)
+
     async def complete_step(self, attempt_id: AttemptID, result: Array[Any]) -> None:
         run = self._step_run(attempt_id)
         try:
@@ -913,6 +928,9 @@ class _BoundStepRun(_Bound):
     def __init__(self, session: WorkerSession, assignment: StepAssignment) -> None:
         super().__init__(session, assignment.attempt_id)
         self.assignment = assignment
+
+    def preview_step(self, value: PreviewSource) -> None:
+        self._session.preview_step(self._id, value)
 
     async def complete_step(self, result: Array[Any]) -> None:
         await self._session.complete_step(self._id, result)

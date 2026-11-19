@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "behaviors"
-version = "0.0.1a5"
+version = "0.0.1a6"
 description = "Types, context policies, and chat model rollouts for behavioral experiments"
 requires-python = ">=3.12.4"
 license = "Apache-2.0"
@@ -12,7 +12,7 @@ license-files = ["LICENSE", "NOTICE"]
 dependencies = [
     "anyio>=4.14.0",
     "cattrs>=26.1.0",
-    "fxtr>=0.1.0a0,<0.3",
+    "fxtr>=0.2.0a1,<0.3",
     "pyyaml>=6",
 ]
 
@@ -24,7 +24,7 @@ models = [
 ]
 docent = [
     "docent-python>=0.1.74",
-    "jsonschema>=4.0",
+    "jsonschema>=4.18",
 ]
 
 [tool.uv.sources]
@@ -37,6 +37,6 @@ include = ["src/behaviors", "tests"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 markers = [
-    "llm_integration: calls live LLM providers; requires API keys and explicit opt-in",
+    "llm_integration: calls a real LLM provider (needs its API key); opt in with `pytest -m llm_integration`",
 ]
 addopts = '-m "not llm_integration"'

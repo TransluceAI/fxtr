@@ -51,7 +51,7 @@ _WEATHER_TOOL = ToolParam(
         "properties": {"location": {"type": "string"}},
         "required": ["location"],
     },
-    strict=None,
+    strict=False,
     input_examples=None,
 )
 

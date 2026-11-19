@@ -347,7 +347,7 @@ async function stepPin(
   const pin = data.step
   const now = run.stateOf(place.index)
   if (now === null || now === 'queued')
-    return { step: { ...pin, state: 'queued', resultCid: null, attempt: null, logs: [] } }
+    return { step: { ...pin, state: 'queued', resultCid: null, resultTaken: false, attempt: null, logs: [] } }
   const startedAt = replayedTime(run.final, run.plan, run.at, run.timeline.starts[place.index], Date.now())
   if (now === 'running')
     return {
@@ -355,6 +355,7 @@ async function stepPin(
         ...pin,
         state: 'running',
         resultCid: null,
+        resultTaken: false,
         provenance: null,
         attempt: { state: 'running', startedAt, finishedAt: null, error: null, provenance: recordedProvenance(pin) },
       },
@@ -365,6 +366,7 @@ async function stepPin(
         ...pin,
         state: 'failed',
         resultCid: null,
+        resultTaken: false,
         provenance: null,
         attempt: {
           state: 'failed',

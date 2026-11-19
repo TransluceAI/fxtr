@@ -1366,6 +1366,37 @@ async def test_a_pending_step_wakes_on_its_key_topic(client: LocalProjectClient)
     assert len(ROLLS) == 1
 
 
+async def test_a_step_another_process_computes_is_polled_for(
+    client: LocalProjectClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A job waiting on a step its own runner does not hold polls for it: when another process's
+    attempt at the key ends, nothing wakes the waiter. Its reconciliation interval is set out of
+    reach, so only the poll interval can explain a prompt finish."""
+    global GATE
+    GATE = anyio.Event()
+    wake = client.database.wake
+    # As if the first job ran in another process: what happens at the key wakes nothing here.
+    monkeypatch.setattr(
+        client.database, "wake", lambda topic: None if topic.startswith("step:") else wake(topic)
+    )
+    polling = RunnerSettings(heartbeat_interval=0.05, reconcile_interval=30.0, poll_interval=0.05)
+    first = await client.jobs.create(roll_once, {"seed": SEED})
+    second = await client.jobs.create(roll_once, {"seed": SEED})
+    computing = await a_runner(client.database, first, roll_once, roll, owner="first")
+    waiting = await a_runner(client.database, second, roll_once, roll, settings=polling)
+    async with runner_task(computing):
+        await wait_until_step_runs(client, first, ROLL_KEY)
+        async with runner_task(waiting) as waited:
+            await wait_until_step_runs(client, second, ROLL_KEY)
+            assert not waiting.holds(execution.StartStep(ROLL_KEY))
+            released = anyio.current_time()
+            GATE.set()
+        assert anyio.current_time() - released < 5.0
+    assert waited.settled is not None and waited.settled.state == "succeeded"
+    assert (await client.jobs.status(first)).state == "succeeded"
+    assert len(ROLLS) == 1
+
+
 # ---- cancelling ----
 
 

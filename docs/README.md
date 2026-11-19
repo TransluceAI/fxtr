@@ -20,8 +20,9 @@ it: the coding-agent skills in `.agents/skills/fxtr/`, `.agents/skills/behaviors
 skills as distributed carry a copy of `fxtr/` and `behaviors/` (see the root `README.md`).
 `fxtr/first-experiment.mdx` builds, by hand, the example experiment that the first-experiment
 skill's walkthrough follows, in the same order, so a change to that walkthrough's steps or its
-example changes the page too. The code is the source of truth, so when an API or
-behavior changes, update the matching pages; a skill changes only when a task needs another page,
+example changes the page too. The page's code is `example_projects/joke_eval`, where its tests
+run it: change the code there, and copy it into the page. The code is the source of truth, so when
+an API or behavior changes, update the matching pages; a skill changes only when a task needs another page,
 a page it links moves, or one of its best practices names what changed.
 
 Pages link one another by site route, as Mintlify needs: `/fxtr/concepts/overview` is

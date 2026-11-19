@@ -1,8 +1,12 @@
 // @vitest-environment jsdom
+import * as dagCbor from '@ipld/dag-cbor'
 import {act} from 'react'
 import {createRoot} from 'react-dom/client'
 import {afterEach, beforeEach, expect, it, vi} from 'vitest'
 import {EntityID, ViewShellProvider, type InvocationRecord, type ViewShell} from 'fxtr-view'
+import {RegistryProvider, dispatchRegistry} from 'fxtr-view-shell-util'
+import {defaultRenderers} from 'fxtr-view-default-renderers'
+import {RESULT_NOT_TAKEN} from '../src/components/InvocationInfo'
 import {StepPanel} from '../src/components/StepPanel'
 import {OpenEntityContext} from '../src/lib/openEntity'
 import {LevelStateContext} from '../src/lib/levelState'
@@ -19,6 +23,7 @@ let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 beforeEach(() => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
+  vi.stubGlobal('ResizeObserver', class { observe() {} disconnect() {} })
   host = document.createElement('div')
   root = createRoot(host)
 })
@@ -46,12 +51,21 @@ function record(jobId: string, state: string): InvocationRecord {
   }
 }
 
-async function render({jobId, state, slice, setSlice = () => {}}: {
+async function render({jobId, state, slice, setSlice = () => {}, preview, taken = true}: {
   jobId: string; state: string; slice: Record<string, string | number>; setSlice?: (next: unknown) => void
+  /** The step's latest preview, as its decoded wire form; none if omitted. */
+  preview?: unknown
+  /** Whether the job has taken a completed step's result. */
+  taken?: boolean
 }) {
   const {roll, input} = level(jobId, state)
   let outputReads = 0
   vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    if (String(url).startsWith('/api/previews/') && preview !== undefined) {
+      const bytes = dagCbor.encode(preview)
+      return {ok: true, status: 200, headers: new Headers({'X-Fxtr-Preview-Seq': '4'}),
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)}
+    }
     if (!String(url).includes('graphql')) return {ok: false, status: 404, statusText: 'not here', json: async () => ({})}
     const {query, variables} = JSON.parse(String(init!.body))
     let data: unknown
@@ -66,7 +80,9 @@ async function render({jobId, state, slice, setSlice = () => {}}: {
       const picked = JSON.stringify(variables).includes('"sample"') ? rows.slice(0, 1) : rows
       data = {outputPage: {type: roll.type, rows: picked, offset: 0, total: picked.length, hasMore: false}}
     } else if (query.includes('step(')) {
-      data = {step: {stepName: 'roll', requestCid: 'request', state, resultCid: null, logs: [], provenance: null,
+      data = {step: {stepName: 'roll', requestCid: 'request', state, logs: [], provenance: null,
+        resultCid: state === 'completed' ? 'result' : null, resultTaken: state === 'completed' && taken,
+        preview: preview === undefined ? null : {attemptId: 'attempt-1', seq: 4, at: '2026-09-24T00:00:03Z'},
         attempt: {state, startedAt: '2026-09-24T00:00:00Z', finishedAt: state === 'running' ? null : '2026-09-24T00:00:07Z',
           error: null, provenance: {jobId, commit: 'c0ffee1234567', ephemeral: false}}}}
     } else throw new Error(`unexpected query: ${query}`)
@@ -78,13 +94,14 @@ async function render({jobId, state, slice, setSlice = () => {}}: {
     EntityLinkImpl: () => null,
   }
   await act(async () => root.render(
-    <ViewShellProvider shell={shell}>
+    <ViewShellProvider shell={shell}><RegistryProvider registry={dispatchRegistry(defaultRenderers)}>
       <LevelStateContext.Provider value={levelState({slice, setSlice: setSlice as never})}>
         <OpenEntityContext.Provider value={recordingOpener().opener}>
           <StepPanel jobId={jobId} step={roll} inputs={{seed: input as StepDoc}} view={{kind: 'invocation'}} />
         </OpenEntityContext.Provider>
       </LevelStateContext.Provider>
-    </ViewShellProvider>))
+    </RegistryProvider></ViewShellProvider>))
+  await act(async () => {})  // the preview's fetch, started by an effect
   return {outputReads: () => outputReads}
 }
 
@@ -93,6 +110,7 @@ it('shows a completed invocation\'s status and where it came from, its inputs fo
   expect([...host.querySelectorAll('h3')].map(h => h.firstChild!.textContent)).toEqual(['Inputs', 'Output'])
   expect(host.textContent!.indexOf('c0ffee1234')).toBeLessThan(host.textContent!.indexOf('Inputs'))
   expect(host.textContent).toContain('completed in 7s')
+  expect(host.textContent).not.toContain(RESULT_NOT_TAKEN)
   expect(host.textContent).toContain('Output')
   expect(host.textContent).toContain('Array[struct]')
   expect(host.textContent).toContain('second sample')
@@ -131,4 +149,44 @@ it('says which of its rows a produced dim\'s binding leaves, and Show all leaves
   await act(async () => showAll.click())
   const update = setSlice.mock.calls[0]![0] as (current: Record<string, unknown>) => Record<string, unknown>
   expect(update({seed: 'b', sample: 0, model: 'm'})).toEqual({seed: 'b', model: 'm'})
+})
+
+const PARTIAL_DRAFT = {$type: 'org.transluce.fxtr.Partial', of: {$type: 'test.Draft', reply: 'streamed so far', words: null}}
+// Shown through the slot's wildcard, the raw-entity data tree, which marks it partial.
+
+it('shows a running step\'s live preview in place of its sketch', async () => {
+  await render({jobId: 'job-previewing', state: 'running', slice: {seed: 'b'}, preview: PARTIAL_DRAFT})
+  expect(host.textContent).toContain('live preview')
+  expect(host.textContent).toContain('partial')
+  expect(host.textContent).toContain('streamed so far')
+  expect(host.textContent).not.toContain('score')  // the schema's sketch is gone
+})
+
+it('shows a failed step\'s last preview under its error', async () => {
+  await render({jobId: 'job-failed-preview', state: 'failed', slice: {seed: 'b'}, preview: PARTIAL_DRAFT})
+  expect(host.textContent).toContain('ValueError: important failure')
+  expect(host.textContent).toContain('last preview')
+  expect(host.textContent).toContain('streamed so far')
+})
+
+// A step that finished after the workflow invocation waiting on it ended (a sibling failed, or the
+// job was cancelled): it is completed, and its result is on offer until the job is resumed.
+it('shows the output of a step whose result the job has not taken, and says so', async () => {
+  await render({jobId: 'job-not-taken', state: 'completed', slice: {seed: 'b'}, taken: false})
+  expect(host.textContent).toContain('completed in 7s')
+  expect(host.textContent).toContain(RESULT_NOT_TAKEN)
+  expect(host.textContent).toContain('second sample')
+})
+
+it('shows a stopped step\'s last preview in place of its output', async () => {
+  await render({jobId: 'job-stopped-preview', state: 'stopped', slice: {seed: 'b'}, preview: PARTIAL_DRAFT})
+  expect(host.textContent).toContain('stopped after 7s')
+  expect(host.textContent).toContain('last preview')
+  expect(host.textContent).toContain('streamed so far')
+})
+
+it('says a stopped step with no preview has no output', async () => {
+  const {outputReads} = await render({jobId: 'job-stopped', state: 'stopped', slice: {seed: 'b'}})
+  expect(host.textContent).toContain('no output: it stopped before it finished')
+  expect(outputReads()).toBe(0)
 })

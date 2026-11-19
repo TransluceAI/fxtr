@@ -5,10 +5,16 @@ Every job, cache, and ``init`` command opens the client of the project the worki
 jobs, run and resume them, cancel them, export and import their records, list, clear, and adopt
 into the step cache. It prints what that interface says and nothing more, so what the command line
 shows is what any client, local or remote, could show; richer inspection belongs to the viewer,
-and richer launches (inputs beyond scalars and project arrays) to launcher scripts. Four commands
+and richer launches (inputs beyond scalars and project arrays) to launcher scripts. Some commands
 open no client: ``new`` writes a project from the template (:mod:`fxtr.project.new`), ``views
-vendor`` copies in the fxtr packages its renderers use, ``views build`` builds its renderers, and
-``view`` serves it to the viewer.
+vendor`` copies in the fxtr packages its renderers use, ``views build`` builds its renderers,
+``view`` serves it to the viewer, and the ``remote`` and ``hub`` commands below.
+
+``push`` and ``pull`` move a job to and from one of the project's remotes
+(:mod:`fxtr.project.remotes`), and open the client as the job commands do. ``remote`` adds, lists,
+renames, and removes remotes and chooses the default, editing ``pyproject.toml`` or
+``fxtr.local.toml`` (:mod:`fxtr.project.remotes.files`); ``remote add --create`` also makes the
+hub project the remote names. ``hub login`` saves a token for remotes of the hub kind.
 
 The client is the local one (:class:`~fxtr.runner.postgres.client.LocalProjectClient`), imported
 only when a command needs it, so ``fxtr --help`` works without the runner extra. A command that
@@ -20,11 +26,12 @@ reporting, as Python launchers do. This module resolves command-line inputs and 
 exceptions into exit codes. The local-client opener also lives in ``running``; argument parsing
 stays here, and job status formatting lives in :mod:`fxtr.project.formatting`.
 
-Output: results on stdout; the runner's progress (a line per attempt start and end, from the
-``fxtr`` loggers) and refusals on stderr. A refusal the user can act on (no project here, a
-malformed config, a checkout that cannot be pinned, an unknown job) prints its message without a
-traceback. Exit status: 0 when the command did what it was asked and any job it ran succeeded; 1
-when a job it ran stopped without succeeding; 2 for a refusal or a usage error.
+Output: results on stdout; on stderr, the progress of the runner (a line per attempt start and
+end) and of a push (a line per stage), from the ``fxtr`` loggers, refusals, and the question
+``push`` asks when it is given no job. A refusal the user can act on (no project here, a malformed
+config, a checkout that cannot be pinned, an unknown job) prints its message without a traceback.
+Exit status: 0 when the command did what it was asked and any job it ran succeeded; 1 when a job it
+ran stopped without succeeding; 2 for a refusal or a usage error; 130 when Ctrl-C ended it.
 """
 
 from __future__ import annotations
@@ -32,12 +39,14 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, cast
 
 import anyio
 
@@ -49,18 +58,24 @@ from fxtr.project.client import (
     AdoptReport,
     JobID,
     JobNotFinishedError,
+    JobSummary,
     ProjectClient,
     ProjectClientError,
 )
 from fxtr.project.config import (
     LOCAL_CONFIG_FILENAME,
+    PYPROJECT_FILENAME,
+    ConfigError,
     ProjectError,
     find_project_root,
+    load_project_name,
+    load_remotes,
     load_views,
     write_local_config,
 )
 from fxtr.project.environment import PinRefusedError
-from fxtr.project.formatting import format_adopt_report
+from fxtr.project.formatting import format_adopt_report, format_age
+from fxtr.project.remotes import JOB_VISIBILITIES
 from fxtr.project.running import open_local_client, report_job_status, run_job, wait_for_job
 from fxtr.runner.cache_addresses import PatternError
 
@@ -78,6 +93,11 @@ class OpenClient(Protocol):
 EXIT_OK = 0
 EXIT_STOPPED = 1
 EXIT_REFUSED = 2
+EXIT_INTERRUPTED = 130
+"""What a shell reports for a command that Ctrl-C ended: 128 and the signal's number."""
+
+RECENT_JOBS = 10
+"""How many jobs ``fxtr push`` shows when it is given no job."""
 
 _REFUSALS = (ProjectError, ProjectClientError, RegistryError, SignatureError, PatternError)
 """What a command reports as a message rather than a traceback: the user can act on these."""
@@ -105,7 +125,15 @@ async def main(argv: Sequence[str], *, open_client: OpenClient | None = None) ->
 
 def entry() -> None:
     """The ``fxtr`` script."""
-    sys.exit(anyio.run(main, sys.argv[1:]))
+    try:
+        status = anyio.run(main, sys.argv[1:])
+    except KeyboardInterrupt:
+        # Everything async has unwound. A worker thread can still be blocked in a request to a
+        # hub or a registry, and a normal exit would wait for it, for minutes.
+        sys.stdout.flush()
+        sys.stderr.flush()
+        os._exit(EXIT_INTERRUPTED)
+    sys.exit(status)
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -179,7 +207,7 @@ async def _jobs_import(open_client: OpenClient, args: argparse.Namespace) -> int
     if args.overwrite_cache_conflicts and not args.adopt_cache:
         raise CommandError("--overwrite-cache-conflicts needs --adopt-cache")
     async with _open(open_client, args) as client:
-        job_id = await client.import_job(args.path, update=args.update)
+        job_id = await client.import_job(args.path, update=args.update, replace=args.replace)
         print(f"job {job_id}: imported from {args.path}")
         if args.adopt_cache:
             report = await client.adopt_cache(
@@ -249,11 +277,361 @@ def _print_adopt_report(job_id: JobID, report: AdoptReport) -> None:
         print(f"  {line}")
 
 
+# ---- remotes: push, pull, remote, hub ----
+
+
+async def _push(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import pull_command, remote_for
+
+    async with _open(open_client, args) as client:
+        remote = remote_for(client.project, client.environment, args.remote)
+        job_id = (
+            await _choose_job(client, remote.name)
+            if args.job is None
+            else await remote.job_id(args.job)
+        )
+        pushed = await remote.push(client, job_id, tags=args.tag, visibility=args.visibility)
+        hint = pull_command(client.project, pushed)
+    named = f" as {', '.join(pushed.tags)}" if pushed.tags else ""
+    sent = "already on" if pushed.unchanged else "pushed to"
+    # What the remote calls this push (the hub's record cid of the job, a digest on an OCI
+    # registry) is the last parenthesized part of the line; a tag can hold parentheses too.
+    print(f"job {job_id}: {sent} {pushed.remote}{named} ({pushed.version})")
+    if pushed.visibility is not None:
+        print(f"visibility: {pushed.visibility}")
+    if pushed.url is not None:
+        print(f"view it at: {pushed.url}")
+    print(f"pull it with: {hint}")
+    return EXIT_OK
+
+
+async def _choose_job(client: ProjectClient, remote: str) -> JobID:
+    """Ask which of the newest jobs to push, on a terminal. A push sends a job's logs and results
+    to everyone who can read it, so the person sees the jobs and chooses: this never guesses.
+
+    Raises:
+        CommandError: If no recent job can be pushed, or nobody is at a terminal to choose. The
+            message lists the newest jobs.
+    """
+    jobs = await client.list_jobs(limit=RECENT_JOBS)
+    if not jobs:
+        raise CommandError("there are no jobs to push: run one first")
+    pushable = [job for job in jobs if job.state != "running"]
+    listing = "\n".join(_job_line(job) for job in jobs)
+    if not pushable:
+        raise CommandError(f"the newest jobs are all still running:\n{listing}")
+    if not sys.stdin.isatty():
+        raise CommandError(f"name the job to push, as `fxtr push JOB`. The newest jobs:\n{listing}")
+    numbers = {job.job_id: str(number) for number, job in enumerate(pushable, start=1)}
+    now = datetime.now(UTC)
+    rows = [
+        (
+            numbers.get(job.job_id, "-"),
+            f"{job.workflow_name} ({job.root})",
+            job.state,
+            format_age(job.created_at, now),
+            str(job.job_id)[:8],
+        )
+        for job in jobs
+    ]
+    widths = [max(map(len, column)) for column in zip(*rows, strict=True)]
+    for row in rows:
+        cells = (cell.ljust(width) for cell, width in zip(row, widths, strict=True))
+        print("  " + "  ".join(cells), file=sys.stderr)
+    while True:
+        answer = await _ask(f"Push which job to {remote}? [1]: ", "no job chosen") or "1"
+        if answer.isdecimal() and 1 <= int(answer) <= len(pushable):
+            return pushable[int(answer) - 1].job_id
+        print(f"Choose a number from 1 to {len(pushable)}.", file=sys.stderr)
+
+
+async def _ask(question: str, at_end: str) -> str:
+    """Print ``question`` and return the line the person answers with, stripped.
+
+    Args:
+        at_end: The refusal when the input ends with no answer (Ctrl-D).
+
+    Raises:
+        CommandError: With ``at_end``.
+    """
+    print(question, end="", file=sys.stderr, flush=True)
+    # Waiting on the event loop lets Ctrl-C end the command: it cancels the main task, which
+    # a blocking input() would not notice, and a thread blocked in input() stops the process
+    # from exiting. A terminal holds its input back until a line is complete, so the read
+    # returns at once, with that line, or with nothing at the end of the input (Ctrl-D).
+    await anyio.wait_readable(sys.stdin)
+    line = os.read(sys.stdin.fileno(), 4096)
+    if not line:
+        raise CommandError(at_end)
+    return line.decode(errors="replace").strip()
+
+
+async def _hub_login(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes.hub import default_hub_url, save_token
+    from fxtr.project.remotes.hub_login import browser_login
+
+    args.url = args.url or default_hub_url()
+    if args.token_stdin:
+        token = sys.stdin.readline().strip()
+        if not token:
+            raise CommandError("no token given on standard input")
+    else:
+        token = await browser_login(args.url, open_browser=not args.no_browser)
+    path = save_token(args.url, token)
+    print(f"saved the token for {args.url} in {path}")
+    return EXIT_OK
+
+
+async def _hub_visibility(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import remote_for
+
+    async with _open(open_client, args) as client:
+        remote = remote_for(client.project, client.environment, args.remote)
+        job_id = await remote.job_id(args.job)
+        await remote.set_visibility(job_id, args.visibility)
+    print(f"job {job_id}: {args.visibility} on {remote.name}")
+    return EXIT_OK
+
+
+async def _remote_add(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import files
+    from fxtr.project.remotes.hub import check_hub_url, default_hub_url
+
+    root = _project_root(args)
+    files.check_remote_name(root, args.name)
+    creating = (args.project_name, args.repository)
+    if not args.create and (any(creating) or args.no_browser):
+        raise CommandError("--project-name, --repository, and --no-browser go with --create")
+    settings: dict[str, str]
+    if args.kind == "oci":
+        if args.url is None:
+            raise CommandError("An oci remote needs its registry repository, as host/path")
+        if args.project_id or args.create:
+            raise CommandError("--project-id and --create name a hub project: use --kind hub")
+        settings = {"repository": args.url}
+    else:
+        url = check_hub_url(args.url or default_hub_url(), origin_only=True)
+        if args.another and not args.create:
+            raise CommandError("--another goes with --create")
+        if args.create:
+            project_id = await _create_hub_project(root, url, args)
+        elif args.project_id:
+            project_id = str(_uuid(args.project_id, "hub project id"))
+        else:
+            raise CommandError(
+                "A hub remote names its hub project: give --project-id <id> (the project's page"
+                " on the hub shows it), or --create to make one"
+            )
+        settings = {"url": url, "project": project_id}
+    if args.git_remote != "origin":
+        settings["git_remote"] = args.git_remote
+    try:
+        default = files.add_remote(root, args.name, args.kind, settings, local=args.local)
+    except ConfigError as exc:
+        if not args.create:
+            raise
+        # The hub project exists now; a second --create would make another one.
+        raise CommandError(
+            f"{exc}. The hub project was made: once the file is fixed, add it with"
+            f" fxtr remote add {args.name} {settings['url']} --project-id {settings['project']}"
+        ) from exc
+    written = LOCAL_CONFIG_FILENAME if args.local else PYPROJECT_FILENAME
+    as_default = ", as the default remote" if default else ""
+    print(f"Added the remote {args.name} to {written}{as_default}.")
+    if not args.local:
+        await _refresh_environment(root)
+    print(f"\nDone: this project is linked to the remote {args.name}.")
+    if not args.local:
+        print(
+            f"Next: commit {PYPROJECT_FILENAME}, so every checkout has the remote."
+            " fxtr run needs it committed too."
+        )
+    return EXIT_OK
+
+
+async def _refresh_environment(root: Path) -> None:
+    """Keep the project's virtual environment current after a command edits ``pyproject.toml``,
+    as ``uv add`` does. The edit itself has succeeded, so a failure here is a note, not an error:
+    ``fxtr run`` reports the problem and its fix if it is still there."""
+    from fxtr.project.environment import LocalEnvironment
+
+    try:
+        await LocalEnvironment().refresh_environment(root)
+    except ProjectError as exc:
+        print(f"fxtr: could not update the project's environment: {exc}", file=sys.stderr)
+
+
+async def _create_hub_project(root: Path, url: str, args: argparse.Namespace) -> str:
+    """Make the hub project of a new hub remote, for the checkout's repository and project
+    directory, and return its id. In a terminal, this function also does the steps that the hub
+    needs first: it connects this computer, and it waits while the user installs the hub's GitHub
+    App on the repository. A script gets the hub's refusal, because nobody can do those steps."""
+    from fxtr.project.environment import LocalEnvironment
+    from fxtr.project.remotes.hub import (
+        HttpHubClient,
+        HubRequestError,
+        github_repository,
+        hub_token,
+        save_token,
+    )
+    from fxtr.project.remotes.hub_login import browser_login, create_project_after_install
+
+    git_url, project_path = await LocalEnvironment().repository_binding(root, args.git_remote)
+    repository = args.repository or github_repository(git_url)
+    name = args.project_name or load_project_name(root)
+    in_terminal = sys.stdin.isatty()
+    token = hub_token(url)
+    if token is None and in_terminal:
+        token = await browser_login(url, open_browser=not args.no_browser)
+        print(f"saved the token for {url} in {save_token(url, token)}")
+    client = HttpHubClient(url, "", token, remote=args.name)
+    try:
+        try:
+            project_id = await client.create_project(
+                name, repository, project_path, another=args.another
+            )
+        except HubRequestError as exc:
+            install_url = exc.details.get("install_url")
+            if not in_terminal or not isinstance(install_url, str):
+                raise
+            project_id = await create_project_after_install(
+                client,
+                name,
+                repository,
+                project_path,
+                install_url,
+                open_browser=not args.no_browser,
+            )
+    except HubRequestError as exc:
+        if exc.code != "project_exists":
+            raise
+        existing = await _existing_project(exc.details, url, repository, in_terminal=in_terminal)
+        if existing is not None:
+            print(f"Using the existing hub project: {url}/projects/{existing}")
+            return existing
+        project_id = await client.create_project(name, repository, project_path, another=True)
+    print(f"Created the hub project {name!r} of {repository}: {url}/projects/{project_id}")
+    return project_id
+
+
+async def _existing_project(
+    details: Mapping[str, object], url: str, repository: str, *, in_terminal: bool
+) -> str | None:
+    """The project to use when the repository has a project for this directory already, or
+    ``None`` to make another one. A project cannot be deleted, so this asks first.
+
+    Args:
+        details: The details of the hub's ``project_exists`` refusal, which name the projects.
+
+    Raises:
+        CommandError: Outside a terminal, where nobody can answer, or if the input ends.
+    """
+    projects = [
+        (str(project["id"]), str(project["name"]))
+        for project in cast(list[dict[str, object]], details.get("projects", []))
+    ]
+    listing = "\n".join(
+        f"  {number}  {name}  {url}/projects/{project_id}"
+        for number, (project_id, name) in enumerate(projects, start=1)
+    )
+    heading = f"{repository} already has a hub project for this directory:\n{listing}"
+    if not in_terminal:
+        raise CommandError(
+            f"{heading}\nUse one with --project-id ID, or pass --another to make another project."
+            " A project cannot be deleted."
+        )
+    print(f"{heading}\nA project cannot be deleted, so another one stays.", file=sys.stderr)
+    while True:
+        answer = await _ask(
+            "Use which one? A number, or `another` to make another project [1]: ",
+            "no project chosen",
+        )
+        answer = answer or "1"
+        if answer == "another":
+            return None
+        if answer.isdecimal() and 1 <= int(answer) <= len(projects):
+            return projects[int(answer) - 1][0]
+        print(f"Choose a number from 1 to {len(projects)}, or `another`.", file=sys.stderr)
+
+
+async def _remote_list(open_client: OpenClient, args: argparse.Namespace) -> int:
+    remotes = load_remotes(_project_root(args))
+    if not remotes.by_name:
+        print("no remotes; add one with `fxtr remote add`", file=sys.stderr)
+    for name, remote in remotes.by_name.items():
+        marker = "*" if name == remotes.default else " "
+        settings = " ".join(f"{key}={value}" for key, value in remote.settings.items())
+        where = LOCAL_CONFIG_FILENAME if remote.local else PYPROJECT_FILENAME
+        print(f"{marker} {name}  {remote.kind}  {settings}  ({where})")
+    return EXIT_OK
+
+
+async def _remote_rename(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import files
+
+    root = _project_root(args)
+    before = (root / PYPROJECT_FILENAME).read_bytes()
+    files.rename_remote(root, args.old, args.new)
+    if (root / PYPROJECT_FILENAME).read_bytes() != before:
+        await _refresh_environment(root)
+    print(f"renamed remote {args.old} to {args.new}")
+    return EXIT_OK
+
+
+async def _remote_remove(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import files
+
+    root = _project_root(args)
+    before = (root / PYPROJECT_FILENAME).read_bytes()
+    files.remove_remote(root, args.name)
+    if (root / PYPROJECT_FILENAME).read_bytes() != before:
+        await _refresh_environment(root)
+    print(f"removed remote {args.name}; the jobs it holds stay there")
+    return EXIT_OK
+
+
+async def _remote_set_default(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import files
+
+    root = _project_root(args)
+    files.set_default_remote(root, args.name, local=args.local)
+    if not args.local:
+        await _refresh_environment(root)
+    scope = "on this machine" if args.local else "for every checkout"
+    print(f"{args.name} is the default remote {scope}")
+    return EXIT_OK
+
+
+async def _pull(open_client: OpenClient, args: argparse.Namespace) -> int:
+    from fxtr.project.remotes import remote_for
+    from fxtr.project.remotes.hub import job_page_remote
+
+    if args.overwrite_cache_conflicts and not args.adopt_cache:
+        raise CommandError("--overwrite-cache-conflicts needs --adopt-cache")
+    async with _open(open_client, args) as client:
+        linked = job_page_remote(args.ref, client.project, client.environment)
+        if linked is not None and args.remote is not None:
+            raise CommandError("--remote does not go with a job's address, which names its hub")
+        remote, ref = linked or (
+            remote_for(client.project, client.environment, args.remote),
+            args.ref,
+        )
+        job_id = await remote.pull(client, ref, update=args.update, replace=args.replace)
+        print(f"job {job_id}: pulled from {remote.name} ({ref})")
+        if args.adopt_cache:
+            report = await client.adopt_cache(
+                job_id, overwrite_cache_conflicts=args.overwrite_cache_conflicts
+            )
+            _print_adopt_report(job_id, report)
+    return EXIT_OK
+
+
 async def _init(open_client: OpenClient, args: argparse.Namespace) -> int:
-    root = find_project_root(Path.cwd() if args.project is None else args.project)
+    root = _project_root(args)
     if (root / LOCAL_CONFIG_FILENAME).exists() and not args.force:
         raise CommandError(
-            f"{root / LOCAL_CONFIG_FILENAME} exists already; pass --force to replace it"
+            f"{root / LOCAL_CONFIG_FILENAME} exists already; pass --force to replace its"
+            " database settings and keep the rest"
         )
     path = write_local_config(root, database_url=args.database_url, schema=args.schema)
     # Opening the client creates the project's tables in its database if they are missing.
@@ -363,10 +741,15 @@ async def _view(open_client: OpenClient, args: argparse.Namespace) -> int:
 
 async def _jobs_list(open_client: OpenClient, args: argparse.Namespace) -> int:
     async with _open(open_client, args) as client:
-        for job in await client.list_jobs():
-            created = job.created_at.isoformat(sep=" ", timespec="seconds")
-            print(f"{job.job_id}  {job.state:<9}  {created}  {job.workflow_name} ({job.root})")
+        for job in await client.list_jobs(limit=args.limit):
+            print(_job_line(job))
     return EXIT_OK
+
+
+def _job_line(job: JobSummary) -> str:
+    """A job in a listing. Its id comes first, for scripts that take the first column."""
+    created = job.created_at.isoformat(sep=" ", timespec="seconds")
+    return f"{job.job_id}  {job.state:<9}  {created}  {job.workflow_name} ({job.root})"
 
 
 async def _jobs_status(open_client: OpenClient, args: argparse.Namespace) -> int:
@@ -462,9 +845,11 @@ def _parser() -> argparse.ArgumentParser:
         "jobs", parents=[common], help="list, inspect, cancel, export, and import jobs"
     )
     jobs_commands = jobs.add_subparsers(required=True, metavar="command")
-    jobs_commands.add_parser("list", parents=[common], help="every job, newest first").set_defaults(
-        command=_jobs_list
+    jobs_list = jobs_commands.add_parser("list", parents=[common], help="jobs, newest first")
+    jobs_list.add_argument(
+        "--limit", type=_positive_int, metavar="N", help="only the newest N jobs (default: all)"
     )
+    jobs_list.set_defaults(command=_jobs_list)
     status = jobs_commands.add_parser("status", parents=[common], help="where a job is")
     status.add_argument("job", help="the job's id")
     status.set_defaults(command=_jobs_status)
@@ -494,15 +879,23 @@ def _parser() -> argparse.ArgumentParser:
         help="add a job from a record file",
         description="Add the job a record file (from `fxtr jobs export`) holds to this project,"
         " with everything it reaches. The commits its results were produced at must be in this"
-        " repository, and the job must not be here already unless --update is given. The step"
+        " repository, and the job must not be here already unless --update or --replace is"
+        " given. The step"
         " cache is left alone unless --adopt-cache is given.",
     )
     import_.add_argument("path", type=Path, help="the record file")
-    import_.add_argument(
+    import_way = import_.add_mutually_exclusive_group()
+    import_way.add_argument(
         "--update",
         action="store_true",
         help="bring a job this project has up to date from a later record of it; the record must"
         " hold everything this project knows of the job",
+    )
+    import_way.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace this project's copy of the job with the record, removing the copy's job"
+        " attempts that the record lacks; their step results stay in the step cache",
     )
     import_.add_argument(
         "--adopt-cache",
@@ -621,7 +1014,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     init.add_argument("--database-url", required=True, help="a SQLAlchemy URL")
     init.add_argument("--schema", help="the Postgres schema (fxtr_<project name> by default)")
-    init.add_argument("--force", action="store_true", help="replace an existing file")
+    init.add_argument(
+        "--force",
+        action="store_true",
+        help="replace the database settings of an existing file and keep the rest",
+    )
     init.set_defaults(command=_init)
 
     views = commands.add_parser("views", parents=[common], help="the project's view bundle")
@@ -667,7 +1064,226 @@ def _parser() -> argparse.ArgumentParser:
     )
     view.add_argument("--no-open", action="store_true", help="do not open a browser")
     view.set_defaults(command=_view)
+
+    push = commands.add_parser(
+        "push",
+        parents=[common],
+        help="send a job to a remote",
+        description="Send a stopped or succeeded job to one of the project's remotes (see"
+        " `fxtr remote`), with the commits its results were produced at, and set"
+        " the tags you give. On an OCI registry, a push"
+        " with no tag sets a default tag made from the job, and a tag that exists moves to this"
+        " job. On a hub, which holds each job once, a push brings the hub's copy of the job up"
+        " to date, sets only the tags you give, and moving a tag that names another job needs"
+        " the maintainer role.",
+    )
+    push.add_argument(
+        "job",
+        nargs="?",
+        help="the job's id; on a hub, also owner/repo/<job-id> for this checkout's repository."
+        " If omitted, the command shows the newest jobs and asks which to push",
+    )
+    push.add_argument(
+        "--remote", help="the remote (the default remote, or the only one, if omitted)"
+    )
+    push.add_argument(
+        "--tag", action="append", default=[], help="a tag to set; give it again for more tags"
+    )
+    push.add_argument(
+        "--visibility",
+        choices=JOB_VISIBILITIES,
+        help="on a hub: shared: the project's readers; private: you; public: anyone. A new job"
+        " is shared unless this is given. A job pushed before keeps its visibility unless this"
+        " is given",
+    )
+    push.set_defaults(command=_push)
+    pull = commands.add_parser(
+        "pull",
+        parents=[common],
+        help="bring a job from a remote into this project",
+        description="Get a job and the commits it needs from a remote, and import it. On a hub,"
+        " a job's id (or owner/repo/<job-id>, checked against this checkout's repository) gets"
+        " the job as the hub holds it; a tag, or tag:<name>, gets the job the tag names. On"
+        " an OCI registry, a tag, or @ and a digest"
+        " (@sha256:...), names an artifact. A job that this project has is refused unless"
+        " --update or --replace is given. The step cache is left alone unless --adopt-cache is"
+        " given.",
+    )
+    pull.add_argument(
+        "ref",
+        help="the address of a job's page on a hub, which needs no remote; on a hub remote: a job"
+        " id, owner/repo/<job-id>, or a tag (tag:<name>); on an OCI registry: a tag, or @ and a"
+        " digest",
+    )
+    pull.add_argument(
+        "--remote", help="the remote (the default remote, or the only one, if omitted)"
+    )
+    pull_way = pull.add_mutually_exclusive_group()
+    pull_way.add_argument(
+        "--update",
+        action="store_true",
+        help="bring a job this project has up to date; the job on the remote must hold everything"
+        " this project knows of it",
+    )
+    pull_way.add_argument(
+        "--replace",
+        action="store_true",
+        help="replace this project's copy of the job with the remote's, removing the copy's job"
+        " attempts that the remote lacks; their step results stay in the step cache",
+    )
+    pull.add_argument(
+        "--adopt-cache",
+        action="store_true",
+        help="then make the step cache offer the job's results (as `fxtr cache adopt` does)",
+    )
+    pull.add_argument(
+        "--overwrite-cache-conflicts",
+        action="store_true",
+        help="with --adopt-cache, replace entries that hold a different request's result",
+    )
+    pull.set_defaults(command=_pull)
+    _remote_parser(commands, common)
+    hub = commands.add_parser(
+        "hub",
+        parents=[common],
+        help="commands for remotes of the hub kind",
+        description='Commands for a fxtr hub, the server that remotes of kind "hub" push to.',
+    )
+    hub_commands = hub.add_subparsers(required=True, metavar="command")
+    login = hub_commands.add_parser(
+        "login",
+        parents=[common],
+        help="connect this computer to a hub",
+        description="Sign in through your browser and confirm this computer's connection code. "
+        "Credentials are stored privately outside the project. Use --token-stdin for scripts.",
+    )
+    login.add_argument(
+        "url",
+        nargs="?",
+        help="another hub URL (default https://hub.transluce.org, or $FXTR_HUB_URL)",
+    )
+    mode = login.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--no-browser", action="store_true", help="print the sign-in link without opening it"
+    )
+    mode.add_argument(
+        "--token-stdin", action="store_true", help="read a credential from standard input"
+    )
+    login.set_defaults(command=_hub_login)
+    visibility = hub_commands.add_parser(
+        "visibility",
+        parents=[common],
+        help="change who may read a job pushed to a hub",
+        description="Change who may read a job pushed to a hub: shared with the repository's"
+        " readers, private to its owner, or public. Its owner may set any; a project admin"
+        " may make it shared or public.",
+    )
+    visibility.add_argument(
+        "job", help="the job's id, or owner/repo/<job-id> for this checkout's repository"
+    )
+    visibility.add_argument("visibility", choices=JOB_VISIBILITIES)
+    visibility.add_argument(
+        "--remote", help="the hub remote (the default remote, or the only one, if omitted)"
+    )
+    visibility.set_defaults(command=_hub_visibility)
     return parser
+
+
+def _remote_parser(
+    parent_commands: argparse._SubParsersAction[argparse.ArgumentParser],
+    common: argparse.ArgumentParser,
+) -> None:
+    """``fxtr remote`` and its commands."""
+    remote = parent_commands.add_parser(
+        "remote",
+        parents=[common],
+        help="the places this project pushes jobs to and pulls jobs from",
+        description="Manage the project's remotes, as `git remote` does. A remote is committed in"
+        f" {PYPROJECT_FILENAME}, so every checkout has it, or with --local kept to this machine in"
+        f" {LOCAL_CONFIG_FILENAME}. These commands need no database.",
+    )
+    commands = remote.add_subparsers(required=True, metavar="command")
+    add = commands.add_parser(
+        "add",
+        parents=[common],
+        help="add a remote",
+        description="Add a remote. A hub remote names an existing hub project (--project-id), or"
+        " --create makes one for this checkout's repository: anyone who can read the repository"
+        " may. In a terminal, --create connects this computer to the hub if it is not connected,"
+        " and waits while you install the hub's GitHub App if the repository needs it. The first"
+        " remote becomes the default.",
+    )
+    add.add_argument("name", help="the remote's name, used with --remote")
+    add.add_argument(
+        "url",
+        nargs="?",
+        help="hub: the hub's URL (https://hub.transluce.org, or $FXTR_HUB_URL, if omitted);"
+        " oci: the registry repository, host/path",
+    )
+    add.add_argument("--kind", choices=("hub", "oci"), default="hub", help="hub by default")
+    project = add.add_mutually_exclusive_group()
+    project.add_argument("--project-id", help="hub: the id of an existing hub project")
+    project.add_argument(
+        "--create",
+        action="store_true",
+        help="hub: create a hub project for this checkout's repository",
+    )
+    add.add_argument(
+        "--another",
+        action="store_true",
+        help="hub: with --create, make a project even if this directory of the repository has one",
+    )
+    add.add_argument(
+        "--project-name",
+        help="with --create: the hub project's name (the [project] name if omitted)",
+    )
+    add.add_argument(
+        "--repository",
+        help="with --create: the repository, owner/name (from the git remote's URL if omitted)",
+    )
+    add.add_argument(
+        "--no-browser",
+        action="store_true",
+        help="with --create: print the links to open, without opening them",
+    )
+    add.add_argument(
+        "--git-remote",
+        default="origin",
+        help="the git remote that receives the commits of pushed jobs (origin by default)",
+    )
+    add.add_argument(
+        "--local",
+        action="store_true",
+        help=f"for this machine only: write {LOCAL_CONFIG_FILENAME}, not {PYPROJECT_FILENAME}",
+    )
+    add.set_defaults(command=_remote_add)
+    commands.add_parser(
+        "list", parents=[common], help="list the remotes; * marks the default"
+    ).set_defaults(command=_remote_list)
+    rename = commands.add_parser("rename", parents=[common], help="rename a remote")
+    rename.add_argument("old")
+    rename.add_argument("new")
+    rename.set_defaults(command=_remote_rename)
+    remove = commands.add_parser(
+        "remove",
+        parents=[common],
+        help="remove a remote",
+        description="Remove a remote from the project's configuration. What it holds stays there.",
+    )
+    remove.add_argument("name")
+    remove.set_defaults(command=_remote_remove)
+    default = commands.add_parser(
+        "set-default",
+        parents=[common],
+        help="choose the remote a push or pull uses when it names none",
+    )
+    default.add_argument("name")
+    default.add_argument(
+        "--local",
+        action="store_true",
+        help=f"for this machine only, in {LOCAL_CONFIG_FILENAME}: overrides the committed default",
+    )
+    default.set_defaults(command=_remote_set_default)
 
 
 def _configure_logging(verbosity: int) -> None:
@@ -711,11 +1327,30 @@ def _input(text: str) -> tuple[str, Array[Any] | _ProjectArray]:
     return name, Array.infer_scalar(parsed)
 
 
-def _job_id(text: str) -> JobID:
+def _positive_int(text: str) -> int:
     try:
-        return JobID(uuid.UUID(text))
+        value = int(text)
     except ValueError:
-        raise CommandError(f"not a job id: {text!r}") from None
+        value = 0
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"not a positive number: {text!r}")
+    return value
+
+
+def _job_id(text: str) -> JobID:
+    return JobID(_uuid(text, "job id"))
+
+
+def _uuid(text: str, what: str) -> uuid.UUID:
+    try:
+        return uuid.UUID(text)
+    except ValueError:
+        raise CommandError(f"not a {what}: {text!r}") from None
+
+
+def _project_root(args: argparse.Namespace) -> Path:
+    """The root of the project the working directory, or ``--project``, is in."""
+    return find_project_root(Path.cwd() if args.project is None else args.project)
 
 
 def _message(exc: BaseException) -> str:

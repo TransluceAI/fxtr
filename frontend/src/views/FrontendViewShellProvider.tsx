@@ -12,7 +12,7 @@
  */
 
 import { useContext, useMemo, type ReactNode } from 'react'
-import { ViewShellProvider, type EntityID, type EntityLinks, type InvocationRef, type ViewKeys, type ViewShell } from 'fxtr-view'
+import { ViewShellProvider, type EntityID, type EntityLinks, type InvocationRef, type ViewKeys, type ViewParams, type ViewShell } from 'fxtr-view'
 import { RegistryProvider, createCachedEntityHook, type DispatchRegistry } from 'fxtr-view-shell-util'
 import { loadEntity } from './entity_loader'
 import { useInvocationRecord } from './invocation_source'
@@ -51,8 +51,8 @@ const NO_KEYS: ViewKeys = { slice: {}, selected: {} }
 function useEntityLinks(): EntityLinks {
   const { follow, linkState } = useEntityOpener()
   return useMemo(() => ({
-    open: (id: EntityID) => follow(linkTarget(id.cid, null)),
-    isOpen: (id: EntityID) => linkState(linkTarget(id.cid, null)).open,
+    open: (id: EntityID, params?: ViewParams) => follow(linkTarget(id.cid, null, params)),
+    isOpen: (id: EntityID, params?: ViewParams) => linkState(linkTarget(id.cid, null, params)).open,
   }), [follow, linkState])
 }
 

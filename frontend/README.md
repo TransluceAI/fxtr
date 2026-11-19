@@ -1,10 +1,11 @@
 # fxtr frontend
 
-A Vite/React viewer for one completed job from the Postgres runner: a tree of workflow
+A Vite/React viewer for a running or completed job from the Postgres runner: a tree of workflow
 invocations, each a list of step cards and the arrays they produced. It talks only to the
 `debug_web` backend, which also serves the built viewer itself.
 
-How the app is built is in `CODE_OVERVIEW.md`.
+How the app is built is in `CODE_OVERVIEW.md`. The hub serves the same app for the jobs
+pushed to it.
 
 ## Running it
 

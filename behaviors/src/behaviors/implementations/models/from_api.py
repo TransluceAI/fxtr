@@ -139,7 +139,7 @@ class _APIBackedChatSessionModel:
                 "the context policy set a system message, but this model's initial messages"
                 " already include one"
             )
-        return self._session(self._initial_messages + (initialization.message,))
+        return self._session((initialization.message, *self._initial_messages))
 
     async def restore_session(self, state: DynamicData) -> APIBackedChatSession:
         return self._session(state.as_type(_SessionState).messages)
@@ -177,11 +177,13 @@ def chat_session_model_from_api(
 ) -> SerializableChatSessionModel:
     """Make a chat session model whose state is the conversation with `model_api`.
 
-    Sessions start from `initial_messages` (e.g. a system prompt that is part
-    of the model's configuration), followed by the context policy's optional
-    ``SetSystemMessage``; other initialization types raise ``ModelError``, as
-    does a ``SetSystemMessage`` when `initial_messages` already holds a
-    ``SystemMessage``. Every request uses `sampling`. Given a ``StreamingModelAPI``, the result is a
+    Sessions start from the context policy's optional ``SetSystemMessage``,
+    followed by `initial_messages` (e.g. a system prompt that is part of the
+    model's configuration, or few-shot examples), so a policy's system prompt
+    leads the conversation as providers expect; other initialization types
+    raise ``ModelError``, as does a ``SetSystemMessage`` when
+    `initial_messages` already holds a ``SystemMessage``. Every request uses
+    `sampling`. Given a ``StreamingModelAPI``, the result is a
     ``SerializableStreamingChatSessionModel`` whose sessions stream deltas;
     otherwise streaming a turn just emits no delta events. With a `retry`
     schedule, failures in `failure_categories_to_retry` are retried with

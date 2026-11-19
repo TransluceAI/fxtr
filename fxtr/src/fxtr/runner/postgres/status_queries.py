@@ -14,8 +14,17 @@ Three questions are asked about a job's targets, and they have different answers
   cache resolution: its latest job attempt's own failure at the key wins over anything another job
   does there, and without an active job attempt nothing is pending.
 * **Display**, what a person is shown (``display_state``): the policy's judgement under other
-  names, where a result on offer shows as running while the job can take it and stopped while it
-  cannot, and a failure without a recorded error shows as stopped.
+  names, where a result on offer shows as completed, like a bound one, a failure without a
+  recorded error shows as stopped, and a step stopped by the policy shows as running while an
+  equal attempt is still computing its result. A result on offer is the step's to show
+  (``spawn_query``): the step ran to the end, and all that is left is for the job to take the
+  result, which costs no work. So a step that finishes after the workflow attempt waiting on it
+  has ended (a sibling failed, or the job was cancelled) shows as completed, with the result it
+  produced, whether or not the job attempt is still active; whether the job has taken a result is
+  the binding, which a step's description carries beside the state. An attempt still running is
+  the step's to show in the same way: a job attempt cancelled gently lets its running steps
+  finish, so until such a step ends it shows as running, with its preview and logs, though the
+  policy has nothing pending for a job attempt that is not active.
 
 The step relation states the cache resolution rules relationally, so they exist twice, here and
 in ``resolve_step``, and must change together. The correspondence is: ``done`` is ``Bound``,
@@ -53,11 +62,23 @@ from __future__ import annotations
 
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cache, cached_property
 from typing import Any, Literal
 from uuid import UUID
 
-from sqlalchemy import Row, and_, any_, case, cast, func, or_, select, true
+from sqlalchemy import (
+    BindParameter,
+    Row,
+    and_,
+    any_,
+    bindparam,
+    case,
+    cast,
+    func,
+    or_,
+    select,
+    true,
+)
 from sqlalchemy.dialects.postgresql import ARRAY
 
 from fxtr.runner.session import AttemptError, AttemptID
@@ -79,15 +100,17 @@ from .schema import (
 )
 
 type StepState = Literal["queued", "running", "completed", "failed", "conflict", "stopped"]
-"""A requested step's state for display: ``completed`` once the job's request is bound;
-``failed`` when its latest job attempt ran a failed step attempt with a recorded error, even if
-the job attempt has settled; ``conflict`` when a different request owns the key through a running
-attempt or a step result on offer. Otherwise, while the job's latest attempt is active,
-``running`` means an equal attempt is computing the result or a step result is ready to take, and
-``queued`` means the step is due to run. With no active job attempt, or a failure without a
-recorded error, it is ``stopped``.
-A binding takes precedence over failure, and the job's own failure takes precedence over the
-cache entry's state."""
+"""A requested step's state for display: ``completed`` once the step has a result for the job's
+request, whether the job's request is bound to it or an equal request left it on offer for the job
+to take; ``failed`` when its latest job attempt ran a failed step attempt with a recorded error,
+even if the job attempt has settled; ``conflict`` when a different request owns the key through a
+running attempt or a step result on offer. Otherwise ``running`` means an equal attempt is
+computing the result, whether or not the job's latest attempt is active (one cancelled gently lets
+its running steps finish), and ``queued`` means the step is due to run under the job's active
+attempt. With no active job attempt and no equal attempt running, or with a failure without a
+recorded error, it is ``stopped``. A binding takes precedence over failure, and the job's own
+failure takes precedence over the cache entry's state, a result on offer or an equal attempt
+running included."""
 
 type TargetState = Literal["done", "failed", "ready", "conflict", "stopped", "running", "queued"]
 
@@ -128,7 +151,18 @@ class StatusQueries:
     """The status relations of some jobs: ``invocations`` (every invocation of them, or with
     ``invocation_id`` only that one) and ``steps`` (every step they requested)."""
 
-    def __init__(self, job_ids: Sequence[JobID], *, invocation_id: InvocationID | None = None):
+    def __init__(
+        self,
+        job_ids: Sequence[JobID] | BindParameter[Any],
+        *,
+        invocation_id: InvocationID | None = None,
+    ):
+        """
+        Args:
+            job_ids: The jobs, or an expanding bound parameter to name them when a statement over
+                the relations is run, for a statement that is built once and run many times.
+            invocation_id: If given, the only invocation of the ``invocations`` relation.
+        """
         self._job_ids = job_ids
         self._invocation_id = invocation_id
         latest = (
@@ -251,6 +285,7 @@ class StatusQueries:
         overwrites = func.coalesce(context.active_overwrites, False)
         same = cache.c.request_cid == req.c.request_cid
         offered = cache.c.step_result_id.is_not(None)
+        equal_running = and_(same, current.c.state == "running")
         # The execution policy's judgement (see the module docstring), which displays name.
         target = case(
             (binding.c.step_result_id.is_not(None), "done"),
@@ -261,7 +296,7 @@ class StatusQueries:
                 "conflict",
             ),
             (~active_latest, "stopped"),
-            (and_(same, current.c.state == "running"), "running"),
+            (equal_running, "running"),
             else_="queued",
         )
         facts = (
@@ -269,7 +304,6 @@ class StatusQueries:
                 req.c.job_id,
                 req.c.cache_key,
                 req.c.requested_at,
-                active_latest.label("active_latest"),
                 bound.c.result_cid,
                 binding.c.step_result_id.label("bound_step_result_id"),
                 cache.c.step_result_id.label("offered_step_result_id"),
@@ -279,6 +313,7 @@ class StatusQueries:
                 failed.c.id.label("failed_attempt_id"),
                 failed.c.error.label("failure_error"),
                 entry_request.c.step_name.label("entry_step_name"),
+                func.coalesce(equal_running, False).label("equal_attempt_running"),
                 target.label("target_state"),
             )
             .select_from(
@@ -306,7 +341,10 @@ class StatusQueries:
                 f.target_state == "failed",
                 case((f.failure_error.is_not(None), "failed"), else_="stopped"),
             ),
-            (f.target_state == "ready", case((f.active_latest, "running"), else_="stopped")),
+            (f.target_state == "ready", "completed"),
+            # Stopped only because no job attempt is active: the attempt goes on computing the
+            # result, which the cache will offer.
+            (and_(f.target_state == "stopped", f.equal_attempt_running), "running"),
             else_=f.target_state,
         )
         display_attempt = case(
@@ -342,19 +380,22 @@ class StatusQueries:
     ) -> dict[str, StepStateRecord]:
         """The step relation's rows at the keys, in one query, by key; a key the jobs did not
         request is absent. For one job: rows of several jobs at one key would collide."""
-        assert len(self._job_ids) == 1, "step rows are keyed by cache key within one job"
+        job_ids = self._single_job()
         if not cache_keys:
             return {}
-        relation = self.steps
-        keys = cast(list(cache_keys), ARRAY(relation.c.cache_key.type))
-        rows = (await tx.execute(select(relation).where(relation.c.cache_key == any_(keys)))).all()
+        rows = (
+            await tx.execute(
+                _step_records_statement(),
+                {"status_job_ids": job_ids, "status_cache_keys": list(cache_keys)},
+            )
+        ).all()
         return {row.cache_key: self.step_record(row) for row in rows}
 
     async def named_step_records(self, tx: Transaction) -> list[tuple[StepStateRecord, str]]:
         """Every row of the step relation with the name of the step it runs, in request order, in
         one query: what a job's status shows for each of its steps. For one job, as
         :meth:`step_records`."""
-        assert len(self._job_ids) == 1, "step rows are keyed by cache key within one job"
+        self._single_job()
         relation = self.steps
         req = job_step_requests
         rows = (
@@ -383,7 +424,7 @@ class StatusQueries:
         Returns:
             One row for each key where the request of the job is in cache conflict.
         """
-        assert len(self._job_ids) == 1, "step rows are keyed by cache key within one job"
+        self._single_job()
         relation = self.steps
         rows = (
             await tx.execute(
@@ -393,6 +434,13 @@ class StatusQueries:
             )
         ).all()
         return [self.step_record(row) for row in rows]
+
+    def _single_job(self) -> list[JobID]:
+        """The one job whose step rows a reader keyed by cache key reads: rows of several jobs
+        at one key would collide."""
+        assert not isinstance(self._job_ids, BindParameter)
+        assert len(self._job_ids) == 1, "step rows are keyed by cache key within one job"
+        return list(self._job_ids)
 
     @staticmethod
     def step_record(row: Any) -> StepStateRecord:
@@ -415,16 +463,24 @@ class StatusQueries:
         """One row per spawn of the invocation (of one node, given ``node_id``): its key, its
         child invocation or step, result, display ``state``, and ``attempt_id``, the attempt whose
         timing and error describe it: a child's running or latest attempt (its latest even once
-        it completed), a step's displayed attempt (none while in conflict or queued)."""
+        it completed), a step's displayed attempt (none while in conflict or queued).
+
+        The result is what the spawn has to show: a child's result, a step's bound result, or,
+        for a step in ``ready``, the result an equal request left in the cache, which the job has
+        not taken yet. A step shows as ``completed`` with either: one that finished after the
+        workflow attempt waiting on it ended shows the result it produced."""
         child, step = self.invocations, self.steps
         parent = workflow_invocations.alias("spawn_parent")
+        offered = step_results.alias("offered_step_result")
         query = (
             select(
                 spawns.c.node_identity,
                 spawns.c.key,
                 child.c.pathname.label("child_pathname"),
                 spawns.c.step_cache_key,
-                func.coalesce(child.c.result_cid, step.c.result_cid).label("result_cid"),
+                func.coalesce(child.c.result_cid, step.c.result_cid, offered.c.result_cid).label(
+                    "result_cid"
+                ),
                 func.coalesce(child.c.display_state, step.c.display_state).label("state"),
                 func.coalesce(child.c.activity_attempt_id, step.c.display_attempt_id).label(
                     "attempt_id"
@@ -440,9 +496,28 @@ class StatusQueries:
                         step.c.job_id == parent.c.job_id,
                     ),
                 )
+                .outerjoin(
+                    offered,
+                    and_(
+                        step.c.target_state == "ready",
+                        offered.c.id == step.c.offered_step_result_id,
+                    ),
+                )
             )
             .where(spawns.c.invocation_id == invocation_id)
         )
         if node_id is not None:
             query = query.where(spawns.c.node_identity == node_id)
         return query
+
+
+@cache
+def _step_records_statement() -> Any:
+    """The statement of :meth:`StatusQueries.step_records`, with its job and its keys as
+    parameters. Built once for the process: every evaluator pass that judges a step runs it, and
+    building the step relation costs more than running it for a few keys."""
+    relation = StatusQueries(
+        bindparam("status_job_ids", expanding=True, type_=jobs.c.id.type)
+    ).steps
+    keys = cast(bindparam("status_cache_keys"), ARRAY(relation.c.cache_key.type))
+    return select(relation).where(relation.c.cache_key == any_(keys))

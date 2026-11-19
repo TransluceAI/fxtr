@@ -41,7 +41,7 @@ describe("the view bundle", () => {
     expect(bundle.renderers.map((r) => [r.slot.debugName, r.subjectType, r.id])).toEqual(
       rolloutRenderers.map((r) => [r.slot.debugName, r.subjectType, r.id]),
     );
-    const slots = new Set([fxtrView.EntityPanel, fxtrView.EntityInlineLink, fxtrView.EntityHoverPreview, fxtrView.InvocationPanel]);
+    const slots = new Set([fxtrView.EntityPanel, fxtrView.EntityInlineLink, fxtrView.EntityHoverPreview, fxtrView.InvocationPanel, fxtrView.PartialEntityPanel, fxtrView.PartialEntityInline]);
     expect(bundle.renderers.every((r) => slots.has(r.slot))).toBe(true);
   });
 });

@@ -7,6 +7,7 @@ from behaviors.types.cache_control import CacheControl
 from behaviors.types.json import JSONObject
 from behaviors.types.namespace import behaviors_type
 from fxtr.entity_defns.dataclass_bases import TaggedDataclass
+from fxtr.entity_defns.dynamic_data import DynamicData
 
 
 @dataclass(frozen=True)
@@ -28,78 +29,60 @@ class ContentText(TaggedDataclass, fxtr_type=behaviors_type("ContentText.v1")):
     type: Literal["text"] = "text"
 
 
-@dataclass(frozen=True)
-class ContentReasoning(TaggedDataclass, fxtr_type=behaviors_type("ContentReasoning.v1")):
-    """A direct (literal) reasoning trace, e.g. from an open-weight model.
+ReasoningForm = Literal["full", "summary", "redacted"]
+"""What a reasoning block's text is.
 
-    Corresponds to the `reasoning_content` field returned by OpenAI-compatible
-    servers such as sglang and vLLM, parsed from `<think>...</think>` spans in
-    the raw completion.
+- `full`: the model's own reasoning, e.g. `reasoning_content` from sglang or vLLM, OpenRouter's
+  `reasoning` and `reasoning.text` entries, or a Responses `reasoning` item's `content`.
+- `summary`: a provider-written summary of it, e.g. an Anthropic `thinking` block (summarized on
+  Claude 4+ models), a Responses reasoning `summary`, or a Gemini thought part (`thought: true`).
+  A reasoning item that came without a summary is a summary with empty text.
+- `redacted`: the provider withheld the reasoning (an Anthropic `redacted_thinking` block); the
+  text is empty.
+"""
+
+
+@dataclass(frozen=True)
+class ContentReasoning(
+    TaggedDataclass,
+    # Provisional version bump: see behaviors/types/namespace.py.
+    fxtr_type=behaviors_type("ContentReasoning.v2"),
+):
+    """Reasoning the model produced before its answer, and the provider state that continues it.
+
+    Providers that reason ask for some state back on the next request of a conversation: an
+    Anthropic thinking block's signature, an OpenAI reasoning item's encrypted content, a Gemini
+    thought signature, OpenRouter's `reasoning_details`. That state is `reasoning_state`, a tagged
+    value whose type names the provider format, so the vocabulary needs no change for a new one.
+    Each payload type is defined with the codec that produces it: behaviors' own in its dialect
+    modules, another codebase's in its own namespace (`com.example.SomeReasoningState.v1`).
+
+    Only the codec that owns a payload type reads it (with
+    `behaviors.implementations.dialects.codec_utils.own_reasoning_state`); to everything else it
+    is opaque. A model codec sends back only the states it recognizes. A harness-side codec
+    carries a state raw when its dialect is the state's own, and otherwise in an envelope in its
+    dialect's opaque slot, as JSON: a payload whose fields are not all JSON values (bytes, entity
+    ids) loses its state at a harness.
 
     Attributes:
-        text: The model's literal reasoning text.
+        text: The reasoning text, as `form` describes it (may be empty).
+        form: What the text is (see `ReasoningForm`).
+        reasoning_state: The provider state to send back with this block, or None if the
+            provider attached none.
     """
 
     text: str
+    form: ReasoningForm
+    reasoning_state: DynamicData | None = None
     type: Literal["reasoning"] = "reasoning"
 
 
 @dataclass(frozen=True)
-class ContentSummarizedReasoning(
-    TaggedDataclass, fxtr_type=behaviors_type("ContentSummarizedReasoning.v1")
+class ContentToolUse(
+    TaggedDataclass,
+    # Provisional version bump: see behaviors/types/namespace.py.
+    fxtr_type=behaviors_type("ContentToolUse.v2"),
 ):
-    """A summarized reasoning trace.
-
-    Some APIs return a summary of the model's reasoning rather than the literal
-    trace; this type makes that explicit. Corresponds to a `thinking` content
-    block in the Anthropic Messages API, which is summarized on Claude 4+ models
-    (https://platform.claude.com/docs/en/build-with-claude/extended-thinking),
-    to reasoning summaries in the OpenAI Responses API
-    (https://platform.openai.com/docs/guides/reasoning), and to thought summaries
-    (parts with `thought: true`) in the Gemini API
-    (https://ai.google.dev/gemini-api/docs/thinking).
-
-    A reasoning item may carry no summary text at all (summaries are
-    not always generated); that is still this type, with an empty `text`.
-
-    Attributes:
-        text: The summarized reasoning text (may be empty; see above).
-        signature: Opaque provider blob accompanying the reasoning, echoed
-            back verbatim when sending this content to the API in multi-turn
-            conversations: the `signature` field of an Anthropic `thinking`
-            block, a Gemini `thoughtSignature`, or OpenAI
-            `reasoning.encrypted_content` (the encrypted full reasoning,
-            returned when requested via `include`). None if the provider did
-            not attach one.
-    """
-
-    text: str
-    signature: str | None
-    type: Literal["summarized_reasoning"] = "summarized_reasoning"
-
-
-@dataclass(frozen=True)
-class ContentRedactedReasoning(
-    TaggedDataclass, fxtr_type=behaviors_type("ContentRedactedReasoning.v1")
-):
-    """Reasoning whose content the provider masked, returning only encrypted bytes.
-
-    Corresponds to a `redacted_thinking` content block in the Anthropic Messages
-    API (https://platform.claude.com/docs/en/build-with-claude/extended-thinking),
-    emitted for the small fraction of responses whose reasoning is flagged as
-    sensitive — no readable text or summary exists.
-
-    Attributes:
-        data: The encrypted reasoning payload, as returned by the API. Must be
-            passed back verbatim in multi-turn conversations.
-    """
-
-    data: str
-    type: Literal["redacted_reasoning"] = "redacted_reasoning"
-
-
-@dataclass(frozen=True)
-class ContentToolUse(TaggedDataclass, fxtr_type=behaviors_type("ContentToolUse.v1")):
     """A tool invocation requested by the model.
 
     This is the single representation of a tool call in this schema; provider
@@ -146,12 +129,18 @@ class ContentToolUse(TaggedDataclass, fxtr_type=behaviors_type("ContentToolUse.v
             arguments, if any; `input` is empty in that case. Always None for
             providers that deliver arguments as structured objects (Anthropic
             `input`, Gemini `args`).
+        namespace: The group the called tool was declared in, when it was
+            declared in one (OpenAI Responses `namespace` tools; see
+            `ToolParam.namespace`); None otherwise. A dialect without
+            namespaces leaves it None, and the group is recovered from the
+            request's tool declarations when the call is rendered back.
     """
 
     id: str
     name: str
     input: JSONObject
     parse_error: str | None
+    namespace: str | None = None
     type: Literal["tool_use"] = "tool_use"
 
 
@@ -168,13 +157,24 @@ class CacheableContentText(ContentText, fxtr_type=behaviors_type("CacheableConte
     cache_control: CacheControl | None = None
 
 
+@dataclass(frozen=True)
+class CacheableContentToolUse(
+    ContentToolUse, fxtr_type=behaviors_type("CacheableContentToolUse.v1")
+):
+    """A tool call that may carry a prompt-cache breakpoint.
+
+    In the Anthropic Messages API the breakpoint sits on the `tool_use` block itself. An agentic
+    caller that marks the last block of each recent turn (OpenCode, for one) lands it here
+    whenever an assistant turn is a bare tool call.
+
+    Attributes:
+        cache_control: The breakpoint, or None for a plain tool call.
+    """
+
+    cache_control: CacheControl | None = None
+
+
 TextContent = ContentText | CacheableContentText
 
 
-Content = (
-    TextContent
-    | ContentReasoning
-    | ContentSummarizedReasoning
-    | ContentRedactedReasoning
-    | ContentToolUse
-)
+Content = TextContent | ContentReasoning | ContentToolUse | CacheableContentToolUse

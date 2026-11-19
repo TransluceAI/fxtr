@@ -47,4 +47,15 @@ that someone _new_ would want to use to understand the _current_ state of the co
 
 Default to using `anyio`'s APIs for async instead of `asyncio`.
 
+Write docstrings in Google style. Give an `Args:` section whenever an argument is even slightly
+ambiguous, and `Raises:` and `Returns:` sections where they help. Write docstrings in ASD-STE100
+Simplified Technical English: short sentences, one statement in each sentence, the active voice,
+and plain words. For example, write "If the column is null in the database, this function sets
+it", not "a null column here is an update, made here".
+
 Default to using `uv run pytest -n auto` to run tests in parallel when running the full test suite.
+
+Alembic revisions: write a `downgrade()` that undoes the
+revision wherever that is possible, and test the round trip; where it is not possible, the
+`downgrade()` raises and says why. Each revision also leaves the tables usable by the previous
+release; the rules are in `fxtr/src/fxtr/runner/postgres/migrations/__init__.py`.

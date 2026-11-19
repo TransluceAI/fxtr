@@ -39,7 +39,7 @@ interface Props {
  * its invocation dims (`CardKeys`); for a node that was not run, its rows.
  *
  * The rows (on every dim of its output) and the invocations (on its invocation dims) are tables
- * ten a page. A chevron badge centred on the card's bottom border, shown while the card is
+ * ten a page. A chevron badge centered on the card's bottom border, shown while the card is
  * hovered, shows or hides the table's rows (`CardTableState.rowsShown`; shown until toggled); the
  * header row stays either way, so the key columns' headers slice the level with the rows hidden. A
  * table of several pages has a pager, and keeps a full page's height on its last page; a table of
@@ -95,7 +95,7 @@ export function CardTable(props: Props) {
   return <CardRows {...props} />
 }
 
-/** The badge centred on the card's bottom border, shown while the card is hovered, showing or
+/** The badge centered on the card's bottom border, shown while the card is hovered, showing or
  *  hiding the table's rows (or the keys' values). */
 function RowsToggle({ step }: { step: StepDoc }) {
   const { state, update } = useCardTableState(step)

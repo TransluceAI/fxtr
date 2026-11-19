@@ -5,7 +5,8 @@ from dataclasses import dataclass, field
 import pytest
 
 from behaviors.implementations.models.overrides import SamplingOverrides
-from behaviors.interfaces.model_apis import StreamingModelAPI
+from behaviors.interfaces.model_apis import StreamingModelAPI, describe
+from behaviors.types.dialect import Dialect
 from behaviors.types.failure import ModelCallFailure
 from behaviors.types.message import AssistantMessage
 from behaviors.types.response import (
@@ -72,8 +73,56 @@ async def test_reasoning_override_replaces_the_request_config() -> None:
     assert inner.seen[1].sampling.max_tokens == 7
 
 
+async def test_speed_override_pins_the_tier_and_leaves_the_rest() -> None:
+    inner = _RecordingModel()
+    api: StreamingModelAPI = SamplingOverrides(inner, speed="fast")
+    reasoning = ReasoningParams(budget_tokens=1024)
+    await api.generate(_request(SamplingParams(reasoning=reasoning, speed="standard")))
+    assert inner.seen[0].sampling.speed == "fast"
+    assert inner.seen[0].sampling.reasoning == reasoning
+
+
 async def test_no_override_passes_requests_through() -> None:
     inner = _RecordingModel()
     sampling = SamplingParams(reasoning=ReasoningParams(budget_tokens=1024))
     await SamplingOverrides(inner).generate(_request(sampling))
     assert inner.seen[0].sampling == sampling
+
+
+class _Described:
+    async def generate(self, request: ModelRequest) -> ModelResponse | ModelCallFailure:
+        raise NotImplementedError
+
+    async def generate_with_events(
+        self, request: ModelRequest, callback: StreamEventCallback
+    ) -> ModelResponse | ModelCallFailure:
+        raise NotImplementedError
+
+    @property
+    def model_id(self) -> str:
+        return "described-model"
+
+    @property
+    def dialect(self) -> Dialect:
+        return "openai_responses"
+
+
+class _Undescribed:
+    async def generate(self, request: ModelRequest) -> ModelResponse | ModelCallFailure:
+        raise NotImplementedError
+
+    async def generate_with_events(
+        self, request: ModelRequest, callback: StreamEventCallback
+    ) -> ModelResponse | ModelCallFailure:
+        raise NotImplementedError
+
+
+def test_describe_looks_through_overrides() -> None:
+    described = describe(SamplingOverrides(inner=SamplingOverrides(inner=_Described())))
+    assert described is not None
+    assert described.model_id == "described-model"
+    assert described.dialect == "openai_responses"
+
+
+def test_describe_is_none_for_an_undescribed_api() -> None:
+    assert describe(SamplingOverrides(inner=_Undescribed())) is None

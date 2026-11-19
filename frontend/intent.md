@@ -10,6 +10,9 @@ Hover preview cards should disappear when the cursor leaves the trigger even if 
 
 When a user interaction causes a panel to fetch new data, the loading state should not change the size of the panel. It's better to e.g. gray out the stale data while loading (dramatically enough that it isn't mistaken for fresh), rather than remove all the stale data and just show "loading". This avoids having the panel boundaries jump around.
 
+## UI text
+Use American English for UI text (e.g. center, not centre). Sentence case for all user-visible strings: buttons, titles, tooltips, aria-labels and placeholders.
+
 ## General design principles (not hard and fast rules—there are trade-offs)
 * The minimap/trace should help the user orient, show what they're looking at in the context of the experiment
 * j/k keyboard shortcuts should select next/previous item in the currently focused list
@@ -27,3 +30,11 @@ When a user interaction causes a panel to fetch new data, the loading state shou
 * General stuff for parameters
     * When the value is a short string (e.g. a dim key), show it in the chip in the panel header
     * When the value is not a short string (e.g. a selector), just show the name of the parameter and an x button to clear it.
+
+## Links
+* The URL contains the job, the level, the slice, and the panels (their addresses, view params included).
+* Use cases for links:
+    * Share link with a collaborator
+    * A coding agent can write a link to point the user to something
+* Views cannot save arbitrary state in the URL - only parameters get saved in the URL.
+* Switching jobs makes a new entry in browser history. Opening and closing panels, switching slice picks updates the existing entry in browser history to avoid clutter.

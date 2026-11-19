@@ -10,8 +10,11 @@ import pytest
 from fxtr.project.config import (
     DATABASE_URL_ENV_VAR,
     DEFAULT_STALE_AFTER,
+    LOCAL_CONFIG_FILENAME,
     ConfigError,
     ProjectNotFoundError,
+    RemoteConfig,
+    RemotesConfig,
     ViewsConfig,
     default_schema_name,
     find_project_root,
@@ -137,6 +140,11 @@ def test_no_database_is_an_error_naming_fxtr_init(tmp_path: Path) -> None:
         ('[project]\nname = "p"\n', LOCAL, "no \\[tool.fxtr\\] table"),
         (PYPROJECT, 'database_url = "x"\nschema = "Has-Caps"\n', "schema must be"),
         (PYPROJECT, 'database_url = "x"\nurl = "y"\n', "unknown setting"),
+        (
+            PYPROJECT,
+            'database_url = ""\n',
+            "database_url must be a database URL \\(must not be empty",
+        ),
         (PYPROJECT, "not toml = = =\n", "not valid TOML"),
         (PYPROJECT + "[tool.fxtr.views]\n", LOCAL, "package is required"),
         (
@@ -145,6 +153,24 @@ def test_no_database_is_an_error_naming_fxtr_init(tmp_path: Path) -> None:
             "relative to the project root",
         ),
         (PYPROJECT + '[tool.fxtr.views]\npackage = "v"\ndist = "d"\n', LOCAL, "unknown setting"),
+        (PYPROJECT, LOCAL + "remotes = 1\n", "remotes must be"),
+        (PYPROJECT, LOCAL + "default_remote = 1\n", "default_remote must be"),
+        (PYPROJECT, LOCAL + "[remotes]\nteam = 1\n", r"\[remotes\] in .*: team must be a table"),
+        (
+            PYPROJECT,
+            LOCAL + '[remotes.team]\nrepository = "r"\n',
+            "team needs a kind",
+        ),
+        (
+            PYPROJECT + "[tool.fxtr.remotes]\nteam = 1\n",
+            LOCAL,
+            r"\[tool.fxtr.remotes\] in .*: team must be a table",
+        ),
+        (
+            PYPROJECT + '[tool.fxtr.remotes.team]\nkind = "oci"\n',
+            LOCAL + '[remotes.team]\nkind = "oci"\n',
+            "'team' is configured in both",
+        ),
     ],
 )
 def test_malformed_configuration_is_refused(
@@ -153,6 +179,62 @@ def test_malformed_configuration_is_refused(
     root = a_project(tmp_path / "proj", pyproject=pyproject, local=local)
     with pytest.raises(ConfigError, match=message):
         load_project(root, env={})
+
+
+# ---- remotes ----
+
+
+def test_remotes_are_read_with_their_kind_and_the_default(tmp_path: Path) -> None:
+    local = (
+        LOCAL
+        + 'default_remote = "team"\n'
+        + '[remotes.team]\nkind = "oci"\nrepository = "ghcr.io/org/jobs"\n'
+        + '[remotes.mine]\nkind = "oci"\nrepository = "localhost:5000/jobs"\n'
+        + "insecure = true\n"
+    )
+    root = a_project(tmp_path / "proj", local=local).resolve()
+    project = load_project(root, env={})
+    assert project.remotes == RemotesConfig(
+        by_name={
+            "team": RemoteConfig(
+                "team", "oci", {"repository": "ghcr.io/org/jobs"}, root / "fxtr.local.toml"
+            ),
+            "mine": RemoteConfig(
+                "mine",
+                "oci",
+                {"repository": "localhost:5000/jobs", "insecure": True},
+                root / "fxtr.local.toml",
+            ),
+        },
+        default="team",
+    )
+    # Without the tables, a project has no remotes and no default.
+    plain = load_project(a_project(tmp_path / "plain"), env={})
+    assert plain.remotes == RemotesConfig()
+
+
+def test_committed_and_local_remotes_are_the_projects_remotes(tmp_path: Path) -> None:
+    """Every checkout has the remotes of pyproject.toml; fxtr.local.toml adds this machine's
+    own and can choose another default for this machine."""
+    pyproject = (
+        PYPROJECT
+        + 'default_remote = "team"\n'
+        + '[tool.fxtr.remotes.team]\nkind = "hub"\nurl = "https://hub.test"\n'
+    )
+    root = a_project(tmp_path / "proj", pyproject=pyproject).resolve()
+    shared = load_project(root, env={}).remotes
+    assert shared.default == "team"
+    (team,) = shared.by_name.values()
+    assert (team.file, team.local) == (root / "pyproject.toml", False)
+    assert team.where == f"[tool.fxtr.remotes.team] in {root / 'pyproject.toml'}"
+
+    local = LOCAL + 'default_remote = "mine"\n[remotes.mine]\nkind = "oci"\n'
+    (root / "fxtr.local.toml").write_text(local)
+    mine = load_project(root, env={}).remotes
+    assert list(mine.by_name) == ["team", "mine"]
+    assert mine.default == "mine"
+    assert mine.by_name["mine"].local
+    assert mine.by_name["mine"].where == f"[remotes.mine] in {root / 'fxtr.local.toml'}"
 
 
 # ---- the views table ----
@@ -194,6 +276,23 @@ def test_write_local_config_round_trips(tmp_path: Path) -> None:
     assert load_project(root, env={}).schema == "other"
 
 
+def test_write_local_config_keeps_the_rest_of_the_file(tmp_path: Path) -> None:
+    """``fxtr init --force`` replaces the database settings, not this machine's remotes."""
+    local = (
+        LOCAL
+        + 'schema = "old"\n'
+        + "# this machine's own registry\n"
+        + '[remotes.mine]\nkind = "oci"\nrepository = "localhost:5000/jobs"\n'
+    )
+    root = a_project(tmp_path / "proj", local=local)
+    write_local_config(root, database_url="postgresql+asyncpg://u:p@elsewhere/db")
+    project = load_project(root, env={})
+    assert project.database_url == "postgresql+asyncpg://u:p@elsewhere/db"
+    assert project.schema == "fxtr_my_project"
+    assert list(project.remotes.by_name) == ["mine"]
+    assert "# this machine's own registry" in (root / "fxtr.local.toml").read_text()
+
+
 def test_load_env_file_sets_nonempty_variables_over_the_environment(tmp_path: Path) -> None:
     (tmp_path / ".env").write_text(
         "# a comment\n"
@@ -219,3 +318,9 @@ def test_load_env_file_sets_nonempty_variables_over_the_environment(tmp_path: Pa
 def test_load_env_file_without_a_file_sets_nothing(tmp_path: Path) -> None:
     env: dict[str, str] = {}
     assert load_env_file(tmp_path, env=env) == {} and env == {}
+
+
+def test_write_local_config_replaces_a_file_it_cannot_read(tmp_path: Path) -> None:
+    (tmp_path / LOCAL_CONFIG_FILENAME).write_text("not [ toml")
+    path = write_local_config(tmp_path, database_url="sqlite:///x")
+    assert 'database_url = "sqlite:///x"' in path.read_text()

@@ -141,6 +141,102 @@ async def test_the_pin_survives_rewriting_the_original_commit(repo: Path) -> Non
     assert git("cat-file", "-t", pin.commit, cwd=repo) == "commit"
 
 
+# ---- pin refs on a git remote ----
+
+
+def a_receiving_repo(tmp_path: Path, remote: Path) -> Path:
+    """Another git repository holding the same project, with ``remote`` as its ``origin``, and
+    none of the pinned commits."""
+    root = tmp_path / "other"
+    (root / "proj").mkdir(parents=True)
+    (root / "proj" / "pyproject.toml").write_text(PYPROJECT)
+    git("init", "-q", cwd=root)
+    git("add", "-A", cwd=root)
+    git("commit", "-qm", "elsewhere", cwd=root)
+    git("remote", "add", "origin", str(remote), cwd=root)
+    return root
+
+
+async def a_pin_travels(tmp_path: Path, here: Project, commit: str, remote: Path) -> None:
+    """Push ``commit`` from ``here`` to ``remote`` under fxtr's pin ref, and fetch it into
+    another repository that lacks it."""
+    env = LocalEnvironment()
+    await env.push_commits(here, "origin", [commit])
+    assert git("rev-parse", pin_ref(commit), cwd=remote) == commit
+    await env.push_commits(here, "origin", [commit])  # pushing again changes nothing
+    there = project_in(a_receiving_repo(tmp_path, remote))
+    assert await env.missing_commits(there, [commit]) == [commit]
+    await env.fetch_commits(there, "origin", [commit])
+    assert await env.missing_commits(there, [commit]) == []
+    assert git("rev-parse", pin_ref(commit), cwd=there.root) == commit
+    with pytest.raises(ProjectError, match="fetch"):
+        await env.fetch_commits(there, "origin", ["0" * 40])
+
+
+@needs_git
+@pytest.mark.parametrize("winner_writes", ["the same commit", "another commit"])
+async def test_a_push_that_loses_a_race_for_its_pin_ref(
+    repo: Path, tmp_path: Path, winner_writes: str
+) -> None:
+    """Two pushes of one commit race for its pin ref: the remote writes the ref for one, and
+    refuses the other ("reference already exists"). The losing push succeeds if the ref holds
+    its commit, and fails if the ref holds another commit.
+
+    The remote's pre-receive hook plays the winning push: it writes the ref after the remote
+    advertised its refs, and before the remote writes them for this push."""
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", str(remote), cwd=tmp_path)
+    git("remote", "add", "origin", str(remote), cwd=repo)
+    env = LocalEnvironment()
+    here = project_in(repo)
+    commit = (await env.pin_code(here, allow_staged=False)).commit
+    other = git("commit-tree", f"{commit}^{{tree}}", "-p", commit, "-m", "other", cwd=repo)
+    # The hook writes refs to objects the remote has outside the push's quarantine.
+    git("push", "-q", "origin", f"{commit}:refs/heads/main", f"{other}:refs/heads/other", cwd=repo)
+    target = '"$new"' if winner_writes == "the same commit" else other
+    hook = remote / "hooks" / "pre-receive"
+    hook.write_text(
+        "#!/bin/sh\nunset GIT_QUARANTINE_PATH\n"
+        f'while read old new ref; do git update-ref "$ref" {target}; done\n'
+    )
+    hook.chmod(0o755)
+    if winner_writes == "the same commit":
+        await env.push_commits(here, "origin", [commit])
+    else:
+        with pytest.raises(ProjectError, match="push"):
+            await env.push_commits(here, "origin", [commit])
+    expected = commit if winner_writes == "the same commit" else other
+    assert git("rev-parse", pin_ref(commit), cwd=remote) == expected
+
+
+@needs_git
+async def test_a_failed_pin_push_reports_push_when_the_remote_cannot_be_inspected(
+    repo: Path, tmp_path: Path
+) -> None:
+    git("remote", "add", "origin", str(tmp_path / "unavailable.git"), cwd=repo)
+    environment = LocalEnvironment()
+    project = project_in(repo)
+    commit = (await environment.pin_code(project, allow_staged=False)).commit
+    with pytest.raises(ProjectError) as failure:
+        await environment.push_commits(project, "origin", [commit])
+    assert "git push origin" in str(failure.value)
+    assert "git ls-remote" not in str(failure.value)
+
+
+@needs_git
+async def test_an_ephemeral_pin_travels_through_a_git_remote(repo: Path, tmp_path: Path) -> None:
+    """A commit made from staged changes exists only under fxtr's pin ref; pushing the commit
+    itself takes it to the remote all the same."""
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", str(remote), cwd=tmp_path)
+    git("remote", "add", "origin", str(remote), cwd=repo)
+    (repo / "proj" / "code.py").write_text("x = 2\n")
+    git("add", "-A", cwd=repo)
+    pin = await LocalEnvironment().pin_code(project_in(repo), allow_staged=True)
+    assert pin.ephemeral
+    await a_pin_travels(tmp_path, project_in(repo), pin.commit, remote)
+
+
 @needs_git
 async def test_a_project_outside_a_repository_cannot_be_pinned(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
@@ -192,6 +288,41 @@ async def test_a_synced_project_run_from_its_venv_has_no_problems(
     in_venv(monkeypatch, uv_project / ".venv")
     env = LocalEnvironment()
     assert await env.check_synced(env.locate_project(uv_project)) == []
+
+
+@needs_uv
+async def test_refreshing_the_environment_answers_an_edit_to_the_projects_settings(
+    tmp_path: Path,
+) -> None:
+    """uv reinstalls a project that is a package when its ``pyproject.toml`` changes, so without
+    the refresh, a process that does not start with ``uv run`` is refused its next launch."""
+    root = tmp_path / "package"
+    (root / "src" / "package").mkdir(parents=True)
+    (root / "src" / "package" / "__init__.py").touch()
+    pyproject = root / "pyproject.toml"
+    pyproject.write_text(
+        '[project]\nname = "package"\nversion = "0.1.0"\nrequires-python = ">=3.12"\n'
+        '[build-system]\nrequires = ["hatchling"]\nbuild-backend = "hatchling.build"\n'
+        "[tool.fxtr]\n"
+    )
+    sh("uv", "sync", cwd=root)
+    lock = (root / "uv.lock").read_text()
+    pyproject.write_text(pyproject.read_text() + 'default_remote = "hub"\n')
+    is_current = ("uv", "sync", "--check")
+    assert subprocess.run(is_current, cwd=root, capture_output=True, check=False).returncode == 1
+
+    await LocalEnvironment().refresh_environment(root)
+
+    assert subprocess.run(is_current, cwd=root, capture_output=True, check=False).returncode == 0
+    assert (root / "uv.lock").read_text() == lock
+
+
+@needs_uv
+async def test_refreshing_a_project_with_no_lockfile_changes_nothing(tmp_path: Path) -> None:
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\nversion = "0.1.0"\n')
+    with pytest.raises(ProjectError, match="uv.lock"):
+        await LocalEnvironment().refresh_environment(tmp_path)
+    assert [path.name for path in tmp_path.iterdir()] == ["pyproject.toml"]
 
 
 @needs_uv
@@ -395,3 +526,44 @@ async def test_a_merge_or_conflicted_working_copy_is_refused(jj_repo: Path) -> N
     jj("new", cwd=jj_repo)
     with pytest.raises(PinRefusedError, match="unresolved conflicts"):
         await env.pin_code(project_in(jj_repo), allow_staged=True)
+
+
+@needs_jj
+async def test_a_pin_travels_from_a_jj_repository(jj_repo: Path, tmp_path: Path) -> None:
+    remote = tmp_path / "remote.git"
+    git("init", "-q", "--bare", str(remote), cwd=tmp_path)
+    jj("git", "remote", "add", "origin", str(remote), cwd=jj_repo)
+    pin = await LocalEnvironment().pin_code(project_in(jj_repo), allow_staged=False)
+    await a_pin_travels(tmp_path, project_in(jj_repo), pin.commit, remote)
+
+
+@needs_git
+async def test_repository_binding_uses_the_project_directory_in_git_worktrees(
+    repo: Path, tmp_path: Path
+) -> None:
+    git("remote", "add", "origin", "git@github.com:acme/research.git", cwd=repo)
+    environment = LocalEnvironment()
+    assert await environment.repository_binding(project_in(repo).root, "origin") == (
+        "git@github.com:acme/research.git",
+        "proj",
+    )
+    checkout = tmp_path / "linked"
+    git("worktree", "add", "-b", "other", str(checkout), cwd=repo)
+    assert await environment.repository_binding(project_in(checkout).root, "origin") == (
+        "git@github.com:acme/research.git",
+        "proj",
+    )
+
+
+async def test_a_git_remote_that_git_would_read_as_an_option_is_refused(repo: Path) -> None:
+    """A project's committed configuration names the git remote, and ``--upload-pack=...`` would
+    run a command on whoever pulls in that checkout."""
+    environment = LocalEnvironment()
+    project = project_in(repo)
+    remote = "--upload-pack=touch ran"
+    with pytest.raises(ProjectError, match="cannot be a git remote"):
+        await environment.fetch_commits(project, remote, ["a" * 40])
+    with pytest.raises(ProjectError, match="cannot be a git remote"):
+        await environment.push_commits(project, remote, ["a" * 40])
+    with pytest.raises(ProjectError, match="cannot be a git remote"):
+        await environment.repository_binding(repo, remote)

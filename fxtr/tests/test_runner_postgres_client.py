@@ -34,11 +34,13 @@ from fxtr.experiment.workflows import WorkflowContext, workflow
 from fxtr.project.client import (
     JobNotFinishedError,
     JobNotFoundError,
+    JobRunningError,
     ProjectClientError,
 )
 from fxtr.project.code_version import RepoSource
 from fxtr.project.config import write_local_config
 from fxtr.project.environment import Problem
+from fxtr.project.job_record import read_record
 
 pytest.importorskip("sqlalchemy")
 
@@ -50,6 +52,8 @@ from fxtr.runner.postgres.client import (  # noqa: E402
     LocalProjectClient,
 )
 from fxtr.runner.postgres.database import Database  # noqa: E402
+from fxtr.runner.postgres.debug_web.reader import ViewerReader  # noqa: E402
+from fxtr.runner.postgres.debug_web.scope import JobScope  # noqa: E402
 from fxtr.runner.postgres.runner import JobEvictedError  # noqa: E402
 
 pytestmark = pytest.mark.anyio
@@ -371,6 +375,7 @@ async def test_a_hard_cancel_evicts_the_run_and_the_job_can_be_resumed(
 
 async def test_a_soft_cancel_lets_running_steps_finish_into_the_cache(
     database: Database,
+    tmp_path: Path,
 ) -> None:
     global GATE
     GATE = anyio.Event()
@@ -378,12 +383,19 @@ async def test_a_soft_cancel_lets_running_steps_finish_into_the_cache(
         handle = await client.submit(double_each, {"ids": IDS})
         await wait_until(lambda: step_is_running(client))
         await handle.cancel()
-        GATE.set()
+        path = tmp_path / "cancelled.car"
+        try:
+            with pytest.raises(JobRunningError):
+                await client.export_job(handle.job_id, path)
+        finally:
+            GATE.set()
         status = await handle.wait()
         # The steps completed (their results are cached), but the job took nothing more: stopped.
         assert status.state == "stopped" and status.reason == "cancelled"
         entries = await client.list_cache_entries()
         assert {(e.step_name, e.state) for e in entries} == {(double.name, "completed")}
+        await client.export_job(handle.job_id, path)
+        assert read_record(path).record.execution is not None
         resumed = await client.resume(handle.job_id)
         assert (await resumed.wait()).state == "succeeded"
         assert await resumed.result() == Array.from_items([((1,), 20), ((2,), 40)], IDS_TYPE)
@@ -611,6 +623,22 @@ async def test_many_key_reads_and_writes_split_their_keys_into_batches(
         assert sorted(s.description.logs[0].message for s in steps if s is not None) == [
             f"squaring {i}" for i in range(5)
         ]
+
+
+async def test_a_reader_with_one_connection_describes_an_invocation(database: Database) -> None:
+    """The hub's viewer queries read through a pool of one connection: describing an invocation
+    must not open a second transaction while its first is open, or it waits forever."""
+    ids, _ = squares(3)
+    async with a_client(database, square_each, square) as client:
+        handle = await client.submit(square_each, {"ids": ids}, root="first")
+        assert (await handle.wait()).state == "succeeded"
+    async with Database(
+        database.url, pg_schema=database.pg_schema, pool_size=1, max_overflow=0
+    ) as one:
+        reader = ViewerReader(one, stale_after=timedelta(minutes=1), scope=JobScope.all())
+        with anyio.fail_after(5):
+            detail = await reader.jobs.describe_invocation(handle.job_id, "first")
+    assert detail is not None and len(detail.step_results) == 3
 
 
 # ---- from_project ----

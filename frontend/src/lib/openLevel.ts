@@ -1,7 +1,7 @@
 import { createContext, useContext } from 'react'
 
 /**
- * How a view shows a workflow invocation's level in the trace (the centre), by its pathname: what
+ * How a view shows a workflow invocation's level in the trace (the center), by its pathname: what
  * a workflow invocation's panel opens, and what double-clicking a workflow's row in a card's
  * invocations table does. `shown` is the pathname of the level on screen. Provided by `JobView`.
  */

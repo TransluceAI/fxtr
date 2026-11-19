@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "fxtr"
-version = "0.2.0a0"
+version = "0.2.0a1"
 description = "A configuration and orchestration system for modular, reproducible experiments"
 # Before 3.12.4, typing.get_type_hints cannot resolve a PEP 695 class's type parameters under
 # `from __future__ import annotations`, which the entity converter relies on.
@@ -20,6 +20,9 @@ dependencies = [
     "cattrs>=26.1.0",
     "pyarrow>=20.0.0",
     "python-dotenv>=1.0",
+    # Writes the remotes `fxtr remote` manages into pyproject.toml, keeping its
+    # comments and layout; the standard library reads TOML but cannot write it.
+    "tomlkit>=0.13",
 ]
 
 [project.scripts]
@@ -30,10 +33,10 @@ fxtr = "fxtr.project.cli:entry"
 runner = [
     "sqlalchemy[asyncio]>=2.0.52",
     "asyncpg>=0.30",
+    "alembic>=1.14",
 ]
 
-# The isolated, removable debug viewer's GraphQL server (fxtr.runner.postgres.debug_web).
-# Not depended on by anything else in the package; delete it and this extra to remove the viewer.
+# The GraphQL server for local and hosted experiment viewers (fxtr.runner.postgres.debug_web).
 debug-web = [
     "fxtr[runner]",
     "ariadne>=0.23",
@@ -43,6 +46,12 @@ debug-web = [
     "uvicorn[standard]>=0.30",
     # `fxtr view` rebuilds the project's view bundle as its sources change.
     "watchfiles>=0.21",
+]
+
+# Remotes of the oci kind (fxtr.project.remotes.oci): pushing and pulling
+# jobs to and from an OCI registry, through oras-py.
+oci = [
+    "oras>=0.2.43",
 ]
 
 [tool.hatch.build.hooks.custom]

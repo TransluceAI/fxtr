@@ -116,6 +116,16 @@ class SpawnView(TypedDict):
     state: DisplayState
 
 
+class JobInput(TypedDict):
+    """One argument of a job's root workflow: the array given, whether it is a single value, and
+    that value as text when it is a short scalar."""
+
+    name: str
+    cid: str
+    single: bool
+    text: str | None
+
+
 class JobSummary(TypedDict):
     id: str
     workflowName: str
@@ -123,6 +133,20 @@ class JobSummary(TypedDict):
     createdAt: datetime
     state: Literal["running", "succeeded", "stopped"]
     failed: bool
+    failedSteps: list[str]
+    inputs: list[JobInput]
+    changedInputs: list[str]
+    """The inputs given a different array than in the workflow's preceding job."""
+    latest: bool
+    """Whether no job of its workflow was created after it."""
+
+
+class NodeReuse(TypedDict):
+    """How many step results under a root run node the job ran itself and how many it reused."""
+
+    identity: str
+    ran: int
+    reused: int
 
 
 class JobPage(TypedDict):

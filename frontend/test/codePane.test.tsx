@@ -96,7 +96,6 @@ it('gives the workflow on screen its docs and a code chip naming the commit', as
     result: null,
     resultCid: null,
     glyph: glyphOf('done'),
-    live: false,
     awaiting: null,
   } satisfies Level
   const {host, root} = await mount(

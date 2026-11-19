@@ -14,7 +14,95 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   The modal contains keyboard focus and events while open, then restores the previous focus.
   `test/keyboardShortcuts.test.tsx` covers global access, dismissal, and context isolation.
 - **A job** (chosen in the picker above the minimap; the selection is kept in the URL hash) is one
-  request to run a root workflow. Its root invocation is the first **level**.
+  request to run a root workflow. An **invocation** is one call of a step or a workflow within a
+  job. The root workflow's invocation is the first **level**.
+- **The job picker** (`JobPicker`) is the current job's name; it opens a popover of the jobs, and
+  beside them, once the pointer rests on a job, a preview of it. A search box and a `By commit` |
+  `Recent` | `Starred` switch (kept in `localStorage`) head the left side. The search box
+  (`JobSearch`) also narrows the jobs to one of the project's workflows (`jobWorkflows`): clicking
+  it or typing in it lists the workflows matching what is typed, and the one chosen shows in the
+  box until its `×` (or Backspace in the empty box) widens the jobs again. The recent list is
+  narrowed to a workflow on the server (`jobSummaries(workflow:)`). Under them come the jobs, in
+  one of three tabs:
+  - **By commit** (`JobCommitsView`): the commits the jobs were launched at, newest first, each
+    with its short hash and message, and its jobs under it. Only commits with a job are listed. A
+    graph runs down the left
+    edge (`lib/commitGraph.ts`): a dot per commit and lines to its parents among the commits
+    listed, coloured by branch (each branch but the default a `--branch-<n>` colour, which avoids
+    the hues that mean something in the picker, and the default branch and a commit on no branch
+    in ink). With one branch the graph is one straight line. A line over the commits
+    (`Branches`) names each branch with a job the search and workflow keep, in its colour;
+    clicking one keeps only its commits, and clicking it again or `Clear` keeps every commit
+    again. Switching to another tab drops the branch chosen. For a project inside a larger
+    repository, only commits that changed the project's directory are listed, and the preview of a
+    job shown under one of them names the commit it launched at (`launchedAt`). Where the backend placed a job is in
+    `debug_web/git_history.py`; a job launched with staged changes says `Uncommitted changes`,
+    and a line at the foot counts the jobs whose commits the repository does not have. A search
+    keeps the jobs it matches (workflow, id, starred name) and every job of a commit it matches
+    (message, hash, branch). A commit's own
+    line is a heading over its jobs, so it is never taken for a job: grey, with no hover, not
+    focusable or clickable, set off by a gap above it (inside the commit, so the graph runs through
+    it unbroken), and led by its short hash, which a dashed line joins to its dot across the
+    graph. If every job's commit is missing locally, opening the picker defaults to Recent;
+    selecting By commit still shows the missing-commits explanation.
+  - **Recent**: every job, newest first, a page at a time (`Show more`), searched on the server.
+  - **Starred** (`StarredJobs` in `JobPicker.tsx`): the starred jobs, newest star first, narrowed
+    by the search (workflow, id, starred name) and the workflow chosen. Failed reads offer retry;
+    saved stars whose jobs are absent from this database are counted as unavailable. Saving a
+    star or name, or removing a star, reports failures with a toast and rereads the saved stars.
+
+  A backend with no commit view (no git repository, a hosted viewer) has no `By commit` tab, and
+  one that keeps no starred jobs no stars and no `Starred` tab; with one tab left there is no
+  switch.
+
+  A job's row (`JobRow`) is its workflow's name, then how it went: nothing for a job that
+  succeeded, a spinner while it runs, `Failed in <step>` once any of it failed (the step's short
+  name, `failureText`), or `Stopped` for one stopped without failing. Then the name it was
+  starred under, in gold, a star button (shown on hover, filled once starred), and when it was
+  launched in words (`formatRelative`). Clicking the gold name, or starring the job, turns the
+  name into a box (Enter or blur keeps the name, Escape cancels without closing the picker); a
+  starred job with no name shows a faint `Name` there on hover. A click, Enter on
+  the row, or Enter in the search box (the first job listed) switches to the job, handing the page
+  the job's summary (`onSelect`) so it need not read it again.
+  Rows and commit graph segments are memoized; the picker gives rows stable callbacks, so moving
+  the preview rerenders only the rows whose preview highlight changes.
+
+  `jobPickerQueries.ts` observes the commit list's rendered rows with an `IntersectionObserver`
+  rooted in its scroller, including a 200px buffer above and below. Filters and refreshed history
+  replace the observed row set. Summaries load in batches of at most 50 for the current nearby
+  rows; scrolling preserves the batch in flight and changes what the next batch requests. A
+  preview gets a separate single-job request, so a slow batch cannot hold it up. Both reads fill
+  one cache, kept across scrolls and picker openings; the first successful response for a job in
+  an opening wins, and reopening revalidates demanded entries. Closing cancels requests, and a
+  failed read offers retry. Resolved ids distinguish absent jobs from pending reads.
+  Recent already gets summaries in its pages; Starred loads its saved
+  ids only while that tab is shown, since it needs their summaries to name and filter the rows.
+
+  The preview is hidden until the pointer rests on a job for `PREVIEW_DELAY`; it then follows the
+  pointer onto each job at once (blank while a job's summary loads, never showing an earlier
+  job; a commit's line leaves it as it is), and hides when the pointer leaves the picker (`useHoverPreview` in `JobPicker.tsx`). The
+  up and down arrows (and j and k outside a text box) preview and focus the job above or below,
+  skipping commits, and Space previews the focused row. The list's width is fixed, so the
+  preview opening never moves its rows: the popover grows rightward. A window narrower than
+  `PREVIEW_MIN_WIDTH` shows no preview. The job the page shows is filled blue, and the row previewed grey; the menu's
+  trigger shows a history icon when a newer job of its workflow exists (`latest`). A commit's
+  line has its hash, subject, and branch, and no time.
+  A row short of room shortens its failure first, then its name.
+  The view switch sits last in the controls, so the filters button growing never moves it. The preview (`JobPreview`) has
+  nothing to click but its flowchart (opening, starring, and naming a job are the list's): the
+  job's id and its time, each on a line of its own, its state on a line of its own after its glyph (a check once it succeeded; `Failed in <step>` for a failed job), the root workflow's run nodes drawn small and without text (`compactLayout`: the flowchart's
+  layout with every card at its smallest, scaled across and given short rows). Steps that read
+  nothing go in the row above their consumers (`layoutLevel`'s `sideInputs: false`), so every
+  edge runs downward. A card is red when any of the step failed, dark when the job ran some of
+  it, and blank (transparent, with a faint outline) when it ran none of it (all reused, or never reached); an edge to or from a blank
+  card is faint. Hovering a card names the step and says what happened to it (`stepSummary`); clicking
+  it opens the job at that step, through a link naming the job and the step's card. The preview
+  reads the root overview through the live store (`api/live.ts`'s `readOverview`), revalidating
+  existing entries and publishing the result there, so the job's view, opened from the preview,
+  finds it loaded. Below the flowchart (so the flowchart is in the
+  same place for every job), under `Inputs changed since the previous job`, is a chip for each
+  input given a different array than in the previous job of its workflow (`changedInputs`; with
+  the value for a short single value).
 - **A level** is one workflow invocation's DAG. A header at the top gives the invocation's name,
   pathname, state, timing, attempt count and error, then one card per node that was registered or
   run: `input` and `source_array` nodes are `source` cards, `run_step` nodes `step` cards, and
@@ -37,8 +125,14 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   takes: neither selecting nor hovering a card outlines it. A card with no function and no arguments (a registered array) omits the docs/args block.
 - **The return card** closes the level: `returned` followed by the expression the workflow
   returned, whose chips select the cards they name. When a derived node was returned, no card holds
-  its value, so the return card's head has an `open` button opening its panel.
-- **A run's invocations** are its spawns: one per mapped key and replica key. The **slice** is
+  its value, so the return card's head has an `open` button opening its panel. Until the level has
+  a result the card says why (`pendingReason`): the body is running; it returned and the level
+  waits on nodes still being computed, or is finishing; or, once nothing in the level is live, the
+  invocation did not return, with its state.
+- **A run's invocations** are the calls a run node makes: one for each key of the dims it maps
+  over, repeated for each replica key (`replicas=`; see
+  `docs/fxtr/concepts/arrays-and-parallel-computations.mdx`). The code calls each one a
+  **spawn** (`Spawn` in fxtr-view). The **slice** is
   one per level: the value picked for each dim sliced on, keyed by dim name (`lib/levelState.ts`),
   named after fxtr's `Array.sel` (the slice at the given dim values, with those dims removed).
   Picking `model=X` in any card or the slice panel slices every card and panel with a `model` dim
@@ -96,7 +190,7 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
 
   While a table has more than one page it has a pager, and every page is ten rows tall (the last
   one padded), so paging does not move the cards below; a table of one page (fewer rows, or
-  filtered down to them) has no pager and is as tall as its rows. A **chevron badge** centred on
+  filtered down to them) has no pager and is as tall as its rows. A **chevron badge** centered on
   the card's bottom border, shown while the card is hovered (down to show, up to hide), shows or
   hides a table's rows, or in `keys` the value lists under the columns' heads (shown until toggled); the header row stays either way, so the key columns'
   headers slice the level with the rows hidden (no column then draws sort or filter controls), and
@@ -133,7 +227,9 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   the table and at least 100px (the same in every card, since they are as wide as each other): a
   key column is one unit, so a card's key block counts its dims against every other card's; a
   value column is as wide as its header and cells need (between 60px and three units), measured
-  once from the first page with rows so paging does not move it. Room left over is shared by the
+  once from the first page with rows that hold values (a failed invocation's row, and a running
+  one's showing its preview, have one cell across the value columns and are left out) so paging
+  does not move it. Room left over is shared by the
   value columns still cut off, or else left empty at the right end; a wider table scrolls
   sideways on its own. A column resizes freely, snapping to its default width within 14px of it,
   and while one wider than its default is dragged a dashed line marks that width
@@ -158,17 +254,21 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   run the dim keys the invocations of (the spawn table's `keyPage`), else the first node whose
   output has it (`outputDimValues`, a scan of its arrays). Values the level's other picks rule out
   on that node are dimmed but can still be chosen. A click outside, Escape, or the button closes it.
-- **The views button.** A step's views of the project's own (its function's `InvocationPanel`
-  renderers, `isProjectRenderer`) are opened by the button in the card's head, after its status
-  (`ViewsButton` in `PanelButton.tsx`): the view's name after the **custom-view icon** (lucide `Component`,
-  `CUSTOM_VIEW_ICON`, also in the view dropdown's count badge) for one; for several, two segments,
-  the current view's (the first until another is chosen) and one with their count and a chevron,
-  whose menu lists them all, choosing one opening it and making it the current view; and none for
-  a step without any or that was not run. Each opens the node's panel at `<view>(/…)` from the
-  trace; click it, or drag it into the columns. A segment is lit while a panel shows the node through a
-  view it stands for (`viewsShownOf`), not through `invocation`, its output, or a view declared
-  within another. The node's other panels open from its rows. Full output is the panel with no key
-  picked.
+- **The views button.** The user opens a step's custom views from the views button in the card's head, after the status, by clicking a
+  view or dragging one into the columns. A view opens the step's panel at `<view>(/…)`. A step
+  with no custom views, or one that was not run, has no button.
+
+  The button lists the project's own views for the step (`isProjectRenderer`). To add one,
+  register an `InvocationPanel` renderer for the step's function.
+
+  For how the button looks with one view or several, read `ViewsButton` in `PanelButton.tsx`.
+  For when a part of the button is lit (we do this to show the user that the view is already
+  open), read `viewsShownOf` in `panes/useColumns.ts`. The
+  button's icon is `CUSTOM_VIEW_ICON` (`lib/kindIcons.ts`), which the view dropdown's count
+  badge shares.
+
+  The step's other panels open from the rows of the step's table, and the panel with no key
+  picked shows the step's full output.
 - **Breadcrumbs and views.** The breadcrumbs above the minimap list every level opened, root first, with the one on screen in a blue box. Clicking a
   higher breadcrumb shows that level and keeps the deeper breadcrumbs for a quick return; they are
   dropped when a different child is opened from above them, or when a breadcrumb is double-clicked.
@@ -236,24 +336,16 @@ system are in the parent overview, `frontend/CODE_OVERVIEW.md`.
   invocation renderers are chosen from the step card's views button, and a panel showing a field
   path into the output (`.output…`) has no dropdown.
 
-  `invocation` shows the one invocation the bindings pick out (`OneInvocation`, through
-  `DefaultInvocationPanel`), top to bottom: a status line (`completed in 7s · <when>`) with its
-  provenance under it as fine print (commit, source link, the job it was reused from, cache key);
-  its inputs as folded rows (name, type, how many rows it was given), each expanding to the rows
-  of its source node at the invocation's keys (`.inputs.<name>`; an input that is an expression shows
-  its entity); and last its output, inline, as `.output`
-  at the panel's params shows it (a value, or a table whose rows open `.output` at their keys), a
-  sketch of its schema's fields while it is queued or running, or its error when it failed. When the
-  panel binds dims produced inside the invocation, the output says which of its rows those leave
-  (`1 of 2 rows · sample=0`) with **Show all**, which leaves them out of the panel's params
-  (pinning the panel when it inherits them). The panel has no view dropdown or info button. With no view in its address, a panel shows the
-  default (`defaultPanelView`): the step's first invocation
-  renderer of the project's own, else the output type's first renderer of the project's own, else
-  `output (raw)`; the viewer's default renderers never count. An output type's renderers are known once
-  its first row's type is, so an entity output can switch to its renderer as that loads. Above an output the unfinished invocations are listed (each
-  a button slicing at its key); a slice at one unfinished invocation shows its state and log lines
-  instead (`PendingInvocation`). The head of any other view also has the `InvocationInfo` button when the slice
-  leaves one invocation. In flowchart mode, clicking a node opens its panel.
+  `invocation` shows the one invocation the panel's bindings pick out (`OneInvocation`, through
+  `DefaultInvocationPanel`): its status and provenance, its inputs as rows that expand to their
+  values, and its output last. `DefaultInvocationPanel`'s docstring lists what each part shows.
+  When the bindings pick out rows produced inside the invocation, **Show all** removes them from
+  the panel's params.
+
+  With no view in its address, a panel shows the default (`defaultPanelView`). That is a
+  renderer of the project's own if there is one, for the step and then for the output's type.
+  Otherwise it is `output (raw)`. The other views also list the unfinished invocations above the
+  output (`PendingInvocation`). In flowchart mode, clicking a node opens its panel.
 - **Rows** of a run card are the rows every invocation produced, prefixed with the invocation's
   key, which is how the runner assembles a run node's value. Cells are decoded from the DRISL bytes
   the backend serves, so entity ids are `CID`s and bytes are `Uint8Array`s. Non-entity values
@@ -282,8 +374,18 @@ components/
 ├── PagedTable.tsx        current output pages and global filter/sort; shownPage, shared with
 │                        CardTable
 ├── Pagination.tsx        editable row range, page snapping, and first/previous/next/last arrows
-├── JobPicker.tsx        the job name + chevron above the minimap; searchable dropdown; each
-│                        job led by its state glyph; opening it refetches the list
+├── JobPicker.tsx        the job name + chevron above the minimap, opening the picker: the
+│                        by commit | recent switch, the starred jobs, the newest-first list,
+│                        what it reads when opened, and the preview following the pointer
+├── jobPickerQueries.ts  nearby-row observation, cached summary batches, and priority preview reads
+├── JobCommitsView.tsx   the picker's jobs under the commits they ran at, the graph down the
+│                        left edge, and the branches to choose over them
+├── JobSearch.tsx        the picker's search box, which also lists and chooses a workflow
+├── JobRow.tsx           one job in the picker: state, name, the inputs that tell it apart, the
+│                        step it failed in, when it was launched, its star and rename pencil
+├── JobPreview.tsx       the previewed job: the inputs changed since its
+│                        workflow's previous job, and its root workflow's steps drawn small with
+│                        what it ran and reused
 ├── LiveIndicator.tsx    under the picker: "reconnecting…" after a failed poll
 ├── Minimap.tsx          breadcrumbs of levels, one row per card, the compact dependency graph,
 │                        the viewport rectangle (fed by a ViewportStore the trace's scroller
@@ -306,6 +408,8 @@ components/
 ├── flowchartLayout.ts   the flowchart's layered layout; its header lists what a good
 │                        layout is here and the phases: ranks, slots (a single-consumer
 │                        input beside its consumer), crossing-minimizing order, ports,
+│                        all over the steps in an order that depends only on the graph
+│                        (canonicalOrder), so two jobs of a workflow are drawn alike,
 │                        L1 positions on a 10px grid (lib/networkSimplex), S-curve routes;
 │                        cards grow with their dims, and a rank is as tall as its tallest.
 │                        test/flowchartLayout.test.ts checks invariants and quality budgets
@@ -375,14 +479,19 @@ components/
 ├── ViewSelect.tsx       the view dropdown every head uses (radix Select): "views" with a
 │                        count of the project's views over the view shown; the menu lists
 │                        the project's views under "from this project"
-├── PendingInvocation.tsx an invocation not finished yet, or failed: state, elapsed time,
-│                        error, and a step's latest ctx.log lines, current while shown
+├── PendingInvocation.tsx an invocation not finished yet, failed, or stopped: state, elapsed
+│                        time, error, a step's latest preview and ctx.log lines, and a line on
+│                        what to expect, current while shown
+├── StepPreview.tsx      a step's latest ctx.preview, marked live or last, dispatched in the
+│                        PartialEntityPanel slot (the type's renderer, else the raw data tree);
+│                        StepPinPreview reads it from the step's pin; StepPreviewLine, the
+│                        same in one line (PartialEntityInline) for a running row's value cells
 ├── InvocationFailure.tsx a failed invocation's error on one line, for its table row
 ├── RendererSelect.tsx   a ViewSelect choosing the default view or a registered renderer
 │                        (an opened entity, the level's invocation in a panel)
-├── InvocationInfo.tsx   an invocation's status line (state, timing, error) and provenance
-│                        (commit, source link, cache key or pathname), and the info button
-│                        showing both
+├── InvocationInfo.tsx   an invocation's status line (state, timing, error; for a step, that
+│                        the job has not taken its result) and provenance (commit, source
+│                        link, cache key or pathname), and the info button showing both
 ├── DetailPane.tsx       one panel: its head and the body of what its address shows (a node
 │                        through a view, a value, an entity, the level, a page, the experiment,
 │                        a function's code)
@@ -405,7 +514,8 @@ components/
 ├── ViewsNotice.tsx      the rail's note when the project's renderers did not load,
 │                        are being rebuilt or did not build, or were just updated; failures are
 │                        persistent alerts styled with the viewer's error colours
-├── ThemeToggle.tsx      at the foot of the rail: follow the system theme, or pick light or
+├── ViewerSettings.tsx   bottom-left settings popover; theme, configured notice and optional details action
+├── ThemeToggle.tsx      within viewer settings: follow the system theme, or pick light or
 │                        dark
 ├── Toasts.tsx           sonner's toaster in the top right corner, its toasts unstyled and
 │                        drawn as the viewer's floating cards (lib/launches.tsx and

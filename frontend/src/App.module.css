@@ -7,6 +7,7 @@
 .body { display: flex; flex: 1; min-height: 0; }
 /* The left rail: the job picker above the minimap. */
 .rail {
+  padding-bottom: 46px;
   display: flex;
   flex-direction: column;
   flex: 0 0 168px;

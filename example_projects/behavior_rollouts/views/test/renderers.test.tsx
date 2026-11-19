@@ -11,8 +11,9 @@ import {
   CHAT_ROLLOUT, CONTEXT_TURN, END_ROLLOUT, MODEL_TURN, SET_SYSTEM_MESSAGE,
   type ChatRolloutData, type MessageData, type TurnData,
 } from "fxtr-view-behaviors";
-import { rolloutRenderers, OPENAI_CONVERSATION, OPENAI_EXPERIMENT } from "../src";
-import { LONGEST_REPLY } from "../src/longest";
+import { rolloutRenderers, INSTRUCTIONS_IN_FORCE_CONVERSATION_STEP, INSTRUCTIONS_IN_FORCE_WORKFLOW } from "../src";
+import { LONGEST_REPLY } from "../src/echo";
+import { SAMPLING_PARAMS_ENTITY } from "../src/sampling";
 
 const registry = dispatchRegistry(rolloutRenderers);
 const tag = (name: string) => `org.transluce.behaviors.${name}.v1`;
@@ -38,7 +39,7 @@ const rollout: ChatRolloutData = {
   status: { $type: tag("RolloutCompleted"), kind: "rollout_completed" },
   end: {
     $type: END_ROLLOUT, kind: "end_rollout",
-    metadata: [{ $type: "org.transluce.examples.behavior_rollouts.QuestionsAsked.v1", questions_asked: 2 }],
+    metadata: [{ $type: "org.transluce.examples.behavior_rollouts.TurnsSent.v1", turns_sent: 2 }],
   },
   metadata: [],
 };
@@ -52,24 +53,27 @@ const initialization = (text: string) => ({
 it("updates an invocation from waiting to a stored conversation without changing hooks", () => {
   const ref = { kind: "workflow" as const, jobId: "job", pathname: "root" };
   const record: InvocationRecord = {
-    ref, name: OPENAI_EXPERIMENT, state: "running", error: null,
-    inputs: { model_name: new EntityID("model") }, output: null, children: [],
+    ref, name: INSTRUCTIONS_IN_FORCE_WORKFLOW, state: "running", error: null,
+    inputs: { model_name: new EntityID("model"), sampling: new EntityID("sampling-input") }, output: null, children: [],
   };
   const entities = new Map<string, EntityData>([
     ["model", { $type: ARRAY_TYPE, dims: [], schema: "str", rows: [["test-model"]] }],
+    ["sampling-input", { $type: ARRAY_TYPE, dims: [], schema: { id: SAMPLING_PARAMS_ENTITY }, rows: [[new EntityID("sampling")]] }],
+    ["sampling", { $type: SAMPLING_PARAMS_ENTITY, params: { $type: "org.transluce.behaviors.SamplingParams.v2", max_tokens: 8192, reasoning: null } }],
     ["output", { $type: ARRAY_TYPE, dims: [], schema: { id: CHAT_ROLLOUT }, rows: [[new EntityID("rollout")]] }],
     ["rollout", rollout],
   ]);
   const storage = atom<JsonValue>(null);
   const view = (invocation: InvocationRecord) => (
     <TableShellProvider registry={registry} entities={entities} invocations={new Map([[invocationRefKey(ref), invocation]])}>
-      <RenderInvocation slot={InvocationPanel} name={OPENAI_EXPERIMENT}
+      <RenderInvocation slot={InvocationPanel} name={INSTRUCTIONS_IN_FORCE_WORKFLOW} renderer="conversation"
         invocations={[{ ref, key: {}, output: invocation.output }]} storage={storage} />
     </TableShellProvider>
   );
-  const { rerender } = render(view(record));
+  const { container, rerender } = render(view(record));
   expect(screen.getByText("No conversation output yet · running")).toBeTruthy();
-  expect(screen.getByText("test-model")).toBeTruthy();
+  // The model, then the sampling input as its entity's link, naming the settings that are set.
+  expect(container.querySelector("header > div")?.textContent).toBe("test-model · SamplingParams · 8192 tokens");
   rerender(view({ ...record, state: "failed", error: { typeName: "ProviderError", message: "Unavailable" } }));
   expect(screen.getByText("ProviderError: Unavailable")).toBeTruthy();
   rerender(view({ ...record, state: "completed", output: new EntityID("output") }));
@@ -81,7 +85,7 @@ it("renders a workflow's mapped outputs by sequence and retains scalar conversat
   const ref = { kind: "workflow" as const, jobId: "job", pathname: "root" };
   const output = new EntityID<ArrayData>("mapped-output");
   const record: InvocationRecord = {
-    ref, name: OPENAI_EXPERIMENT, state: "completed", error: null, inputs: {}, output, children: [],
+    ref, name: INSTRUCTIONS_IN_FORCE_WORKFLOW, state: "completed", error: null, inputs: {}, output, children: [],
   };
   const { container } = render(
     <TableShellProvider registry={registry} entities={new Map<string, EntityData>([
@@ -89,14 +93,14 @@ it("renders a workflow's mapped outputs by sequence and retains scalar conversat
         rows: [["primes", new EntityID("primes")], ["story", new EntityID("story")]] }],
       ["primes", rollout], ["story", { ...rollout, context_turns: [turn("user", "Tell a story")], model_turns: [turn("assistant", "A robot waved.")] }],
     ])} invocations={new Map([[invocationRefKey(ref), record]])}>
-      <RenderInvocation slot={InvocationPanel} name={OPENAI_EXPERIMENT}
+      <RenderInvocation slot={InvocationPanel} name={INSTRUCTIONS_IN_FORCE_WORKFLOW} renderer="conversation"
         invocations={[{ ref, key: {}, output }]} storage={atom<JsonValue>(null)} />
     </TableShellProvider>,
   );
-  expect(screen.getByText("2 question sequences")).toBeTruthy();
+  expect(screen.getByText("2 sequences")).toBeTruthy();
   const groups = [...container.querySelectorAll(".collection > summary")];
   expect(groups.map((group) => group.textContent)).toEqual([
-    "sequence: primes · ChatRollout 2 responses · Completed", "sequence: story · ChatRollout 1 response · Completed",
+    "sequence: primes · ChatRollout · 2 responses · Completed", "sequence: story · ChatRollout · 1 response · Completed",
   ]);
   fireEvent.click(groups[1]!);
   expect(groups[1]!.closest("details")?.open).toBe(true);
@@ -108,13 +112,13 @@ it("shows every selected mapped spawn, including running and failed conversation
     key: { sequence }, ref: { kind: "step" as const, jobId: "job", cacheKey: sequence }, output: null,
   }));
   const records = spawns.map((spawn, index): InvocationRecord => ({
-    ref: spawn.ref, name: OPENAI_CONVERSATION, state: index === 0 ? "running" : "failed",
+    ref: spawn.ref, name: INSTRUCTIONS_IN_FORCE_CONVERSATION_STEP, state: index === 0 ? "running" : "failed",
     error: index === 0 ? null : { typeName: "ProviderError", message: "Unavailable" },
     inputs: {}, output: null, children: [],
   }));
   const view = (selected = spawns) => (
     <TableShellProvider registry={registry} invocations={new Map(records.map((record) => [invocationRefKey(record.ref), record]))}>
-      <RenderInvocation slot={InvocationPanel} name={OPENAI_CONVERSATION} invocations={selected} storage={atom<JsonValue>(null)} />
+      <RenderInvocation slot={InvocationPanel} name={INSTRUCTIONS_IN_FORCE_CONVERSATION_STEP} invocations={selected} storage={atom<JsonValue>(null)} />
     </TableShellProvider>
   );
   const { rerender } = render(view());
@@ -123,20 +127,20 @@ it("shows every selected mapped spawn, including running and failed conversation
   expect(rows.map((row) => [...row.querySelectorAll("td")].map((cell) => cell.textContent))).toEqual([
     ["primes", "running"], ["story", "failed: ProviderError: Unavailable"],
   ]);
-  expect(screen.queryByText("OpenAI conversation")).toBeNull();
+  expect(screen.queryByText("Conversation")).toBeNull();
   // This shell opens no views, so a row shows its conversation below the table.
   fireEvent.click(rows[1]!);
-  expect(screen.getByText("OpenAI conversation")).toBeTruthy();
+  expect(screen.getByText("Conversation")).toBeTruthy();
   rerender(view([spawns[0]!]));
   expect(screen.queryByText("Conversations · 2")).toBeNull();
-  expect(screen.getByText("OpenAI conversation")).toBeTruthy();
+  expect(screen.getByText("Conversation")).toBeTruthy();
 });
 
 it("compares model/sequence outputs with switchable grouping and array-valued model inputs", () => {
   const ref = { kind: "workflow" as const, jobId: "job", pathname: "root" };
   const output = new EntityID<ArrayData>("comparison");
   const record: InvocationRecord = {
-    ref, name: OPENAI_EXPERIMENT, state: "completed", error: null,
+    ref, name: INSTRUCTIONS_IN_FORCE_WORKFLOW, state: "completed", error: null,
     inputs: { model_name: new EntityID("models") }, output, children: [],
   };
   const { container } = render(
@@ -155,7 +159,7 @@ it("compares model/sequence outputs with switchable grouping and array-valued mo
           model_turns: [turn("assistant", `Answer from ${name}`)] },
       ]),
     ])} invocations={new Map([[invocationRefKey(ref), record]])}>
-      <RenderInvocation slot={InvocationPanel} name={OPENAI_EXPERIMENT}
+      <RenderInvocation slot={InvocationPanel} name={INSTRUCTIONS_IN_FORCE_WORKFLOW} renderer="conversation"
         invocations={[{ ref, key: {}, output }]} storage={atom<JsonValue>(null)} />
     </TableShellProvider>,
   );
@@ -182,7 +186,7 @@ function comparisonView(rows: [string, string, ChatRolloutData][], storage = ato
   const ref = { kind: "workflow" as const, jobId: "job", pathname: "root" };
   const output = new EntityID<ArrayData>("comparison-output");
   const record: InvocationRecord = {
-    ref, name: OPENAI_EXPERIMENT, state: "completed", error: null, inputs: {}, output, children: [],
+    ref, name: INSTRUCTIONS_IN_FORCE_WORKFLOW, state: "completed", error: null, inputs: {}, output, children: [],
   };
   return (
     <TableShellProvider registry={registry} entities={new Map<string, EntityData>([
@@ -190,7 +194,7 @@ function comparisonView(rows: [string, string, ChatRolloutData][], storage = ato
         schema: { id: CHAT_ROLLOUT }, rows: rows.map(([sequence, model], index) => [sequence, model, new EntityID(`rollout-${index}`)]) }],
       ...rows.map(([, , data], index): [string, EntityData] => [`rollout-${index}`, data]),
     ])} invocations={new Map([[invocationRefKey(ref), record]])}>
-      <RenderInvocation slot={InvocationPanel} name={OPENAI_EXPERIMENT} renderer="compare"
+      <RenderInvocation slot={InvocationPanel} name={INSTRUCTIONS_IN_FORCE_WORKFLOW} renderer="compare"
         invocations={[{ ref, key: {}, output }]} storage={storage} />
     </TableShellProvider>
   );

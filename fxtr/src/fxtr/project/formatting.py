@@ -9,6 +9,7 @@ cache conflicts of a job show in groups. Each group shows as one pattern of its 
 from __future__ import annotations
 
 from collections.abc import Collection
+from datetime import datetime
 from typing import Any, cast
 
 from frozendict import frozendict
@@ -245,3 +246,13 @@ def _cell(value: object) -> str:
             return repr(value)
         case _:
             return str(value)
+
+
+def format_age(moment: datetime, now: datetime) -> str:
+    """How long before ``now`` ``moment`` was, in its largest whole unit: ``4 minutes ago``."""
+    seconds = int((now - moment).total_seconds())
+    for unit, size in (("day", 86400), ("hour", 3600), ("minute", 60)):
+        if seconds >= size:
+            count = seconds // size
+            return f"{count} {unit}{'' if count == 1 else 's'} ago"
+    return "just now"

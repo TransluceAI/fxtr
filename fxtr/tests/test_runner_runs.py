@@ -3,6 +3,7 @@ of determinism verification, failure reporting, over a fake attempt."""
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import pytest
@@ -10,6 +11,7 @@ from frozendict import frozendict
 from runs_testing import FakeAttempt, FakeStepAttempt, identity
 
 from fxtr.entity_defns.array import Array, ArrayType
+from fxtr.entity_defns.dataclass_bases import TaggedDataclass
 from fxtr.entity_defns.query import dim
 from fxtr.entity_defns.query_plan import PlannedQuery
 from fxtr.runner import nodes
@@ -24,6 +26,12 @@ from fxtr.runner.session import (
 )
 
 pytestmark = pytest.mark.anyio
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class DynamicPreview(TaggedDataclass, fxtr_type="test.fxtr.runs.Preview"):
+    text: str
+
 
 RUN = AttemptID("attempt-1")
 PROMPTS = ArrayType.of(("[prompt: int]", str))
@@ -180,13 +188,17 @@ async def test_a_step_run_forwards_to_its_attempt() -> None:
     run = StepRun(RUN, attempt)
     assert run.run_id == RUN and run.assignment is assignment
     run.log_message("working")
+    preview = DynamicPreview(text="so far")
+    run.preview_step(preview)
     result: Array[Any] = Array.scalar(1, int)
     await run.complete_step(result)
-    assert attempt.calls == [("log", "working"), ("complete", result)]
+    assert attempt.calls == [("log", "working"), ("preview", preview), ("complete", result)]
     with pytest.raises(AttemptClosedError):
         run.log_message("late")
+    with pytest.raises(AttemptClosedError):
+        run.preview_step(preview)
     await run.fail(AttemptError("ValueError", "boom", ""))  # closed: nothing
-    assert len(attempt.calls) == 2
+    assert len(attempt.calls) == 3
 
     failing = FakeStepAttempt(assignment)
     await StepRun(RUN, failing).fail(AttemptError("ValueError", "boom", ""))

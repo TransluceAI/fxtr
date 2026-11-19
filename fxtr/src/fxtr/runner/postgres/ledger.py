@@ -873,9 +873,10 @@ async def get_job(tx: Transaction, job_id: JobID) -> JobRecord:
     )
 
 
-async def list_jobs(tx: Transaction) -> list[JobRecord]:
-    """Every job, newest first."""
-    rows = (await tx.execute(select(jobs).order_by(jobs.c.created_at.desc(), jobs.c.id))).all()
+async def list_jobs(tx: Transaction, *, limit: int | None = None) -> list[JobRecord]:
+    """Jobs, newest first: every job, or the newest ``limit``."""
+    query = select(jobs).order_by(jobs.c.created_at.desc(), jobs.c.id).limit(limit)
+    rows = (await tx.execute(query)).all()
     return [
         JobRecord(
             id=JobID(row.id),

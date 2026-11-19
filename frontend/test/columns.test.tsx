@@ -8,7 +8,7 @@ import {buildLevel} from '../src/model/level'
 import {parseRel, type Params} from '../src/panes/address'
 import {TRACE, allPanels, sequence} from '../src/panes/columns'
 import {showLinkProblem} from '../src/lib/linkProblem'
-import {useColumns, type Centre, type ColumnsState} from '../src/panes/useColumns'
+import {useColumns, type Center, type ColumnsState} from '../src/panes/useColumns'
 import {linkTarget, panelBase} from '../src/lib/linkBase'
 import type {Catalog} from '../src/panes/resolve'
 import type {Level, StepDoc} from '../src/types'
@@ -40,19 +40,19 @@ const catalog: Catalog = {
   registry: dispatchRegistry([renderer(ROLLS, View), renderer(DETAIL, View), page(TRANSCRIPT, View)]),
   level: (pathname) => (levels[pathname] ? {status: 'ready', level: levels[pathname]} : {status: 'pending'}),
 }
-const rootCentre: Centre = {address: {view: 'trace', location: {root: 'step', steps: [], path: []}}, keys: {}}
+const rootCenter: Center = {address: {view: 'trace', location: {root: 'step', steps: [], path: []}}, keys: {}}
 
 let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
 let state: ColumnsState
 
-function Harness({slice, centre}: {slice: Params; centre: Centre}) {
-  state = useColumns(slice, catalog, centre)
+function Harness({slice, center}: {slice: Params; center: Center}) {
+  state = useColumns(slice, catalog, center)
   return null
 }
 
-async function mount(slice: Params = {}, centre: Centre = rootCentre) {
-  await act(async () => root.render(<Harness slice={slice} centre={centre} />))
+async function mount(slice: Params = {}, center: Center = rootCenter) {
+  await act(async () => root.render(<Harness slice={slice} center={center} />))
 }
 
 beforeEach(() => {
@@ -425,20 +425,20 @@ it('opens nothing for a link naming nothing, and says why, leaving the panels as
   expect(vi.mocked(showLinkProblem).mock.calls[0]![0]).toBe('code(/roll.output)')
 })
 
-it('keeps every panel as it is when the centre moves to another level, binding the level\'s keys from a link in the trace', async () => {
-  const inside: Centre = {address: {view: 'trace', location: {root: 'step', steps: ['score'], path: []}}, keys: {model: 'a'}}
+it('keeps every panel as it is when the center moves to another level, binding the level\'s keys from a link in the trace', async () => {
+  const inside: Center = {address: {view: 'trace', location: {root: 'step', steps: ['score'], path: []}}, keys: {model: 'a'}}
   await mount({}, inside)
   await follow('(/score/inner)', {seed: 'x'})
   await follow('(/roll)', {seed: 'a'}, TRACE, {pin: true})
   expect(shown()).toEqual(['browses test.Rolls(/score/inner, model=a, seed=x)', 'pinned test.Rolls(/roll, seed=a)'])
   expect(panels()[0]!.own).toEqual({model: 'a', seed: 'x'})
-  await mount({}, rootCentre)
+  await mount({}, rootCenter)
   expect(shown()).toEqual(['browses test.Rolls(/score/inner, model=a, seed=x)', 'pinned test.Rolls(/roll, seed=a)'])
 })
 
-it('follows a relative link from a view in the centre, against the centre\'s address', async () => {
-  const centre: Centre = {address: {view: 'test.Overview', location: {root: 'step', steps: ['score'], path: []}}, keys: {model: 'a'}}
-  await mount({}, centre)
+it('follows a relative link from a view in the center, against the center\'s address', async () => {
+  const center: Center = {address: {view: 'test.Overview', location: {root: 'step', steps: ['score'], path: []}}, keys: {model: 'a'}}
+  await mount({}, center)
   await follow('(.output)')
   expect(shown()).toEqual(['browses (/score.output, model=a)'])
   expect(panels()[0]!.rel.location.kind).toBe('absolute')
@@ -457,7 +457,7 @@ it('opens an entity alone at the params its link passes, and lights the link', a
 })
 
 it('binds no level keys on a link from the trace to an entity', async () => {
-  await mount({}, {...rootCentre, keys: {model: 'a'}})
+  await mount({}, {...rootCenter, keys: {model: 'a'}})
   await act(async () => state.follow(selected(), TRACE))
   expect(panels()[0]!.own).toEqual({selector})
 })

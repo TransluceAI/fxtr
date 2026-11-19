@@ -1,7 +1,10 @@
 // @vitest-environment jsdom
+import * as dagCbor from '@ipld/dag-cbor'
 import { act, useState } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
+import { RegistryProvider, dispatchRegistry } from 'fxtr-view-shell-util'
+import { defaultRenderers } from 'fxtr-view-default-renderers'
 import { CardTable } from '../src/components/CardTable'
 import { useCardMode } from '../src/lib/cardTable'
 import { LevelStateContext, type CardTableState } from '../src/lib/levelState'
@@ -32,9 +35,12 @@ afterEach(async () => {
   delete (Range.prototype as Partial<Range>).getBoundingClientRect
 })
 
-/** The `roll` step of the fixture level, with `s3` and `s7` failed unless `failures` is false. */
-function rollStep({ sampled = false, failures = true } = {}) {
+/** The `roll` step of the fixture level, with `s3` and `s7` failed unless `failures` is false;
+ *  with `fields`, its output is a struct of those fields, each a string. */
+function rollStep({ sampled = false, failures = true, fields = null as readonly string[] | null } = {}) {
   const invocation = inProgress()
+  if (fields) invocation.nodes = invocation.nodes.map((n) => n.identity !== 'roll' ? n : { ...n,
+    type: { dims: [['seed', 'str']], schema: { struct: Object.fromEntries(fields.map((field) => [field, 'str'])) } } })
   if (sampled) invocation.nodes = invocation.nodes.map((n) => n.identity !== 'roll' ? n : { ...n,
     type: { dims: [['seed', 'str'], ['sample', 'int']], schema: 'str' } })
   if (failures) invocation.spawns = [...invocation.spawns, spawn('roll', ['s3'], 'failed', null), spawn('roll', ['s7'], 'failed', null)]
@@ -50,13 +56,21 @@ const seedSpawn = (seed: string) => ({nodeIdentity: 'roll', key: [seed], childPa
  *  `sample` of one value produced inside each invocation, three rows an invocation (without it,
  *  one row each, which the card lists as invocations), in a level state it holds itself; every slice
  *  it sets is recorded with the card it anchors, every link it follows too. `steps` holds the step
- *  the card shows. */
-async function renderTable(count = 30, { sampled = true, state = {} as Partial<CardTableState> } = {}) {
-  const table = rollStep({ sampled })
+ *  the card shows. With `fields` (one row each), an invocation's value is a struct of them. */
+async function renderTable(count = 30, { sampled = true, state = {} as Partial<CardTableState>,
+  fields = null as readonly string[] | null } = {}) {
+  const table = rollStep({ sampled, fields })
+  const valueOf = (seed: string) => fields ? Object.fromEntries(fields.map((field) => [field, `${field} rolled ${seed}`])) : `rolled ${seed}`
   const steps = new Store(table)
   const pages: Record<string, unknown>[] = []
   const seeds = Array.from({length: count}, (_, i) => `s${i}`)
-  vi.stubGlobal('fetch', vi.fn(async (_url: string, init: {body: string}) => {
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init: {body: string}) => {
+    if (url.startsWith('/api/previews/')) {
+      // The running invocation's latest preview.
+      const bytes = dagCbor.encode({$type: 'org.transluce.fxtr.Partial', of: {$type: 'test.Draft', text: 'rolling'}})
+      return {ok: true, status: 200, headers: new Headers({'X-Fxtr-Preview-Seq': '1'}),
+        arrayBuffer: async () => bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength)}
+    }
     const {query, variables} = JSON.parse(init.body)
     if (query.includes('r0: runPage')) {
       // The invocation behind each row, by its selection.
@@ -82,7 +96,7 @@ async function renderTable(count = 30, { sampled = true, state = {} as Partial<C
       const offset = variables.last ? Math.floor((matching.length - 1) / variables.first) * variables.first : variables.offset
       const items = matching.slice(offset, offset + variables.first).map((seed) => ({spawn: seedSpawn(seed),
         rowCount: seedState(seed) === 'completed' ? (sampled ? 3 : 1) : null,
-        value: seedState(seed) === 'completed' && !sampled ? base64Cbor(`rolled ${seed}`) : null}))
+        value: seedState(seed) === 'completed' && !sampled ? base64Cbor(valueOf(seed)) : null}))
       return {ok: true, json: async () => ({data: {invocationPage: {items, total: matching.length, offset}}})}
     }
     if (query.includes('outputPage')) {
@@ -106,7 +120,12 @@ async function renderTable(count = 30, { sampled = true, state = {} as Partial<C
     }
     if (query.includes('step(')) {
       const seed = (variables.cacheKey as string).slice(2)
-      return {ok: true, json: async () => ({data: {step: {stepName: 'roll', requestCid: 'request', state: 'failed', resultCid: null,
+      if (seedState(seed) === 'running') {
+        return {ok: true, json: async () => ({data: {step: {stepName: 'roll', requestCid: 'request', state: 'running', resultCid: null, resultTaken: false,
+          attempt: {state: 'running', startedAt: '2026-01-01T00:00:00Z', finishedAt: null, error: null}, logs: [],
+          preview: {attemptId: `attempt-${seed}`, seq: 1, at: '2026-01-01T00:00:00Z'}}}})}
+      }
+      return {ok: true, json: async () => ({data: {step: {stepName: 'roll', requestCid: 'request', state: 'failed', resultCid: null, resultTaken: false,
         attempt: {state: 'failed', startedAt: '2026-01-01T00:00:00Z', finishedAt: '2026-01-01T00:00:01Z',
           error: {typeName: 'ValueError', message: `bad seed ${seed}\nwhile rolling`}}, logs: [{seq: 1, message: 'rolling', at: '2026-01-01T00:00:00Z'}]}}})}
     }
@@ -132,7 +151,7 @@ async function renderTable(count = 30, { sampled = true, state = {} as Partial<C
       <OpenEntityContext.Provider value={opener}><CardTable step={step} matching={null} /></OpenEntityContext.Provider>
     </LevelStateContext.Provider>
   }
-  await act(async () => root.render(<Level />))
+  await act(async () => root.render(<RegistryProvider registry={dispatchRegistry(defaultRenderers)}><Level /></RegistryProvider>))
   return { pages, slices, follows, tables: cardTables.get, cardTables, steps }
 }
 
@@ -359,11 +378,12 @@ it('lists the invocations with the value each produced, opening one on a click',
   expect(host.querySelectorAll('thead th')[2]!.textContent).toBe('valuestr')
   expect(rowOf('s0').textContent).toBe('s0completedrolled s0')
   // The row opens the invocation, so there is no button for it; only a running invocation has a
-  // spinner at its right end, and nothing yet in its values.
+  // spinner at its right end, and its latest preview, in one line, in place of its values.
   expect(host.querySelector('tbody button')).toBeNull()
   expect(rows[0]!.querySelector('[role="status"]')).toBeNull()
   expect(rows[1]!.lastElementChild!.querySelector('[aria-label="Invocation running"] [class*="spinner"]')).not.toBeNull()
-  expect(rows[1]!.textContent).toBe('s1running—')
+  await act(async () => {})
+  expect(rowOf('s1').textContent).toBe('s1runningDraft partial')
   await act(async () => rowOf('s0').dispatchEvent(new MouseEvent('click', {bubbles: true})))
   expect(followed(follows.at(-1))).toBe('invocation(/roll, seed=s0)')
   // Its row stands for the invocation its panel shows, so the row is lit.
@@ -373,6 +393,23 @@ it('lists the invocations with the value each produced, opening one on a click',
   await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Next page"]')!.click())
   expect(cardTables.get().get('roll')).toMatchObject({offset: 0, invocationsOffset: 10})
   expect(pages.at(-1)).toMatchObject({offset: 10, first: 10})
+})
+
+it('sizes value columns by the invocations that have values, leaving out a running one\'s preview', async () => {
+  const { MIN_UNIT } = await import('../src/lib/columnWidths')
+  await renderTable(30, { sampled: false, fields: ['a', 'b', 'c', 'd'] })
+  await act(async () => {})
+  // The running invocation's row has fewer cells than the table has columns: its key and state,
+  // its preview across the four value columns, the slack, and the trailing one.
+  const running = rowOf('s1').querySelectorAll('td')
+  expect(running).toHaveLength(5)
+  expect(running[2]!.colSpan).toBe(4)
+  expect(running[2]!.textContent).toBe('Draft partial')
+  // So the columns are measured in the other rows: seed (a unit), state (`completed`: 9
+  // characters), each field (`a rolled s0`: 11 characters), the slack, and the trailing one.
+  const widths = Array.from(host.querySelectorAll('col')).map((col) => col.style.width)
+  const field = `${11 * 7 + 26}px`
+  expect(widths).toEqual([`${MIN_UNIT}px`, `${9 * 7 + 26}px`, field, field, field, field, '', '24px'])
 })
 
 it('sorts and filters the invocations on the server, with filters and an order of their own', async () => {

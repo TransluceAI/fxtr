@@ -1,5 +1,5 @@
 import { Suspense } from 'react'
-import { stepStatus, type GqlLogLine } from '../api/graphql'
+import { stepStatus, type GqlLogLine, type GqlPreview } from '../api/graphql'
 import { useOverviewSnapshot, useStepPin } from '../api/live'
 import { useNow } from '../lib/clock'
 import { glyphOf, isLive, runStateOf } from '../lib/progress'
@@ -8,15 +8,17 @@ import type { InvocationStatus, StepInvocation } from '../types'
 import { ErrorBoundary } from './ErrorBoundary'
 import { LoadingContent } from '../lib/loading'
 import { StateGlyph } from './StateGlyph'
+import { StepPreview } from './StepPreview'
 import styles from './PendingInvocation.module.css'
 
 /** How many of a running step's latest `ctx.log` lines are shown. */
 const LOG_TAIL = 8
 
 /**
- * One invocation that has not finished, or failed, in place of its output: its state and how long
- * it has run, its error, and for a step the latest lines it logged, which update while it runs.
- * A child workflow is followed by opening it.
+ * One invocation that has not finished, failed, or stopped, in place of its output: its state and
+ * how long it has run, its error, for a step the latest preview it published (`ctx.preview`) and
+ * the latest lines it logged, which update while it runs, and a line on what to expect of its
+ * output. A child workflow is followed by opening it.
  */
 export function PendingInvocation({ jobId, invocation }: { jobId: string; invocation: StepInvocation }) {
   return (
@@ -34,9 +36,15 @@ export function PendingInvocation({ jobId, invocation }: { jobId: string; invoca
 
 function StepPending({ jobId, cacheKey }: { jobId: string; cacheKey: string }) {
   const pin = useStepPin(jobId, cacheKey)
-  return (
-    <Pending status={stepStatus(pin)} logs={pin.logs} hint={isLive(runStateOf(pin.state)) ? 'output appears when the step finishes' : null} />
-  )
+  return <Pending status={stepStatus(pin)} logs={pin.logs} preview={pin.preview} hint={stepHint(pin.state)} />
+}
+
+/** What to expect of a step with no output, by its state as the backend spells it; none for a
+ *  failed step, whose error says it. */
+function stepHint(state: string): string | null {
+  if (isLive(runStateOf(state))) return 'output appears when the step finishes'
+  if (state === 'stopped') return 'no output: the job stopped before this step finished. Resuming the job runs it.'
+  return null
 }
 
 function WorkflowPending({ jobId, pathname }: { jobId: string; pathname: string }) {
@@ -45,7 +53,17 @@ function WorkflowPending({ jobId, pathname }: { jobId: string; pathname: string 
   return <Pending status={status} logs={[]} hint={isLive(runStateOf(status.state)) ? 'open it to follow its progress' : null} />
 }
 
-function Pending({ status, logs, hint }: { status: InvocationStatus; logs: GqlLogLine[]; hint: string | null }) {
+function Pending({
+  status,
+  logs,
+  preview = null,
+  hint,
+}: {
+  status: InvocationStatus
+  logs: GqlLogLine[]
+  preview?: GqlPreview | null
+  hint: string | null
+}) {
   const now = useNow()
   const state = runStateOf(status.state)
   const elapsed = formatElapsed(status.startedAt, status.finishedAt, now)
@@ -66,6 +84,7 @@ function Pending({ status, logs, hint }: { status: InvocationStatus; logs: GqlLo
           {status.error.typeName}: {status.error.message}
         </div>
       )}
+      <StepPreview preview={preview} live={isLive(state)} />
       {tail.length > 0 && (
         <pre className={styles.logs}>
           {logs.length > tail.length && `… ${logs.length - tail.length} earlier lines\n`}

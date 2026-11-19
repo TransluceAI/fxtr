@@ -21,6 +21,7 @@ from postgres_testing import a_client  # noqa: E402
 from fxtr.runner.postgres.database import Database  # noqa: E402
 from fxtr.runner.postgres.debug_web.contracts import Sort  # noqa: E402
 from fxtr.runner.postgres.debug_web.output import PageQuery, decode_array  # noqa: E402
+from fxtr.runner.postgres.debug_web.scope import JobScope  # noqa: E402
 from fxtr.runner.postgres.debug_web.table_values import preview, search_text, summary  # noqa: E402
 
 
@@ -39,7 +40,7 @@ async def test_array_loads_coalesce_per_cid_and_release_waiters(
         ]
         async with database.transaction() as tx:
             await client.entities.flush(tx)
-        store = output.OutputStore(client)
+        store = output.OutputStore(client.database, JobScope.all())
         await store.load([cids[0]])
         if not retain:
             monkeypatch.setattr(output, "MAX_BYTES", 0)

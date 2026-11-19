@@ -15,7 +15,7 @@
  *   when the view has no browsing panel after it yet, else a pinned one as an Alt-click does.
  *
  * A link followed from a root (the trace, the rail) is stored absolute: its location as it resolves
- * from the centre's, and as its own params the level's keys (`Centre.keys`) and what it adds to the
+ * from the center's, and as its own params the level's keys (`Center.keys`) and what it adds to the
  * slice. So moving between levels changes what no panel shows, and the panels still follow the
  * slice.
  *
@@ -45,7 +45,7 @@
  * way.
  */
 
-import { useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { showLinkProblem } from '../lib/linkProblem'
 import { Store, useStableCallback } from '../lib/store'
 import {
@@ -68,6 +68,7 @@ import {
   resizeColumn,
   sequence,
   pinPanel,
+  reserveIds,
   stepHistory,
   toggleCollapsed,
   type Columns,
@@ -157,6 +158,9 @@ export interface ColumnsState {
   viewsShownOf: (stepPath: readonly string[]) => readonly string[]
   showsExperimentReadme: boolean
   anyOpen: boolean
+  /** Panels from a link are still being checked (their levels loading): what is open is not yet
+   *  what the link comes to, so it is not written anywhere (`JobView`'s URL). */
+  checking: boolean
 }
 
 /** Before the columns have been laid out: a column as tall as the window, every panel empty. */
@@ -168,18 +172,18 @@ function fallbackGeometry(): Geometry {
  *  that one's state; null for a pinned panel. */
 type Before = { id: string; state: PanelState } | null
 
-/** What the centre shows, which links from the trace start from: its address (the level's workflow
+/** What the center shows, which links from the trace start from: its address (the level's workflow
  *  through the trace, the flowchart, or a view of the workflow), and the keys of the workflows on
  *  the way to the level, which a link from a root binds itself. */
-export interface Centre {
+export interface Center {
   address: Address
   keys: Params
 }
 
 /** What every panel resolves to, in sequence, with the roots binding the slice. */
-export function resolveColumns(columns: Columns, slice: Params, catalog: Catalog, centre: Centre): Map<string, PanelState> {
+export function resolveColumns(columns: Columns, slice: Params, catalog: Catalog, center: Center): Map<string, PanelState> {
   const states = new Map<string, PanelState>()
-  const root = { id: TRACE, state: rootState(TRACE, slice, centre) }
+  const root = { id: TRACE, state: rootState(TRACE, slice, center) }
   for (const panel of sequence(columns)) states.set(panel.id, resolveStored(panel, beforeOf(panel, states, root), catalog))
   return states
 }
@@ -260,8 +264,18 @@ export function relFor(address: Address, parent: Address | null): Rel {
   return { view: address.view, location: relLocationFor(address.location, parent?.location ?? null) }
 }
 
-export function useColumns(slice: Params, catalog: Catalog, centre: Centre): ColumnsState {
-  const [columns, setColumns] = useState<Columns>([])
+/** `initial`: the layout to open with, a history entry's or a link's (`check`: a link's, its panels
+ *  checked against what they name). */
+export function useColumns(slice: Params, catalog: Catalog, center: Center, initial?: { columns: Columns; check: boolean }): ColumnsState {
+  const [columns, setColumns] = useState<Columns>(() => {
+    if (initial) reserveIds(initial.columns)
+    return initial?.columns ?? []
+  })
+  /** Panels opened from a link (`initial.check`), not yet checked against what they name: each
+   *  browsing one naming nothing closes once it resolves, and a toast says why, as a followed
+   *  link's would. */
+  const unchecked = useRef<ReadonlySet<string>>(new Set(initial?.check ? allPanels(initial.columns).map((panel) => panel.id) : []))
+  const [checking, setChecking] = useState(() => unchecked.current.size > 0)
   const [highlight] = useState(() => new Store<Decision | null>(null))
   const [reveal] = useState(() => new Store<{ panelId: string; seq: number } | null>(null))
   const geometry = useRef<(() => Geometry) | null>(null)
@@ -270,7 +284,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
   type FollowOptions = { placement?: Placement; pin?: boolean }
 
   const stateIn = (states: ReadonlyMap<string, PanelState>, id: string): PanelState => {
-    if (isRoot(id)) return rootState(id, slice, centre)
+    if (isRoot(id)) return rootState(id, slice, center)
     const state = states.get(id)
     if (!state) throw new Error(`no panel ${id}`)
     return state
@@ -295,7 +309,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
     // A cid address uses every param the panel binds itself (`resolve`), so the level's keys,
     // which an entity does not use, would show as its params: a link to an entity binds none.
     const ofEntity = rel.location.kind === 'absolute' && rel.location.location?.root === 'entity'
-    const own = added({ ...(ofEntity ? {} : centre.keys), ...target.params }, origin.resolution.env)
+    const own = added({ ...(ofEntity ? {} : center.keys), ...target.params }, origin.resolution.env)
     const stored: Stored = { rel, own }
     return { stored, state: resolveStored(stored, from, catalog) }
   }
@@ -313,7 +327,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
 
   /** Close the first browsing panel whose address names nothing, and its followers. */
   const prune = (current: Columns): Columns => {
-    const states = resolveColumns(current, slice, catalog, centre)
+    const states = resolveColumns(current, slice, catalog, center)
     const broken = sequence(current).find((panel) => !panel.pinned && states.get(panel.id)!.resolution.structural)
     return broken ? closePanels(current, new Set([broken.id])) : current
   }
@@ -333,7 +347,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
    *  shown, navigated, or opened. */
   const applyFollow = (current: Columns, measured: Geometry, target: LinkTarget, originId: string,
     { placement, pin = false }: FollowOptions): { columns: Columns; panelId: string } => {
-    const states = resolveColumns(current, slice, catalog, centre)
+    const states = resolveColumns(current, slice, catalog, center)
     const { stored, state } = targetOf(states, target, originId)
     const viewId = isRoot(originId) ? null : originId
     const followers = followersOf(sequence(current), originId)
@@ -372,7 +386,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
     highlight.set(null)
     // A link naming nothing opens nothing (it would only be closed again), and says why.
     const origin = isRoot(originId) || findPanel(columns, originId) ? originId : TRACE
-    const { resolution } = targetOf(resolveColumns(columns, slice, catalog, centre), target, origin).state
+    const { resolution } = targetOf(resolveColumns(columns, slice, catalog, center), target, origin).state
     if (resolution.structural) {
       showLinkProblem(resolution.text, resolution.problem!)
       return
@@ -389,7 +403,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
 
   /** Where a plain click on `target` from `originId` would land. */
   const decide = (current: Columns, measured: Geometry, target: LinkTarget, originId: string): Decision => {
-    const states = resolveColumns(current, slice, catalog, centre)
+    const states = resolveColumns(current, slice, catalog, center)
     const { state } = targetOf(states, target, originId)
     const { showing, next } = plainClick(current, states, state, originId)
     const existing = showing ?? next
@@ -402,7 +416,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
   })
 
   const update = (change: (current: Columns, states: Map<string, PanelState>) => Columns) =>
-    setColumns((current) => prune(change(current, resolveColumns(current, slice, catalog, centre))))
+    setColumns((current) => prune(change(current, resolveColumns(current, slice, catalog, center))))
 
   const move = useStableCallback((panelId: string, placement: Placement) => {
     update((current, states) => movePanel(current, panelId, placement, rebase(states)))
@@ -416,7 +430,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
     }))
   /** Whether `panel` moves to another kind of thing showing `to` (`sameKind`). */
   const leaves = (panel: PanelInstance, to: Stored, states: ReadonlyMap<string, PanelState>): boolean => {
-    const before = beforeOf(panel, states, { id: TRACE, state: rootState(TRACE, slice, centre) })
+    const before = beforeOf(panel, states, { id: TRACE, state: rootState(TRACE, slice, center) })
     return !sameKind(states.get(panel.id)!.address, resolveStored(to, before, catalog).address)
   }
   const history = useStableCallback((panelId: string, direction: -1 | 1) =>
@@ -456,13 +470,37 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
     setColumns((current) => {
       const panel = findPanel(current, panelId)
       if (!panel || panel.pinned) return current
-      const states = resolveColumns(current, slice, catalog, centre)
+      const states = resolveColumns(current, slice, catalog, center)
       if (states.get(panelId)!.resolution.text !== text) return current
       return prune(closePanels(current, new Set([panelId])))
     }))
   const resize = useStableCallback((columnId: string, width: number) => setColumns((current) => resizeColumn(current, columnId, width)))
   const toggle = useStableCallback((panelId: string) => setColumns((current) => toggleCollapsed(current, panelId)))
   const reset = useStableCallback(() => setColumns([]))
+
+  // A panel from a link is checked once it resolves (no level it walks still loading): a browsing
+  // one naming nothing closes, with its followers, and a toast says why.
+  useEffect(() => {
+    if (unchecked.current.size === 0) return
+    const states = resolveColumns(columns, slice, catalog, center)
+    const remaining = new Set<string>()
+    let broken: PanelInstance | null = null
+    for (const panel of sequence(columns)) {
+      if (!unchecked.current.has(panel.id)) continue
+      const { resolution } = states.get(panel.id)!
+      // One closes at a time: the panels after it are checked again once they follow another.
+      if (resolution.loading || (resolution.structural && !panel.pinned && broken !== null)) remaining.add(panel.id)
+      else if (resolution.structural && !panel.pinned) broken = panel
+    }
+    unchecked.current = remaining
+    // Done once nothing is left to check, whether or not a panel closes now (in the same render).
+    if (remaining.size === 0) setChecking(false)
+    if (broken === null) return
+    const { resolution } = states.get(broken.id)!
+    showLinkProblem(resolution.text, resolution.problem!)
+    const closing = broken.id
+    setColumns((current) => (findPanel(current, closing) ? closePanels(current, new Set([closing])) : current))
+  }, [columns, slice, catalog, center])
 
   // What is derived from the panels alone is kept while only the columns' widths change, so
   // resizing a column does not re-render every link in the trace and the panels.
@@ -471,7 +509,7 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
   const structure = panelsOnly.current
 
   const derived = useMemo(() => {
-    const states = resolveColumns(structure, slice, catalog, centre)
+    const states = resolveColumns(structure, slice, catalog, center)
     const panels = allPanels(structure)
     const ordered = sequence(structure)
     const pinned = panels.filter((panel) => panel.pinned)
@@ -537,11 +575,11 @@ export function useColumns(slice: Params, catalog: Catalog, centre: Centre): Col
       showsExperimentReadme: panels.some((panel) => states.get(panel.id)!.resolution.target?.kind === 'experiment_readme'),
       anyOpen: panels.length > 0,
     }
-  }, [structure, slice, catalog, centre])
+  }, [structure, slice, catalog, center])
 
   return {
     columns, follow, hover, move, close, pin, resizeColumn: resize, toggleCollapsed: toggle, history,
-    setAddress, setOwn, setBindings, namesNothing, reset, highlight, reveal, geometry, ...derived,
+    setAddress, setOwn, setBindings, namesNothing, reset, highlight, reveal, geometry, checking, ...derived,
   }
 }
 
@@ -551,9 +589,9 @@ const CLOSED: LinkState = { selected: false, open: false }
 /** The source of a binding the level's slice makes. */
 export const SLICE = 'slice'
 
-/** A root's state: the trace at the centre's address, the rail at none, both binding the slice. */
-function rootState(id: string, slice: Params, centre: Centre): PanelState {
-  const address = id === TRACE ? centre.address : null
+/** A root's state: the trace at the center's address, the rail at none, both binding the slice. */
+function rootState(id: string, slice: Params, center: Center): PanelState {
+  const address = id === TRACE ? center.address : null
   return {
     address,
     resolution: {

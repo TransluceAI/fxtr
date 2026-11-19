@@ -86,7 +86,7 @@ export const VIEWS = {
   invocation: 'invocation',
   /** Any value as a data tree. */
   tree: 'tree',
-  /** A workflow's steps, as the centre shows them. */
+  /** A workflow's steps, as the center shows them. */
   trace: 'trace',
   flowchart: 'flowchart',
   /** The file a step's or workflow's function is implemented in. */
@@ -142,13 +142,19 @@ function formatParamList(params: Params): string[] {
   return Object.keys(params).sort().map((name) => `${token(name)}=${formatValue(params[name]!)}`)
 }
 
-function call(view: string | null, args: readonly string[]): string {
-  return `${view === null ? '' : token(view, VIEW)}(${args.join(', ')})`
+/** How an address is spelled: `compact` leaves out the space after each comma (a URL's spelling;
+ *  the parser reads either). */
+export interface FormatOptions {
+  compact?: boolean
+}
+
+function call(view: string | null, args: readonly string[], { compact = false }: FormatOptions = {}): string {
+  return `${view === null ? '' : token(view, VIEW)}(${args.join(compact ? ',' : ', ')})`
 }
 
 /** An address with the params a panel shows it at. */
-export function formatAddress(address: Address, params: Params = NO_PARAMS): string {
-  return call(address.view, [...(address.location ? [formatLocation(address.location)] : []), ...formatParamList(params)])
+export function formatAddress(address: Address, params: Params = NO_PARAMS, options?: FormatOptions): string {
+  return call(address.view, [...(address.location ? [formatLocation(address.location)] : []), ...formatParamList(params)], options)
 }
 
 function formatRelLocation(location: RelLocation): string | null {
@@ -165,9 +171,9 @@ function formatRelLocation(location: RelLocation): string | null {
 }
 
 /** A relative address, with the params a panel binds itself. */
-export function formatRel(rel: Rel, own: Params = NO_PARAMS): string {
+export function formatRel(rel: Rel, own: Params = NO_PARAMS, options?: FormatOptions): string {
   const location = formatRelLocation(rel.location)
-  return call(rel.view, [...(location === null ? [] : [location]), ...formatParamList(own)])
+  return call(rel.view, [...(location === null ? [] : [location]), ...formatParamList(own)], options)
 }
 
 // ── parsing ──

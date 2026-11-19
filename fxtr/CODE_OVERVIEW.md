@@ -10,7 +10,7 @@ links and ships copies of in the Claude Code and Codex plugins (repository tooli
 `scripts/skills/`).
 
 The core install needs no database: the Postgres runner is the `runner` extra, and the viewer's
-backend is the `debug-web` extra on top of it.
+backend is the `debug-web` extra on top of it. The `oci` kind of remote is the `oci` extra.
 
 ## Components
 
@@ -39,14 +39,15 @@ and experiment handles, and the Postgres runner implements the client interfaces
 5. **The project** (`project/`; `project/CODE_OVERVIEW.md`). What a user's code is part of:
    locating and configuring a project, pinning the code a launch runs, `ProjectClient` (what user
    code holds), the launch helpers, `fxtr new`, and the `fxtr` command line.
-   It imports nothing that needs the `runner` extra.
+   It imports nothing that needs the `runner` extra. `project/remotes/`
+   (`project/remotes/CODE_OVERVIEW.md`) holds remotes, to push and pull jobs.
 
 ## Source tree
 
 ```
 fxtr/
-├── pyproject.toml          package metadata, runtime dependencies, the `runner` and `debug-web`
-│                           extras, the `fxtr` script, pytest config, and Pyright scope
+├── pyproject.toml          package metadata, runtime dependencies, the `runner`, `debug-web`, and
+│                           `oci` extras, the `fxtr` script, pytest config, and Pyright scope
 ├── LICENSE, NOTICE        Apache License 2.0 and copyright notice (behaviors/ carries the same)
 ├── CHANGELOG.md            release notes, a section per version
 ├── hatch_build.py          build hook: ships the built viewer (frontend/dist) in the sdist and
@@ -227,12 +228,12 @@ the anyio backend and a per-test timeout. Each group's owner describes its files
 
 - `test_codec.py`, `test_core_car.py`, `test_storage.py`, `test_loader_registry.py`: entities and
   storage (`core/CODE_OVERVIEW.md`).
-- `test_dataclass_*.py`, `test_schema.py`, `test_array.py`, `test_arrow_arrays.py`,
-  `test_dual_backed_array.py`, the query tests (`test_query*.py`, `test_local_*.py`,
-  `test_deep_array_queries.py`, `test_duckdb_executor.py`, `test_*array_query_boundaries.py`,
-  `test_user_array_sql*.py`), and their shared arrays (`array_testing.py`,
-  `deep_array_testing.py`, `future_annotations_testing.py`): entity definitions, arrays, and
-  queries (`entity_defns/CODE_OVERVIEW.md`).
+- `test_dataclass_*.py`, `test_dynamic_data.py`, `test_partial.py`, `test_schema.py`,
+  `test_array.py`, `test_arrow_arrays.py`, `test_dual_backed_array.py`, the query tests
+  (`test_query*.py`, `test_local_*.py`, `test_deep_array_queries.py`, `test_duckdb_executor.py`,
+  `test_*array_query_boundaries.py`, `test_user_array_sql*.py`), and their shared arrays
+  (`array_testing.py`, `deep_array_testing.py`, `future_annotations_testing.py`): entity
+  definitions, arrays, and queries (`entity_defns/CODE_OVERVIEW.md`).
 - `test_experiment_registry.py`: registration from the decorators, ambiguous names, the
   `__main__` naming rule. `test_experiment_signatures.py`: signatures, `run_output_type`, the
   decorators, annotation-declared signatures, `Step.invoke`, path and cache address formatting.
@@ -246,7 +247,8 @@ the anyio backend and a per-test timeout. Each group's owner describes its files
   (`runner/postgres/CODE_OVERVIEW.md`); `test_debug_web_*.py` and
   `test_runner_postgres_debug_web.py`: the viewer backend
   (`runner/postgres/debug_web/CODE_OVERVIEW.md`).
-- `test_project_*.py`: the project (`project/CODE_OVERVIEW.md`).
+- `test_project_*.py`: the project (`project/CODE_OVERVIEW.md`), and
+  `test_project_remotes*.py` its remotes (`project/remotes/CODE_OVERVIEW.md`).
 - `test_example_*.py`: the example project's experiments on
   Postgres, and an opt-in launch of a copy of the project through `uv run`
   (`example_projects/basic_project/CODE_OVERVIEW.md`).

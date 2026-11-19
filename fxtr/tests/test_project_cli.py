@@ -3,13 +3,19 @@ environment: what each command prints and exits with, and the refusals."""
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import dataclasses
+import os
+import pty
+import sys
+import uuid
+from collections.abc import Callable, Iterator, Sequence
 from contextlib import AbstractAsyncContextManager
 from pathlib import Path
 from typing import Any
 
 import pytest
-from postgres_testing import FakeEnvironment, a_client, a_runner
+from postgres_testing import FakeEnvironment, a_client, a_project, a_runner
+from project_remotes_testing import STORE
 
 from fxtr.core.car import read_car
 from fxtr.core.entity_data import EntityID
@@ -18,12 +24,13 @@ from fxtr.experiment.handles import ArrayHandle
 from fxtr.experiment.steps import StepContext, step
 from fxtr.experiment.workflows import WorkflowContext, workflow
 from fxtr.project import cli, running
-from fxtr.project.client import JobNotFinishedError, ProjectClient
-from fxtr.project.config import LOCAL_CONFIG_FILENAME, Project
+from fxtr.project.client import JobNotFinishedError, JobSummary, ProjectClient
+from fxtr.project.config import LOCAL_CONFIG_FILENAME, Project, RemoteConfig, RemotesConfig
 from fxtr.project.environment import Pin, PinRefusedError, Problem
 
 pytest.importorskip("sqlalchemy")
 
+from fxtr.runner.postgres.client import LocalProjectClient  # noqa: E402
 from fxtr.runner.postgres.database import Database  # noqa: E402
 
 pytestmark = pytest.mark.anyio
@@ -53,9 +60,15 @@ class Opener:
     """An :class:`~fxtr.project.cli.OpenClient` over the test database, recording what each
     command asked for."""
 
-    def __init__(self, database: Database, environment: FakeEnvironment | None = None) -> None:
+    def __init__(
+        self,
+        database: Database,
+        environment: FakeEnvironment | None = None,
+        project: Project | None = None,
+    ) -> None:
         self.database = database
         self.environment = FakeEnvironment() if environment is None else environment
+        self.project = project
         self.opened: list[tuple[Path | None, bool]] = []
 
     def __call__(
@@ -67,6 +80,7 @@ class Opener:
             *FUNCTIONS,
             environment=self.environment,
             verify_environment=verify_environment,
+            project=self.project,
         )
 
 
@@ -287,6 +301,171 @@ async def test_export_writes_a_jobs_record(
     assert status == cli.EXIT_REFUSED and "--update" in err
     status, out, _ = await fxtr(opener, capsys, "jobs", "import", "--update", str(path))
     assert (status, out) == (cli.EXIT_OK, f"job {done}: imported from {path}\n")
+    status, out, _ = await fxtr(opener, capsys, "jobs", "import", "--replace", str(path))
+    assert (status, out) == (cli.EXIT_OK, f"job {done}: imported from {path}\n")
+
+
+# ---- push and pull ----
+
+
+async def test_push_sends_a_job_and_pull_brings_it_back(
+    database: Database, capsys: pytest.CaptureFixture[str]
+) -> None:
+    STORE.clear()
+    remotes = {"team": RemoteConfig("team", "memory", {})}
+    project = dataclasses.replace(a_project(database), remotes=RemotesConfig(remotes))
+    opener = Opener(database, project=project)
+    _, out, _ = await fxtr(opener, capsys, "run", doubled.name, "--input", "x=1")
+    done = job_id_in(out)
+    status, out, _ = await fxtr(opener, capsys, "push", done, "--tag", "latest")
+    (pushed, hint) = out.splitlines()
+    assert status == cli.EXIT_OK
+    assert pushed.startswith(f"job {done}: pushed to team as latest (sha256:")
+    assert hint == "pull it with: fxtr pull latest"
+    # This project has the job, so a pull needs --update.
+    status, _, err = await fxtr(opener, capsys, "pull", "latest")
+    assert status == cli.EXIT_REFUSED and "--update" in err
+    status, out, _ = await fxtr(opener, capsys, "pull", "latest", "--update")
+    assert (status, out) == (cli.EXIT_OK, f"job {done}: pulled from team (latest)\n")
+    status, out, _ = await fxtr(opener, capsys, "pull", "latest", "--replace")
+    assert (status, out) == (cli.EXIT_OK, f"job {done}: pulled from team (latest)\n")
+    # A pull can adopt the job's results into the step cache, as an import can.
+    await fxtr(opener, capsys, "cache", "clear", "--all")
+    status, _, err = await fxtr(
+        opener, capsys, "pull", "latest", "--update", "--overwrite-cache-conflicts"
+    )
+    assert status == cli.EXIT_REFUSED and "needs --adopt-cache" in err
+    _, out, _ = await fxtr(opener, capsys, "pull", "latest", "--update", "--adopt-cache")
+    assert out.splitlines() == [
+        f"job {done}: pulled from team (latest)",
+        f"job {done}: adopted 1 cache entry",
+    ]
+    status, _, err = await fxtr(opener, capsys, "push", done, "--remote", "elsewhere")
+    assert status == cli.EXIT_REFUSED and "no remote named 'elsewhere'" in err
+    # Several tags, on a record the remote holds already; and without any, the kind's default
+    # tag, which the pull command names.
+    _, out, _ = await fxtr(opener, capsys, "push", done, "--tag", "a", "--tag", "b")
+    assert out.startswith(f"job {done}: already on team as a, b (sha256:")
+    _, out, _ = await fxtr(opener, capsys, "push", done)
+    assert out.splitlines()[1] == f"pull it with: fxtr pull job-{done}"
+
+
+@pytest.fixture
+def terminal(monkeypatch: pytest.MonkeyPatch) -> Iterator[Callable[[bytes], None]]:
+    """Makes standard input a real terminal with these keys typed into it."""
+    typist, screen = pty.openpty()
+    monkeypatch.setattr("sys.stdin", os.fdopen(screen))
+
+    def type_keys(keys: bytes) -> None:
+        os.write(typist, keys)
+
+    yield type_keys
+    sys.stdin.close()
+    os.close(typist)
+
+
+async def two_jobs_with_a_remote(
+    database: Database, capsys: pytest.CaptureFixture[str]
+) -> tuple[Opener, str, str]:
+    """An opener whose project has one remote, and two finished jobs: the older, the newer."""
+    STORE.clear()
+    remotes = {"team": RemoteConfig("team", "memory", {})}
+    project = dataclasses.replace(a_project(database), remotes=RemotesConfig(remotes))
+    opener = Opener(database, project=project)
+    _, out, _ = await fxtr(opener, capsys, "run", doubled.name, "--input", "x=1")
+    older = job_id_in(out)
+    _, out, _ = await fxtr(opener, capsys, "run", doubled.name, "--input", "x=2", "--root", "other")
+    return opener, older, job_id_in(out)
+
+
+@pytest.mark.parametrize(
+    "typed, chosen",
+    [(b"\n", "newer"), (b"1\n", "newer"), (b"2\n", "older"), (b"7\nnope\n2\n", "older")],
+)
+async def test_a_push_with_no_job_asks_which_at_a_terminal(
+    database: Database,
+    capsys: pytest.CaptureFixture[str],
+    terminal: Callable[[bytes], None],
+    typed: bytes,
+    chosen: str,
+) -> None:
+    opener, older, newer = await two_jobs_with_a_remote(database, capsys)
+    terminal(typed)
+    status, out, err = await fxtr(opener, capsys, "push")
+    assert status == cli.EXIT_OK
+    assert out.startswith(f"job {newer if chosen == 'newer' else older}: pushed to team")
+    first, second = err.splitlines()[:2]
+    assert first.split()[0] == "1" and first.rstrip().endswith(newer[:8])
+    assert second.split()[0] == "2" and second.rstrip().endswith(older[:8])
+    assert f"{doubled.name} (other)" in first and "succeeded" in first and "just now" in first
+    assert "Push which job to team? [1]: " in err
+    assert ("Choose a number from 1 to 2." in err) == typed.startswith(b"7")
+
+
+async def test_a_running_job_is_shown_but_cannot_be_chosen(
+    database: Database,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    terminal: Callable[[bytes], None],
+) -> None:
+    opener, older, newer = await two_jobs_with_a_remote(database, capsys)
+    running_id = uuid.uuid4()
+
+    list_jobs = LocalProjectClient.list_jobs
+
+    async def listed(self: LocalProjectClient, *, limit: int | None = None) -> list[JobSummary]:
+        jobs = await list_jobs(self, limit=limit)
+        return [dataclasses.replace(jobs[0], job_id=running_id, state="running"), *jobs]
+
+    monkeypatch.setattr(LocalProjectClient, "list_jobs", listed)
+    terminal(b"2\n")
+    status, out, err = await fxtr(opener, capsys, "push")
+    assert status == cli.EXIT_OK and out.startswith(f"job {older}: pushed to team")
+    assert err.splitlines()[0].split()[0] == "-"
+    assert str(running_id)[:8] in err.splitlines()[0]
+    assert newer[:8] in err.splitlines()[1]
+
+
+async def test_a_push_with_no_job_refuses_with_nobody_at_a_terminal(
+    database: Database, capsys: pytest.CaptureFixture[str]
+) -> None:
+    opener, older, newer = await two_jobs_with_a_remote(database, capsys)
+    # pytest's standard input is not a terminal.
+    status, out, err = await fxtr(opener, capsys, "push")
+    assert (status, out) == (cli.EXIT_REFUSED, "")
+    assert "fxtr push JOB" in err
+    assert [line.split()[0] for line in err.splitlines()[1:]] == [newer, older]
+
+
+async def test_ending_a_terminals_input_chooses_no_job(
+    database: Database, capsys: pytest.CaptureFixture[str], terminal: Callable[[bytes], None]
+) -> None:
+    opener, _, _ = await two_jobs_with_a_remote(database, capsys)
+    terminal(b"\x04")  # Ctrl-D
+    status, out, err = await fxtr(opener, capsys, "push")
+    assert (status, out) == (cli.EXIT_REFUSED, "")
+    assert "no job chosen" in err
+
+
+async def test_a_push_with_no_job_and_no_jobs_says_to_run_one(
+    database: Database, capsys: pytest.CaptureFixture[str]
+) -> None:
+    remotes = {"team": RemoteConfig("team", "memory", {})}
+    project = dataclasses.replace(a_project(database), remotes=RemotesConfig(remotes))
+    status, _, err = await fxtr(Opener(database, project=project), capsys, "push")
+    assert status == cli.EXIT_REFUSED and "run one first" in err
+
+
+async def test_jobs_list_can_show_only_the_newest(
+    database: Database, capsys: pytest.CaptureFixture[str]
+) -> None:
+    opener, older, newer = await two_jobs_with_a_remote(database, capsys)
+    _, out, _ = await fxtr(opener, capsys, "jobs", "list", "--limit", "1")
+    assert [line.split()[0] for line in out.splitlines()] == [newer]
+    _, out, _ = await fxtr(opener, capsys, "jobs", "list")
+    assert [line.split()[0] for line in out.splitlines()] == [newer, older]
+    with pytest.raises(SystemExit):
+        await fxtr(opener, capsys, "jobs", "list", "--limit", "0")
 
 
 # ---- the cache ----

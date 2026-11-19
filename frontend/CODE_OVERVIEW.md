@@ -2,10 +2,48 @@
 
 The experiment viewer: a Vite/React app in this folder that shows one **job** of the Postgres
 runner as a browsable tree of workflow invocations, each a list of **step cards** with the arrays
-they produced. It reads the `debug_web` backend (`fxtr/src/fxtr/runner/postgres/debug_web/`)
-and nothing else; that backend also serves the built app (`dist/`), so the two share one origin
-and every URL in `src/config.ts` is origin-relative. A job in progress is shown as it runs: the records on screen are polled and
-updated in place (see "Live jobs").
+they produced. It reads the `debug_web` backend (`fxtr/src/fxtr/runner/postgres/debug_web/`).
+Locally that backend also serves the built app (`dist/`), so the two share one origin
+and the default URLs in `src/config.ts` are origin-relative. A job in progress is shown as it runs:
+the records on screen are polled and updated in place (see "Live jobs").
+
+The same build is also the viewer a hub serves for one job pushed to it ("Hosted by a hub" below).
+
+## Hosted by a hub
+
+A hub's page for one job frames this app, loaded with `?hosted`, in a sandboxed iframe on
+a domain of its own (no cookies, no storage, no popups or navigation). `src/hosted.ts` is the
+frame's side of the handshake: it posts `fxtr-viewer-ready` to its parent and accepts the first
+`fxtr-viewer-config` message from its own parent window whose API and renderer bundle are on the
+frame's own origin (its docstring gives the rules, and why a configuration naming another origin
+is refused). The configuration names the job by `jobId`, the token that reads it, the API root,
+and the renderer bundle; `HostedConfig` in `fxtr-view-shell-util/hosted` lists the fields.
+A message's other fields are ignored. Outside a hub, the same build must not be framed at all:
+`fxtr view` serves it with
+`Content-Security-Policy: frame-ancestors 'none'` (`debug_web/app.py`), as does the dev server
+(`vite.config.ts`). `main.tsx` awaits the handshake, translates it with `hostedViewerConfig`, and
+installs one read-only `ViewerConfig` before loading renderers or data; if no configuration
+arrives it writes why into the page. `config.ts` supplies local defaults and `viewerConfig()`
+reads the configuration for this page. URLs, request headers, optional source and event
+endpoints, a notice, and a details action are ordinary configuration
+values; shared loaders and components do not test hosted mode. The entity loader is constructed
+on first use, after setup.
+
+The viewer token expires in minutes. The hub's page fetches a new one before then and posts
+it to the running frame as another `fxtr-viewer-config` message; `receiveHostedConfig` keeps
+listening after the first and passes each renewal for the same `jobId` to `main.tsx`, which swaps
+the request headers in place with `renewViewerHeaders`. Every request reads `viewerConfig().headers` when it is sent,
+so a renewal needs no reload and the reader keeps their place. Both local and hosted jobs can
+change while open: `Jobs` refreshes the summary and watched records every 30 seconds, including
+settled records that may have been resumed or synced. Running records also use the faster live poller.
+
+`hosted.ts` owns the viewer token, bundle notices, and the callback that asks the parent to
+open job details and sharing. Bundle notices distinguish a different recorded commit from an
+unknown build commit. `components/ViewerSettings.tsx` displays the notice and action beside the
+theme selector. The parent keeps navigation, authenticated actions, the timing of token
+renewals, and the link to the job's source outside the sandbox; the viewer fills the page,
+and its hosted configuration has no source endpoint. Null source endpoints make `api/resources.ts` report unavailable files
+without requesting them (`missingSourceLabel` says so, rather than that a name is not indexed); a null events endpoint leaves the events socket disconnected.
 
 ## Running it
 
@@ -28,16 +66,23 @@ card tables, the slice, the detail view, and panels) and the components drawing 
 
 ```
 frontend/
-├── index.html, vite.config.ts   the app shell (its inline script applies a kept theme before the
-│                                first paint) and its build
+├── index.html, vite.config.ts   the app shell and its build (the dev server's /api proxy and its
+│                                refusal to be framed)
+├── public/assets/theme.js       applies a kept theme before the first paint; a file of its own,
+│                                not inline, because a hub's content policy allows only scripts
+│                                from the viewer's origin
 ├── package.json                 pnpm scripts: dev, build, typecheck, preview
 └── src/
     ├── main.tsx, App.tsx        entry (loads the project's views, follows the viewer's events,
     │                            then renders over the live views); the job → level → card state
     │                            (the job following launches), the level's slice, the rail, the
     │                            workspace (cards overlay + the detail view's panels), and the toasts
-    ├── config.ts                backend URLs (the API, the views, the events, files, EXPERIMENT.md), the repo
-    │                            root override of editor links (VITE_* env)
+    ├── config.ts                ViewerConfig, local endpoint defaults (VITE_* env), the repo-root
+    │                            override, startup configuration read through viewerConfig(), and
+    │                            the headers' renewal
+    ├── hosted.ts                the frame's handshake (the origin rule, token renewals) and
+    │                            translation of HostedConfig into ViewerConfig, including notices
+    │                            and the parent-page action
     ├── types.ts                 the UI model: Cell, SchemaJson/ArrayTypeJson, Column, TableRow,
     │                            StepDoc, TableDescriptor/TablePage, StepArg/ExprToken, Level, LevelRef,
     │                            SourceInfo, JobSummary
@@ -52,11 +97,15 @@ frontend/
     │   │                        fetch), the documents, response types,
     │   │                        `fetchVersions` (the aliased `invocationVersion` poll)
     │   ├── cbor.ts              DAG-CBOR decoding; CID / bytes / struct / list predicates
+    │   ├── preview.ts           a step attempt's live preview: fetched from /api/previews when the
+    │   │                        step pin's preview seq grows, decoded, a Partial's wrapper taken off
     │   ├── live.ts              the live store: payload-free overviews and levels, separate complete
     │   │                        invocation/step entries, kept current while watched; the poller;
     │   │                        `retryAndReset`, what every retry button calls
     │   ├── finishes.ts          what finished when, as this page has seen it: each run's finishes of
     │   │                        the last few minutes, from successive overview fetches
+    │   ├── jobs.ts              the job picker's other reads: the commits the jobs ran at and
+    │   │                        the starred jobs (plain routes; a backend without one is null)
     │   ├── events.ts            the viewer's events: the /api/events WebSocket, reopened with
     │   │                        backoff when it closes, and onViewerEvent (views and job events)
     │   └── resources.ts         the promise cache for source info, code files, and the project's EXPERIMENT.md. A failed load stays cached, so it is requested
@@ -84,14 +133,20 @@ frontend/
     │                            useStableCallback), launches (useFollowLaunches: a page switches
     │                            to each launched job unless someone picked one in it, and says
     │                            why in a toast), linkProblem (the toast a link naming nothing
-    │                            raises), debounce (useDebouncedInput, typing applied
+    │                            raises, and a page's link's parts that did not read),
+    │                            urlState (the URL's format, a history entry's snapshot, and
+    │                            what a page shows of a job from either), urlWriter (the one
+    │                            writer of the URL and the history), debounce (useDebouncedInput, typing applied
     │                            once it pauses), dismiss (useDismiss: a press outside or Escape
     │                            closes), cardTable (a card's table state
     │                            for the slice and its page, read by the card,
     │                            the page of its invocations with what each produced, and
     │                            the invocation behind each row of a page),
     │                            scrollAnchor (holding a card still on screen across a slice
-    │                            change), columnWidths (the widths a card table's columns start
+    │                            change), keepScroll (putting a panel's scroll back when what
+    │                            it shows changes, except while the panel's view autoscrolls,
+    │                            `DetailPane`'s `viewAutoscrolls`), followBottom (a scroller kept at
+    │                            its bottom as streamed content grows), columnWidths (the widths a card table's columns start
     │                            at), keyLists (the level's dims and where the
     │                            slice panel reads each one's values, a node's own dims, and the
     │                            loaders of a dim's value pages), panelView (a node panel's view options and
@@ -106,7 +161,9 @@ frontend/
     │                            fresh (ids new since the last render, for fade-ins), values
     │                            (shape-driven summaries and one-line container previews), code
     │                            (editor links), editor (the picked editor, kept in localStorage),
-    │                            time, cx, sets, keyboard (editable targets, the platform
+    │                            time (durations, and when something happened in words),
+    │                            commitGraph (the job picker's commit graph: narrowing the
+    │                            commits shown, and each one's lane and lines), cx, sets, keyboard (editable targets, the platform
     │                            modifier label and exclusive Command on Mac / Control elsewhere
     │                            matching), tableKeys (j/k in a grid: the step's key, the lit
     │                            chip, and clicking the next one in its column), modifierClick
@@ -127,13 +184,14 @@ frontend/
     │   │                        parts a head draws
     │   ├── resolve.ts           an address against the whole job and the registry (`Catalog`): the
     │   │                        params it uses, the target a panel renders (`Target`), or why there
-    │   │                        is none
+    │   │                        is none; the level a step path walks to (`levelAt`)
     │   ├── catalog.ts           useJobCatalog: every level of the job from the live store, loaded
     │   │                        and watched as addresses ask for them
     │   ├── columns.ts           the layout (columns of panels) and the panels' sequence, as pure
     │   │                        rewrites: insert, move, close, pin, navigate, history
     │   ├── useColumns.ts        the columns as state: following links, what every panel resolves
-    │   │                        to (`resolveColumns`), link states, highlights, reveals
+    │   │                        to (`resolveColumns`), link states, highlights, reveals, and
+    │   │                        the layout it opens with (a history entry's, or a link's, checked)
     │   ├── placement.ts         where a new panel goes (`autoPlacement`)
     │   ├── ColumnsView.tsx      the columns on screen: sliding, resizing, dropping, animation
     │   ├── panelSizing.ts       how tall the panels in a column are
@@ -164,7 +222,9 @@ frontend/
     │   ├── DefaultInvocationPanel.tsx  an invocation opened in a panel with no renderer chosen:
     │   │                        its status line and provenance, its inputs as rows that
     │   │                        expand to their values, a workflow's runs, then its output
-    │   │                        inline (a sketch while it runs, its error when it failed);
+    │   │                        inline (a step's live preview, else a sketch, while it runs;
+    │   │                        its error, and a step's last preview, when it failed; a
+    │   │                        step's last preview when it stopped without an output);
     │   │                        a workflow's has Open in trace, showing its level
     │   ├── RendererInfo.tsx     the info icon ending a renderer's row in a view dropdown: a
     │   │                        card naming the registry component (the "renderer") behind it
@@ -183,10 +243,28 @@ frontend/
 
 ## How the pieces connect
 
+- **The URL** holds what the page shows: the job, the level and how the center shows it, the slice,
+  a card to scroll to (kept until the level changes), and the panels (their addresses and params,
+  and where they are on screen), so a link can be shared or written by an agent.
+  `lib/urlState.ts`'s module comment is the format. One object writes the URL and the history
+  (`lib/urlWriter.ts`'s `UrlWriter`, made by `Jobs`): only switching job makes a history entry,
+  and everything else replaces the current one. Switching job is not a transition: until the next
+  job's summary and view have loaded, the page says it is loading rather than keep the job before
+  on screen. `Jobs` tells it the job shown (so a job whose view
+  never loads is still named, and a link naming no job gets the newest's), and `JobView` what it
+  shows, its `ViewState` (`urlState.ts`): read as it opens (`pageViewFrom`; a center below the root
+  waits for the levels on the way to load, `resolve.ts`'s `levelAt`), and written back as it
+  changes, except while a link is still being worked out. Each entry also holds the `ViewState`
+  itself, panel ids and histories
+  included, so a reload, or going back to the job before, opens it exactly. Back, forward, or an
+  edited link opens the job's view afresh from the entry come to: `Jobs` keys the view by the entry
+  and works out what it opens with once (`pageViewFrom`), after looking up the newest job for a
+  link naming none, and leaves the view shown alone, writing nothing, until the job asked for is
+  the one shown. A view's own state is never in it, only its params.
 - `App` loads the job named in the URL hash directly (newest otherwise), pins the chosen job id
   for later refreshes, and follows launches (`lib/launches.tsx`): each job a launcher announces on
   the viewer's events (`api/events.ts`) replaces the one shown, unless someone picked a job in
-  the page (in the job picker, or by changing the hash), and a toast (`components/Toasts.tsx`,
+  the page (in the job picker, by changing the hash, or by back and forward), and a toast (`components/Toasts.tsx`,
   over sonner) says why and offers the way back, or the new job. It renders `JobView`, which holds
   the stack of opened levels (`LevelRef[]`) and asks `useLevel` for the current one; it also holds which view of the level is on screen (`pageView`: the trace, or an
   `InvocationPanel` renderer chosen in `LevelViews`) and whether the trace is replaced by the
@@ -246,11 +324,12 @@ clockwise from the top, for the share of its invocations that have finished. Don
 case and says nothing: only the minimap draws done dots (and draws a running step as a solid dot
 in ink rather than a ring); everywhere else a done glyph
 is omitted (`StateGlyph` keeps its room with `reserve` where labels must stay aligned). Anything standing for several invocations (a card, a key value, a level, a job)
-takes two channels: its **shape** is the most active state present (`running > queued > waiting >
-failed > stopped > done`) and it is drawn in the danger colour when anything in it failed, so
+takes two channels: its **shape** is the most active state present
+(`running > queued > waiting > failed > stopped > done`) and it is drawn in the danger colour
+when anything in it failed, so
 neither activity nor a failure is ever hidden. Steps are told apart by name, not colour.
 
-- **Where it shows.** The job picker's list (not its button), the minimap rows, the argument chips' hover previews
+- **Where it shows.** The job picker's rows (not its button), the minimap rows, the argument chips' hover previews
   (shown when the chip's card is not fully on screen: the glyph, a run's ring, and its counts; the
   chip itself carries the kind icon), and the level header. A run's card head and its flowchart
   node show its progress line instead (below). The
@@ -354,7 +433,8 @@ version changes and manual refreshes into one follow-up after an active read fin
 loads and query changes block navigation; background refreshes show a spinner while the displayed
 page remains interactive, and slow reads can complete. Query identity changes and unmounts cancel their active reads.
 `useQuery` also keeps the last value of its 500 most recent keys (`recent`), so a query mounted, or
-changed, to a key read before starts from that value and revalidates it as a refresh: a view that
+changed or enabled, to a key read before starts from that value and revalidates it as a refresh
+(`keepQueryValue` keeps a value read elsewhere, as the job picker's summaries): a view that
 remounts (a panel reopened, a level returned to) shows its data at once instead
 of loading. A key must therefore name what it reads wherever it is used, so every key is tagged
 by its read (`['output-page', …]`); tests clear the kept values after each test (`test/setup.ts`). Pages use current results,
@@ -366,12 +446,21 @@ Entity chips use batched type-tag metadata instead of payload dispatch. Hovering
 entity invokes its registered payload renderer. Custom invocation renderers receive complete
 spawn collections only when selected; their `useInvocation` and `useEntity` contracts are unchanged.
 
-The job picker searches and pages server-side. A job named in the URL is looked up directly,
-independent of the picker's page. With no URL selection, the first loaded job is pinned before
-periodic refresh. `Jobs` refreshes its summary every 30 seconds and, when a launch event names
-the selected job, refreshes both the summary and live records (`pokeLive`). This is independent
-of the navigation and toast policy in `lib/launches.tsx`, so a resume refreshes a settled job
-even when the tab stays on it and the job finishes before another summary poll. While watched
+The job picker refreshes its history and demanded summaries each time it opens. Its commit view reads the commits the
+jobs ran at in one request (`api/jobs.ts`'s `fetchJobCommits`), then the summaries of the jobs
+near the viewport in batches (`jobSummariesByIds`), with independent reads for previews
+(`components/jobPickerQueries.ts`, described in the components overview), so rows show at once and their states fill in;
+searching and choosing a branch narrow what was read in the browser (`lib/commitGraph.ts`). Its
+newest-first list searches and pages server-side (`jobSummaries`). Each tab uses the summaries
+from its own read, so a retained page from an inactive tab cannot override fresh summaries.
+A previewed job reads its root level's overview and its reuse counts (`jobReuse`); the overview
+read revalidates and updates the live store, even for a settled job that might have resumed while
+unwatched. A viewer configured with no address for the commits, the stars, or the previews (a hub's, `hosted.ts`) leaves those parts out. A job named in the URL is looked up directly,
+independent of the picker. With no URL selection, the first loaded job is pinned before
+periodic refresh. `Jobs` refreshes its summary and watched records (`pokeLive`) every 30 seconds,
+even when their state is settled: a resume or a hub sync may complete between refreshes. A launch
+event naming the selected job triggers the same refresh immediately. This is independent of the
+navigation and toast policy in `lib/launches.tsx`. While watched
 data is live, the live store refreshes overview metadata every 1.5 seconds, pauses in hidden tabs, and
 backs off after errors. A forced refresh waits until the tab is visible before it is consumed.
 Every overview fetch, changed or not, is recorded in `api/finishes.ts`:
@@ -380,6 +469,33 @@ since the fetch before, which is what the heartbeat and the hover card's rate re
 starts when the page first fetches the level. Changed overviews and forced refreshes invalidate watched step pins,
 including stopped/failed/held pins after a resume. Complete invocation entries use version polling. Refreshes preserve
 the slice, the panels, and scroll, and refresh only each mounted table’s current page.
+
+**A step without a result, and one the job has not taken.** A step is `completed` once it has a
+result, and every view shows that result as its output, whether or not the job has taken it
+(`resultNotTaken` in `api/graphql.ts` says when it has not). A step that finishes after the workflow
+invocation waiting on it ended (another of its steps failed, or the job was cancelled) is the case
+that lasts: its row, card counts, and panels show it completed with its output, and the status line
+of its one invocation (`InvocationStatusLine`) adds a note that the job has not used the result and
+that a resume picks it up without running the step again.
+
+While a step runs, and after it fails or stops without a result, its latest `ctx.preview` stands
+in for its output. `components/StepPreview.tsx` is the one place that draws it, fetching the bytes
+(`api/preview.ts`, which takes every partial value's wrapper off and marks what came out of one,
+`markPartial`) when the step pin's polled
+`preview.seq` grows (one fetch at a time, never cancelled by a newer `seq`, then the latest), and
+dispatching the value with `RenderValue` in the `PartialEntityPanel` slot,
+with `live` false once the step has failed or stopped:
+the type's renderer (behaviors' conversation view for a rollout), else the cbor-tree wildcard, the
+same tree a finished entity's raw view shows. The preview's box opens scrolled to the bottom and,
+while the step runs, follows the bottom as the preview grows unless scrolled up
+(`lib/followBottom.ts`). While a step it shows runs and publishes previews, the
+poller polls every `PREVIEW_POLL_INTERVAL` (400ms) instead of every 1.5s. Every view that shows an
+unfinished step invocation in place of its output renders it: `PendingInvocation` (a node's default
+view at one unfinished invocation) and `DefaultInvocationPanel` (the `invocation` view a running
+row opens). `test/unfinished-step-views.test.tsx` renders each such view and fails if one loses the
+preview; a new view for unfinished steps joins its list. In a table listing a run's invocations, a
+running step's row (`TableRow.running`) shows the preview in one line across its empty value cells:
+`StepPreviewLine`, which reads the step's pin, dispatching in the `PartialEntityInline` slot.
 
 ## The detail view: panels and addresses
 
@@ -416,7 +532,7 @@ following the panel before it, or is **pinned**, and changes only when the user 
   the level's workflow for `/`), or says why there is none, and whether that is the address's fault
   (`structural`).
 - **The sequence** (`panes/columns.ts`): every panel has a place in one sequence (`prevId`), after
-  the roots: `@trace`, at the centre's address (`Centre`: the level's workflow through the trace,
+  the roots: `@trace`, at the center's address (`Center`: the level's workflow through the trace,
   the flowchart, or a view of it), and `@rail`, at none; both bind the slice. A browsing panel
   stores its address relative to the panel before it (`rel`) and the params it binds itself
   (`own`); its bindings are that panel's with its own over them (`resolveColumns`), so it follows
@@ -453,7 +569,7 @@ following the panel before it, or is **pinned**, and changes only when the user 
   closes the same way (`namesNothing`). A link carries its row's full keys: the panel keeps only
   what they add to its view's bindings.
 - **Where links come from.** The trace's links (card rows, open buttons, the minimap, a view of the
-  workflow in the centre) open from `@trace`, the rail's (the experiment) from `@rail`
+  workflow in the center) open from `@trace`, the rail's (the experiment) from `@rail`
   (`lib/linkBase.ts`). A panel's links open from it: its rows as itself at the row's keys, its
   entity chips as the value at their place relative to it (`.output…` in a node, `.…` below a
   value), and a renderer's `useLink` / `EntityLink` at the view and location the renderer names
@@ -476,7 +592,8 @@ following the panel before it, or is **pinned**, and changes only when the user 
   browsing panel right after its view shows what it names, and dashed while a pinned panel does.
   Hovering a link outlines the panel it would navigate or reveal, or the line where it would open.
   A panel's border flashes blue whenever what it shows changes, whatever changed it
-  (`ColumnsView`).
+  (`ColumnsView`). When a link opens a panel past the detail view's right edge, the columns
+  slide left until it is in view, so the panel the link was in moves left (`slideIntoView`).
 - **One place for each view choice.** A panel's view (an entity panel's renderer, the view a
   node's panel shows its output through) is its address's view, so back and forward return to it.
 - **Layout** (`ColumnsView`, `placement.ts`, `panelSizing.ts`): columns slide over the trace,
@@ -486,8 +603,11 @@ following the panel before it, or is **pinned**, and changes only when the user 
   nothing is measured while the columns slide, and `--slide` is set on the slice control alone
   (`App`), the one thing that reads it.
 
-The layout is per-session state, not persisted. It is kept when another level is shown, and so is
-the slice.
+The layout is kept when another level is shown, and so is the slice. Both are in the URL (see "How
+the pieces connect"). Panels opened from a link are placed by `layout` when it gives one, else as
+following links to them in sequence would place them (`urlState.ts`'s `columnsFromUrl`); each is
+checked once the levels it walks have loaded, and a browsing one naming nothing closes with a
+toast, as a followed link's would (`useColumns`'s `initial`).
 
 ## The view system
 
@@ -499,7 +619,7 @@ which serves the dispatch components (`RenderEntity`, `RenderInvocation`, `useRe
 renders slots with. The app is compiled with the viewer's own renderers only
 (`fxtr-view-default-renderers`); the renderers of the project the backend serves come from that
 project's view bundle, loaded at runtime by `views/registry.ts`'s `loadViews`. It fetches the
-manifest from `VIEWS_BASE`, checks the contract version before running any of the bundle's code,
+manifest from the configured `viewsBase`, checks the contract version before running the bundle,
 links the stylesheet, imports the module, calls its factory with this app's instances of the
 shared modules, and concatenates the renderers after the defaults. A 404 means the project has no
 renderers of its own; any other failure (no build yet, another version, a module that throws,
@@ -601,7 +721,7 @@ app gives them two surfaces, both reading the registry through `useRenderers`:
   (`Level.resultCid` as its output), inside the card column's
   `OpenEntityContext` so its entity chips still open the detail view. The minimap keeps drawing
   the cards (with no geometry to map) but no selection or focus. Reset on every level change. The
-  centre's address then names the renderer, so its relative links resolve against the workflow's
+  center's address then names the renderer, so its relative links resolve against the workflow's
   location. A renderer's row is draggable, carrying the workflow's address through it
   (`renderer(/…)`), so the level can be opened in a panel instead, through a renderer or `invocation`
   (`DefaultInvocationPanel`: its status and provenance, its inputs, a workflow's runs with their
@@ -643,22 +763,23 @@ read from the backend is kept until the replay stops, so it is meant for finishe
 
 ## Theme
 
-Light or dark follows the system's preference unless the **theme toggle** at the foot of the rail
-(`ThemeToggle`, `lib/theme.ts`) picks one. A pick is `data-theme` on `<html>`, kept in
-`localStorage` (`fxtr-theme`) and applied by the inline script in `index.html` before the first
-paint. Every colour token in `styles/tokens.css` is written `light-dark(<light>, <dark>)`, and
+Light or dark follows the system's preference unless the **theme toggle** in the bottom-left
+Settings menu (`ThemeToggle`, `lib/theme.ts`) picks one. A pick is `data-theme` on `<html>`, kept in
+`localStorage` (`fxtr-theme`) and applied by `public/assets/theme.js`, which `index.html` loads
+before the first paint. Every colour token in `styles/tokens.css` is written `light-dark(<light>, <dark>)`, and
 `:root`'s `color-scheme` (`light dark`, or the picked one) chooses between them; the same property
 themes native controls and scrollbars. Beside the viewer's own tokens are the chart colours,
 a default palette for the data in renderers' charts (`--chart-*`: categorical series, a
 sequential and a diverging scale); the comment above them says how they were checked. A change re-renders nothing: every rule, a project bundle's
 stylesheet included, reads the tokens where it applies. An element that sets its own
 `color-scheme` gets that theme's values inside it (a report can pin itself light this
-way). The toggle is in the rail only, not in flowchart mode's floating controls.
+way). The Settings menu's trigger is a fixed button at the bottom-left corner that `App` renders
+beside `<main>`, so it is there in every mode, flowchart included.
 
 ## Not built
 
-Persistence of the panel layout (it lives for as long as the page is open), or of which view shows
-a node, a level, or an entity. Subscriptions (the backend serves GraphQL over HTTP only; this app polls
+Persistence of which view shows a node, a level, or an entity beyond the page's URL, or of a
+view's own state (a renderer's storage) in it. A way for a renderer to set its own params. Subscriptions (the backend serves GraphQL over HTTP only; this app polls
 versions). A rollup of
 a child workflow's progress into its parent's card (a child shows its own state; its subtree's
 progress is seen by opening it). Call-site links for
@@ -674,10 +795,16 @@ compatibility, the key column headers' click toggle, the slice panel's sources, 
 `test/refresh.test.tsx` exercises a slow custom renderer during live updates;
 `test/values.test.ts` and the Python output tests share CBOR fixtures in
 `test/fixtures/table-values.json` to check display and filter text across runtimes;
-`test/invocation-pane.test.tsx` checks how a node's panel shows one failed, running, or finished invocation;
+`test/invocation-pane.test.tsx` checks how a node's panel shows one failed, running, stopped, or finished invocation;
 `test/invocationPanel.test.tsx` checks the `invocation` panel (status line, inline output, a
-sketch while running, the error when failed, folded inputs, and Show all);
+sketch or a step's live preview while running, the error and last preview when failed, the last
+preview when stopped, the note on a result the job has not taken, folded inputs, and Show all); `test/step-preview.test.tsx` checks a preview in the node panel's view of
+one unfinished invocation;
 `test/jobs.test.tsx` checks stable initial job selection while new jobs arrive;
+`test/jobPicker.test.tsx` checks the picker (jobs under their commits, a
+click previewing and a double click opening, starring, the branch filter, and the newest-first
+list alone where the backend has no commit view); `test/commitGraph.test.ts` the commit graph's
+lanes and narrowing, and relative times;
 `test/events.test.ts` checks the events socket (its address, its listeners, reopening it with
 backoff, and closing it for good); `test/launches.test.tsx` checks following launches (switching
 with a toast and going back, a picked job kept across a reload, quick launches updating one
@@ -692,6 +819,11 @@ card a slice change holds still, and the column sizing. `test/address.test.ts` c
 syntax, relative locations, and the parts a head draws; `test/columns.test.tsx` the panels'
 sequence (following, pinning, history, closing, moves and drops, default views, views declared
 within others, the entity chip chain, an entity panel's params) and resolution across the job (a step inside a mapped
-workflow, an unbound key, a level loading, panels kept when the centre moves to another level).
+workflow, an unbound key, a level loading, panels kept when the center moves to another level).
+`test/urlState.test.ts` checks the URL's format (round-trips, hand-written and encoded links, the
+parts that do not read) and where panels from a link open; `test/urlSync.test.tsx` opens links in
+the app (a level inside a mapped workflow, a link naming no job, a panel naming nothing), restores
+a history entry on back, links to cards, and checks that a job's view only replaces its entry,
+throttled.
 `test/flowchart.test.tsx` checks platform-specific wheel shortcuts, trackpad pinch zoom, and the zoom keys.
 Model, progress, and graph-layout tests cover the remaining pure transformations.

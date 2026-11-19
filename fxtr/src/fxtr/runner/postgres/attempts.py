@@ -87,6 +87,8 @@ refused rather than queued for an evaluator that has stopped.
 from __future__ import annotations
 
 import dataclasses
+import logging
+import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -95,8 +97,11 @@ import anyio.abc
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from frozendict import frozendict
 
+from fxtr.core import codec
 from fxtr.core.entities import BoundID
 from fxtr.entity_defns.array import Array, ArrayType
+from fxtr.entity_defns.converter import DEFAULT_CONVERTER
+from fxtr.experiment.steps import PreviewSource, build_preview
 from fxtr.runner import nodes
 from fxtr.runner.assembly import VerificationPhase, Verifier
 from fxtr.runner.nodes import Node, NodeIdentity
@@ -106,6 +111,7 @@ from fxtr.runner.postgres.entities import PostgresEntityStorage
 from fxtr.runner.postgres.execution import StaleAttemptError
 from fxtr.runner.postgres.ledger import InvocationRecord, SpawnRecord
 from fxtr.runner.postgres.logs import record_logs
+from fxtr.runner.postgres.previews import delete_preview, record_preview
 from fxtr.runner.session import (
     AttemptClosedError,
     AttemptError,
@@ -115,6 +121,13 @@ from fxtr.runner.session import (
 
 if TYPE_CHECKING:
     from fxtr.runner.postgres.evaluator import Dag
+
+logger = logging.getLogger(__name__)
+
+PREVIEW_INTERVAL = 0.25
+"""The least time, in seconds, between two writes of a step attempt's preview (see
+:class:`StepAttempt`): a preview published sooner waits, and only the latest waiting one is
+written."""
 
 # ---- outcomes: how an attempt ends ----
 
@@ -672,14 +685,27 @@ class Attempt:
 class StepAttempt:
     """One live step attempt: its entity store and lifecycle (see the module docstring).
 
-    **Logs.** A step has no recorder and only one commit point, so its :meth:`log` lines are
-    buffered and written by a background flush task (:meth:`flush_logs`, started by the attempt's
-    task for the duration of the attempt) that wakes whenever a line is added and writes what has
-    accumulated in its own transaction. The task is the *only* writer of the step's logs: before
-    :meth:`complete` or :meth:`close` writes anything, it stops the task and awaits a final flush
-    (:meth:`_finalize_logs`), so a final line is closed while the attempt is still live and no
-    two transactions ever contend on the log's ``seq``. A step process that dies mid-run loses
-    whatever is still buffered.
+    **Logs and previews.** A step has no recorder and only one commit point, so its log lines
+    (:meth:`add_log`) and its preview (:meth:`set_preview`) are buffered and written by a
+    background flush task (:meth:`flush`, started by the attempt's task for the duration of the
+    attempt) that wakes whenever either is added and writes what has accumulated in its own
+    transaction. Every log line is written; of the previews only the latest is kept, and it is
+    written at most once per :data:`PREVIEW_INTERVAL` (a later one waits out the interval, and a
+    burst in between coalesces into its last), except that the last one is always written when the
+    task finishes. A preview is built (when the body published a function) and serialized only
+    when it is written, and one that cannot be is dropped with a warning. The task is the *only*
+    writer of the step's logs and preview: before :meth:`complete` or :meth:`close` writes
+    anything, it stops the task and awaits a final flush (:meth:`_finalize_flush`), so the final
+    line and preview are written while the attempt is still live and no two transactions ever
+    contend on the log's ``seq``. The task decides a pass
+    is its last before the pass's write, so a stop or an end that arrives while a write is in
+    flight (a large preview's can take a second) gets one more pass, which writes what the body
+    added during that write. A step process that dies mid-run loses whatever is still buffered.
+
+    A preview lasts only until the attempt completes, since the result then takes its place:
+    :meth:`complete` drops the one still waiting, so the final flush writes the last log lines
+    alone, and deletes the attempt's row in the transaction that records the result. An attempt
+    that fails or is abandoned keeps its last preview.
 
     The lifecycle is :class:`Attempt`'s: the attempt ends once (:meth:`complete` records the
     result and ends it ``completed`` in one go; :meth:`fail` and :meth:`abandon` end it
@@ -693,21 +719,29 @@ class StepAttempt:
         entities: The attempt's entity store; the result is stored through it and flushed just
             before the completing transaction (see :meth:`complete`).
         outcome: The attempt's terminal outcome, once it has ended.
-        _database: The runner's database, for the completing/closing and log-flush transactions.
+        _database: The runner's database, for the completing/closing and flush transactions.
         _on_change: Called when the attempt has ended, so the runner can revisit what is still
             live.
-        _log_buffer: The :meth:`log` lines not yet written, in order. Drained by the flush task
-            under no ``await`` so a concurrent :meth:`add_log` cannot lose or reorder a line.
-        _log_signal: The flush task's wake, set by :meth:`add_log` and by :meth:`_finalize_logs` /
-            :meth:`mark_closed`. Replaced with a fresh event each time the task drains, before it
-            reads the buffer, so a line added during a flush wakes the next iteration (never lost).
-        _log_done: Set by the flush task when it exits; :meth:`_finalize_logs` awaits it so the
-            closing path knows the last lines are written before it opens its own transaction.
-        _log_stop: Asks the flush task to write what remains and then exit. Set by
-            :meth:`_finalize_logs` (a normal close) and :meth:`mark_closed` (the ledger already
-            closed the attempt), and by the task itself when a write finds the attempt stale.
-        _log_flushing: Whether the flush task has been started (set synchronously by
-            :meth:`start_log_flusher`). :meth:`_finalize_logs` awaits the task only when this is
+        _log_buffer: The log lines not yet written, in order. Drained by the flush task under no
+            ``await`` so a concurrent :meth:`add_log` cannot lose or reorder a line.
+        _preview: The latest preview not yet written, or ``None``: a value, or a function the
+            flush task calls for it when it writes (see
+            :meth:`~fxtr.experiment.steps.StepContext.preview`). Taken by the flush task under no
+            ``await``, like the log buffer.
+        _preview_seq: How many previews the body has published; written with each preview.
+        _preview_written_at: When the flush task last wrote (or dropped) a preview, on anyio's
+            clock, for :data:`PREVIEW_INTERVAL`.
+        _flush_signal: The flush task's wake, set by :meth:`add_log`, :meth:`set_preview`,
+            :meth:`end`, and :meth:`_finalize_flush`. Replaced with a fresh event each time the
+            task drains, before it reads the buffers, so anything added during a flush wakes the
+            next iteration (never lost).
+        _flush_done: Set by the flush task when it exits; :meth:`_finalize_flush` awaits it so the
+            closing path knows the last lines and preview are written before it opens its own
+            transaction.
+        _flush_stop: Asks the flush task to write what remains and then exit. Set by
+            :meth:`_finalize_flush` (a normal close).
+        _flushing: Whether the flush task has been started (set synchronously by
+            :meth:`start_flusher`). :meth:`_finalize_flush` awaits the task only when this is
             set, so a close racing the task's very first scheduling still waits for it correctly.
     """
 
@@ -721,10 +755,13 @@ class StepAttempt:
     _closed: bool = dataclasses.field(default=False, init=False)
     _ended: anyio.Event = dataclasses.field(default_factory=anyio.Event, init=False)
     _log_buffer: list[str] = dataclasses.field(default_factory=list, init=False)
-    _log_signal: anyio.Event = dataclasses.field(default_factory=anyio.Event, init=False)
-    _log_done: anyio.Event = dataclasses.field(default_factory=anyio.Event, init=False)
-    _log_stop: bool = dataclasses.field(default=False, init=False)
-    _log_flushing: bool = dataclasses.field(default=False, init=False)
+    _preview: PreviewSource | None = dataclasses.field(default=None, init=False)
+    _preview_seq: int = dataclasses.field(default=0, init=False)
+    _preview_written_at: float | None = dataclasses.field(default=None, init=False)
+    _flush_signal: anyio.Event = dataclasses.field(default_factory=anyio.Event, init=False)
+    _flush_done: anyio.Event = dataclasses.field(default_factory=anyio.Event, init=False)
+    _flush_stop: bool = dataclasses.field(default=False, init=False)
+    _flushing: bool = dataclasses.field(default=False, init=False)
 
     @property
     def ended(self) -> bool:
@@ -737,68 +774,118 @@ class StepAttempt:
         """Whether the ledger has the attempt's terminal state."""
         return self._closed
 
-    # -- logs --
+    # -- logs and previews --
 
     def add_log(self, message: str) -> None:
         """Buffer a log line and wake the flush task. Fire-and-forget."""
         self._log_buffer.append(message)
-        self._log_signal.set()
+        self._flush_signal.set()
 
-    def start_log_flusher(self, tg: anyio.abc.TaskGroup) -> None:
-        """Start the background log flush task in ``tg``. Marks the flusher live synchronously so
+    def set_preview(self, value: PreviewSource) -> None:
+        """Replace the preview waiting to be written and wake the flush task, which writes it
+        once :data:`PREVIEW_INTERVAL` has passed since its last. Fire-and-forget."""
+        self._preview = value
+        self._preview_seq += 1
+        self._flush_signal.set()
+
+    def start_flusher(self, tg: anyio.abc.TaskGroup) -> None:
+        """Start the background flush task in ``tg``. Marks the flusher live synchronously so
         that a :meth:`complete` or :meth:`close` racing the task's startup still awaits it."""
-        self._log_flushing = True
-        tg.start_soon(self.flush_logs)
+        self._flushing = True
+        tg.start_soon(self.flush)
 
-    async def flush_logs(self) -> None:
-        """The background task: write buffered log lines as they arrive until the attempt is
-        finalized (:meth:`_finalize_logs`) or closed. Started by :meth:`start_log_flusher` for the
-        life of the attempt; the only writer of this step's logs."""
+    async def flush(self) -> None:
+        """The background task: write log lines as they arrive, and the latest preview at most
+        once per :data:`PREVIEW_INTERVAL`, until the attempt is finalized
+        (:meth:`_finalize_flush`) or ends, writing what remains (the last preview included, unless
+        the attempt is completing) before it exits. Started by :meth:`start_flusher` for the life
+        of the attempt; the only writer of this step's logs and preview."""
         try:
+            timeout = math.inf
             while True:
-                await self._log_signal.wait()
-                self._log_signal = anyio.Event()  # reset before draining, so no wake is lost
-                stop = self._log_stop
-                await self._write_pending()
-                if stop or self.ended:
+                with anyio.move_on_after(timeout):
+                    await self._flush_signal.wait()
+                self._flush_signal = anyio.Event()  # reset before draining, so no wake is lost
+                # Decided before the write: a stop or end arriving during it set the signal, so
+                # the next pass starts at once and writes what came in meanwhile.
+                final = self._flush_stop or self.ended
+                live = await self._write_pending(final=final)
+                if final or not live:
                     break
+                # A preview held back by the interval is written when it has passed, even if
+                # nothing else wakes the task.
+                timeout = self._preview_wait()
         finally:
-            self._log_done.set()
+            self._flush_done.set()
 
-    async def _write_pending(self) -> None:
-        """Write whatever is buffered, in one guarded transaction. Drops the buffer and stops the
-        task if the attempt is no longer live (reaped)."""
+    def _preview_wait(self) -> float:
+        """How long until the waiting preview may be written: infinite with none waiting."""
+        if self._preview is None:
+            return math.inf
+        if self._preview_written_at is None:
+            return 0.0
+        return max(0.0, self._preview_written_at + PREVIEW_INTERVAL - anyio.current_time())
+
+    def _take_preview(self, *, final: bool) -> tuple[int, bytes] | None:
+        """Take the waiting preview if it may be written now, built (when the body published a
+        function) and serialized; ``None`` if there is none, it must wait, or it cannot be built
+        or serialized (dropped with a warning)."""
+        preview = self._preview
+        if preview is None or (not final and self._preview_wait() > 0):
+            return None
+        self._preview = None
+        self._preview_written_at = anyio.current_time()
+        try:
+            value = build_preview(preview)
+            return self._preview_seq, codec.encode(DEFAULT_CONVERTER.unstructure_tagged(value))
+        except Exception:
+            logger.warning(
+                "Dropped a preview of step attempt %s that could not be built or serialized",
+                self.id,
+                exc_info=True,
+            )
+            return None
+
+    async def _write_pending(self, *, final: bool) -> bool:
+        """Write whatever is buffered, and the preview if it is due (always when ``final``), in one
+        guarded transaction. Returns whether the attempt is still live: ``False`` when it was
+        reaped, and the buffers are dropped, so the task stops trying."""
         messages = self._log_buffer
-        if not messages:
-            return
         self._log_buffer = []
+        preview = self._take_preview(final=final)
+        if not messages and preview is None:
+            return True
         try:
             async with self._database.transaction() as tx:
                 active = await execution.guard_step(tx, self.id)
                 await record_logs(tx, active.id, messages)
+                if preview is not None:
+                    await record_preview(tx, active.id, *preview)
         except StaleAttemptError:
-            self._log_stop = True  # the attempt is gone: stop trying, drop the rest
+            return False
+        return True
 
-    async def _finalize_logs(self) -> None:
-        """Ask the flush task to write any remaining lines and stop, and wait for it. Called by
-        :meth:`complete` and :meth:`close` while the attempt is still live, before their own
-        transaction, so the task is the sole writer and the last lines are closed."""
-        if not self._log_flushing:
+    async def _finalize_flush(self) -> None:
+        """Ask the flush task to write any remaining lines and preview and stop, and wait for it
+        (:meth:`complete` drops the waiting preview first, so its flush writes the lines alone).
+        Called by :meth:`complete` and :meth:`close` while the attempt is still live, before their
+        own transaction, so the task is the sole writer and the last lines are closed."""
+        if not self._flushing:
             return
-        self._log_stop = True
-        self._log_signal.set()
-        await self._log_done.wait()
+        self._flush_stop = True
+        self._flush_signal.set()
+        await self._flush_done.wait()
 
     # -- ending and closing --
 
     def end(self, outcome: Outcome) -> bool:
-        """End the attempt with ``outcome``, if it has not ended already: the log flusher is woken
+        """End the attempt with ``outcome``, if it has not ended already: the flush task is woken
         so it writes what it has and stops, and the runner is told. Returns whether this call
         ended it."""
         if self.outcome is not None:
             return False
         self.outcome = outcome
-        self._log_signal.set()
+        self._flush_signal.set()
         self._ended.set()
         self._on_change(self)
         return True
@@ -812,19 +899,25 @@ class StepAttempt:
 
         The result's entities are written in a transaction of their own first, so the completing
         transaction, which holds the job attempt's row (the lock every step of the job takes),
-        writes only the ledger's rows. Entities are content-addressed and never deleted, so one
+        writes only the ledger's rows (and deletes the attempt's preview, if its body published
+        any). Entities are content-addressed and never deleted, so one
         written for a completion that then rolls back is only unreferenced. They cannot be written
         in the completing transaction ahead of the row instead: two steps with an equal result
         would each wait for the other's entity row while one holds the job attempt's."""
         if self.ended:
             return
-        await self._finalize_logs()
+        # The result takes the preview's place: the one still waiting is not written, and the
+        # attempt's row goes with the write of the result.
+        self._preview = None
+        await self._finalize_flush()
         ref = await self.entities.store(result)
         try:
             await self.entities.flush()
             async with self._database.transaction() as tx:
                 active = await execution.guard_step(tx, self.id, ending=True)
                 await execution.complete_step(tx, active, ref)
+                if self._preview_seq > 0:
+                    await delete_preview(tx, active.id)
         except StaleAttemptError as exc:
             self.mark_closed(exc)  # closed by someone else: the result is not recorded
             return
@@ -869,7 +962,7 @@ class StepAttempt:
                 raise AssertionError("step attempts are never interrupted")
             case Abandoned(reason=reason):
                 state, error = "abandoned", None
-        await self._finalize_logs()
+        await self._finalize_flush()
         try:
             async with self._database.transaction() as tx:
                 active = await execution.guard_step(tx, self.id, ending=True)

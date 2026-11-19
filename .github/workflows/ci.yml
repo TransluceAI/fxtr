@@ -76,6 +76,10 @@ jobs:
           git config --global user.name "CI"
           git config --global user.email "ci@example.com"
       - run: uv sync ${{ matrix.sync }} --all-packages --all-extras
+      # Resolution rewrites uv.lock. Keep the installed minimum versions, but restore the
+      # committed lockfile so schema-table tests can identify the versions their snapshots pin.
+      - if: matrix.resolution == 'lowest-direct'
+        run: git restore uv.lock
       # --no-sync keeps the environment just synced; a plain `uv run` would relock to the newest.
       - run: uv run --no-sync pytest -n auto
 

@@ -17,7 +17,8 @@
  *   layered on repairs. Fast enough to run on the main thread.
  *
  * The phases (a Sugiyama-style layered layout, as in Gansner et al., "A Technique for Drawing
- * Directed Graphs", 1993):
+ * Directed Graphs", 1993), run over the steps in `canonicalOrder`, so a graph is drawn the same
+ * whatever order its steps arrive in:
  *
  * 1. Ranks: longest path from the inputs, then every card with more consumers than inputs moves
  *    down to just above its first consumer, which shortens more edges than it lengthens.
@@ -150,18 +151,18 @@ interface Slot {
   /** Null for an edge passing through the rank. */
   card: StepDoc | null
   sideInput: StepDoc | null
-  /** From the slot's centre to the centre of the card its edges attach to. */
+  /** From the slot's center to the center of the card its edges attach to. */
   anchor: number
   /** Segments from the rank above, and to the rank below. */
   up: Segment[]
   down: Segment[]
   /** Index within the rank. */
   pos: number
-  /** Horizontal centre. */
+  /** Horizontal center. */
   x: number
 }
 
-/** An edge's piece between two adjacent ranks. Ports are offsets from the slots' centres. */
+/** An edge's piece between two adjacent ranks. Ports are offsets from the slots' centers. */
 interface Segment {
   edge: Edge
   upper: Slot
@@ -170,11 +171,56 @@ interface Segment {
   lowerPort: number
 }
 
-export function layoutLevel(level: StepDoc[]): FlowchartLayout {
-  if (level.length === 0) return { nodes: [], byId: new Map(), edges: [], ranks: [], width: 1, height: 1 }
+/**
+ * The steps in an order that depends only on the graph: every step after the steps it reads; among
+ * the steps ready together, the one reading the latest step placed, then by name, kind, and id. The layout places cards in the
+ * order it is given, and the backend's order will not do: it is when the nodes were written, and
+ * nodes written together come back in any order, so two jobs of one workflow would be drawn
+ * differently where nothing about them differs. (An id is a last resort: it differs between jobs
+ * given different inputs.)
+ */
+export function canonicalOrder(steps: readonly StepDoc[]): StepDoc[] {
+  const present = new Set(steps.map((step) => step.id))
+  const waiting = new Map(steps.map((step) => [step.id, new Set(step.deps.filter((dep) => present.has(dep) && dep !== step.id))]))
+  const byName = (a: StepDoc, b: StepDoc) => a.name.localeCompare(b.name) || a.kind.localeCompare(b.kind) || a.id.localeCompare(b.id)
+  const ordered: StepDoc[] = []
+  /** Where in `ordered` each step went. */
+  const placedAt = new Map<string, number>()
+  /** The latest place among the steps it reads: -1 for a step reading none. */
+  const latestDep = (step: StepDoc) => Math.max(-1, ...step.deps.map((dep) => placedAt.get(dep) ?? -1))
+  let left = [...steps].sort(byName)
+  while (left.length > 0) {
+    const ready = left.filter((step) => waiting.get(step.id)!.size === 0)
+    // Among the steps ready, the one reading the step placed most recently, so a chain of steps
+    // stays together, as it would in the order the steps ran. A cycle (which a workflow cannot
+    // have) keeps the rest in name order rather than looping.
+    const next = ready.length > 0 ? ready.reduce((best, step) => (latestDep(step) > latestDep(best) ? step : best)) : left[0]
+    placedAt.set(next.id, ordered.length)
+    ordered.push(next)
+    left = left.filter((step) => step !== next)
+    for (const deps of waiting.values()) deps.delete(next.id)
+  }
+  return ordered
+}
+
+/**
+ * Lays out one level's cards, in `canonicalOrder`, so one graph is always drawn the same. With `sideInputs` false, a card that reads nothing and feeds one card
+ * goes in the rank above it like any other, rather than beside it: for a level whose inputs were
+ * left out, where such a card is a step, not an input. With `smallest`, every card is drawn at the
+ * smallest size, as if it had no name or dims (the nodes returned are those blanked copies); the
+ * order is still the one the real names give, since blank names would leave it to the steps' ids,
+ * which differ between jobs given different inputs.
+ */
+export function layoutLevel(
+  given: StepDoc[],
+  { sideInputs: besides = true, smallest = false }: { sideInputs?: boolean; smallest?: boolean } = {},
+): FlowchartLayout {
+  if (given.length === 0) return { nodes: [], byId: new Map(), edges: [], ranks: [], width: 1, height: 1 }
+  const ordered = canonicalOrder(given)
+  const level = smallest ? ordered.map((step) => ({ ...step, name: '', dims: [] })) : ordered
 
   const edges = uniqueEdges(level)
-  const sideInputs = sideInputsOf(level, edges)
+  const sideInputs = besides ? sideInputsOf(level, edges) : new Map<string, StepDoc>()
   const sideInputIds = new Set([...sideInputs.values()].map((step) => step.id))
   const cards = level.filter((step) => !sideInputIds.has(step.id))
   const routed = edges.filter((edge) => !sideInputIds.has(edge.sourceId))
@@ -532,7 +578,7 @@ function renumber(row: Slot[]) {
   for (const [index, slot] of row.entries()) slot.pos = index
 }
 
-/** A card's ports on each side are EDGE_GAP apart around its centre, in the order of where they lead. */
+/** A card's ports on each side are EDGE_GAP apart around its center, in the order of where they lead. */
 function assignPorts(ranks: Slot[][]) {
   for (const slot of ranks.flat()) {
     const down = [...slot.down].sort((a, b) => a.lower.pos - b.lower.pos)
@@ -543,7 +589,7 @@ function assignPorts(ranks: Slot[][]) {
 }
 
 /**
- * Horizontal centres minimizing the weighted sideways travel of every segment, |upper port −
+ * Horizontal centers minimizing the weighted sideways travel of every segment, |upper port −
  * lower port|, subject to the order and gaps within each rank. Measuring travel linearly (rather
  * than squared) makes a segment exactly vertical wherever the gaps allow, so an edge changes lanes
  * only where it has to, and never by a few pixels. The problem is solved exactly as Gansner et al.

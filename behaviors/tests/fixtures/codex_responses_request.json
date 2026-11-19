@@ -1,0 +1,124 @@
+{
+  "model": "gpt-5.4",
+  "instructions": "You are Codex, based on GPT-5. You are running as a coding agent in the Codex CLI on a user's computer.",
+  "input": [
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "List the files, then read the README and summarize it."
+        }
+      ]
+    },
+    {
+      "type": "reasoning",
+      "summary": [],
+      "content": null,
+      "encrypted_content": "gAAAAABopaque-upstream-reasoning-state"
+    },
+    {
+      "type": "function_call",
+      "id": "fc_001",
+      "name": "shell",
+      "arguments": "{\"command\":[\"ls\"]}",
+      "call_id": "call_01"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_01",
+      "output": "README.md\nsrc\n"
+    },
+    {
+      "type": "function_call",
+      "id": "fc_002",
+      "name": "shell",
+      "arguments": "{\"command\":[\"cat\",\"README.md\"]}",
+      "call_id": "call_02"
+    },
+    {
+      "type": "function_call_output",
+      "call_id": "call_02",
+      "output": [
+        {
+          "type": "output_text",
+          "text": "# Demo\n\nA demo project.\n"
+        }
+      ]
+    },
+    {
+      "type": "message",
+      "role": "user",
+      "content": [
+        {
+          "type": "input_text",
+          "text": "Now summarize it in one sentence."
+        }
+      ]
+    }
+  ],
+  "tools": [
+    {
+      "type": "function",
+      "name": "shell",
+      "description": "Runs a shell command and returns its output.",
+      "strict": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "command": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "workdir": {
+            "type": "string"
+          },
+          "timeout_ms": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "command"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "function",
+      "name": "apply_patch",
+      "description": "Use the `apply_patch` tool to edit files.",
+      "strict": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "input": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "input"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
+      "type": "web_search"
+    }
+  ],
+  "tool_choice": "auto",
+  "parallel_tool_calls": false,
+  "reasoning": {
+    "effort": "medium",
+    "summary": "auto"
+  },
+  "store": false,
+  "stream": true,
+  "include": [
+    "reasoning.encrypted_content"
+  ],
+  "max_output_tokens": 8192,
+  "prompt_cache_key": "0198f3a0-6c2e-7d10-b000-c0ffee000001"
+}

@@ -12,9 +12,13 @@ server named by `FXTR_TEST_DATABASE_URL` and are skipped without it.
 postgres/
 ├── database.py      Database (engine, pool, schema lifecycle, the in-process wake) and Transaction
 ├── schema.py        the tables, and the source of truth for what the state means
+├── migrations/      the Alembic revisions that build and change those tables in an existing
+│                    database (versions/, one file per revision), env.py, and upgrade
 ├── entities.py      PostgresEntityStorage: the write-behind entity store
 ├── json_values.py   schema-directed JSON encoding of values, keys, and array types
 ├── logs.py          attempt_logs: per-attempt free-form ctx.log lines (record_logs, list_logs)
+├── previews.py      attempt_previews: each step attempt's latest ctx.preview (record_preview,
+│                    get_preview, list_previews_many)
 ├── project_arrays.py  ProjectArrays: the project's named, versioned arrays users edit and a
 │                    launch snapshots into a job's inputs; the runner never reads them
 ├── ledger.py        the facts and the rules that keep them valid: jobs, invocations, nodes
@@ -34,8 +38,12 @@ postgres/
 │                    values, expands run nodes, collects results, answers observes, ends attempts
 ├── jobs.py          Jobs: create, list, status, wait, result, describe, cancel, resume
 ├── job_records.py   a job's JobRecord built from the ledger (build_record) and exported with
-│                    every entity it reaches as a CAR (export_job, reachable_blocks); a record
-│                    file read (read_record) and inserted (insert_record)
+│                    every entity it reaches as a CAR (export_job, reachable_blocks), or only
+│                    named by the id that export would give it (record_cid); a record file,
+│                    read by fxtr.project.job_record, inserted with the entities it reaches
+│                    recorded against the job in job_entities (insert_record); a job's
+│                    ExecutionRecord built from the execution tables and inserted for history
+│                    (build_execution_record, insert_execution_record)
 ├── client.py        LocalProjectClient: the ProjectClient over a Database, running the jobs it
 │                    submits in this process; LocalJobHandle
 └── debug_web/       an isolated, removable read-only GraphQL viewer (its own CODE_OVERVIEW.md)
@@ -175,6 +183,10 @@ only to ledger rows and entities, never to the execution state, so a job's ledge
 they refer to, and the entities those reach are a self-contained record of it; the facts and the
 execution rows about the same thing share ids (a job attempt's fact and episode, a step result and
 the step attempt that produced it), so a database may hold the facts without the execution rows.
+One table stands outside the three groups: `job_entities` (job id, cid) says which entities an
+imported job's record reaches, so a viewer that may show only some jobs can tell which entities
+belong to them. Only an import fills it (`job_records.insert_record`), it is not part of the
+record, and a job run in this database has no rows in it.
 
 The states things can be in, and how the tables encode them:
 
@@ -201,7 +213,9 @@ The states things can be in, and how the tables encode them:
   process ran (a `CodeVersion`), and when it was created are a ledger fact,
   `job_attempt_provenance`, with the same id. A database has `job_attempts` rows only for the job
   attempts it ran, but may hold facts for others (and for jobs it does not have), so a job
-  attempt's position among its job's (`seq`) is counted over the facts.
+  attempt's position among its job's (`seq`) is counted over the facts. A fact that arrived only
+  as the producer of another job's step result is marked `from_other_job`: it explains that
+  result, but is not one of its job's own attempts (see `job_records.py` below).
 - A **job**'s inputs are fixed when it is created: each is an `Input` node of the root invocation
   referencing an array entity. A project array reaches a job only this way, as a snapshot the
   launch passed (`Jobs.create` takes the snapshot's bound id), so a job observes one version of it
@@ -237,11 +251,22 @@ The states things can be in, and how the tables encode them:
   order. Pure observability state: no rule reads it, and it may be dropped without affecting
   correctness. Kept per attempt and never deduped across a replay (a later attempt of an invocation
   re-runs the body and writes its own lines). A stopgap for an eventual event-streaming mechanism.
+- **Previews** (`attempt_previews`) hold the latest value each step attempt's body published
+  through `ctx.preview`, as canonical DAG-CBOR bytes, one row per attempt overwritten as newer
+  ones are written. An attempt that fails or is abandoned keeps its last one; one that completes
+  has its row deleted with the write of its result. Observability state like logs; its `seq`
+  counts the previews published and only grows, so a poller can tell a newer one.
 - **Job and invocation status is derived, never stored**: per invocation, *completed*, *running*,
   *queued* (the active job attempt is due to run it), or, idle, *failed* or *interrupted* by its
   latest attempt, else *stopped* (incomplete and idle, with no attempt under the current episode
   to explain why); the job is *succeeded*, *running*, or *stopped* (a job nothing has taken
-  included). `jobs.py`'s module docstring gives the exact rules. The relations of
+  included). A step is *completed* once it has a result for the job's request, bound or on offer:
+  one that finishes after the workflow attempt waiting on it ended (a sibling failed, or the job
+  was cancelled) leaves its result on offer until a resume takes it, and what describes it carries
+  that result to show and says the job has not taken it. Until it finishes it is *running*, like
+  any step an equal attempt is computing, whether or not the job attempt is still active: a job
+  cancelled gently is *stopped* while the steps it had in flight run on.
+  `jobs.py`'s module docstring gives the exact rules. The relations of
   `status_queries.py` are the one derivation of each step's judgement and of each target's displayed
   state, shared by the evaluator (`execution.step_statuses`) and the viewer; their cache resolution
   part restates `execution.resolve_step`, which the write paths act on, and the tests check that the
@@ -339,8 +364,9 @@ originated. Step attempts fail or are abandoned; they are never interrupted.
 abandonment*: an invocation is due while it is unfinished, nothing is running it, and every attempt
 of it the job attempt owns is abandoned (`execution.pending_work`). A step request of the job is
 due while it is unbound and `resolve_step` says `RunIt`, unless the job attempt already ran a
-failed attempt for that key. A child completing never re-runs its parent (the parent is waiting on
-it). A job attempt's own failure at a key is its answer for that key until a resume, whatever other
+failed attempt for that key. `start_attempt` checks both again when it starts the work, so a
+request queued before an attempt ended (an evaluator's push, a reconciliation) starts nothing.
+A child completing never re-runs its parent (the parent is waiting on it). A job attempt's own failure at a key is its answer for that key until a resume, whatever other
 jobs do there afterwards, so what the evaluator is told does not depend on timing
 (`execution.step_status`). A resume (`execution.resume`) starts the next job attempt when the
 latest is settled or stale, and is refused while a live one exists, whoever holds it. Nothing is
@@ -426,8 +452,8 @@ that does it.
    emission), the transaction rolls back, nothing of the batch is recorded, and the attempt is
    failed with the error.
 5. **The evaluator computes, expands, collects, and answers.** On each wake (the recorder, the
-   job's wake topic, the topic of any cache key it waits on, or the poll interval) `Evaluator.step`
-   runs the pure `evaluate` over the view, computing every derived node whose inputs have values
+   topic of a child or cache key it waits on, the job attempt's topic, or its fallback interval;
+   see "Waking and polling") `Evaluator.step` runs the pure `evaluate` over the view, computing every derived node whose inputs have values
    and propagating input errors, each error remembering the node it originated at. Then it
    *expands* every run node whose inputs have values and is not expanded yet (`_expand_ready`):
    `nodes.expand` gives the joint keys and sliced inputs, the inputs are stored, and one
@@ -442,16 +468,19 @@ that does it.
    that names an entity storage does not have (a query can write any entity ID) makes storing it
    raise `UnknownReferenceError`, which is the run node's own error (`_fail_node`), and nothing is
    recorded for the node. Then it
-   *collects* (`_collect`): in one snapshot it asks `execution.status` about every expanded run
-   node's children and `execution.step_statuses` about every key (one query for all of them),
-   skipping targets an earlier pass found done (done is permanent, so the evaluator keeps their
-   results and a pass costs what is outstanding, not the whole node); a
+   *collects* (`_collect`): in one snapshot it asks `execution.statuses` about the children and
+   `execution.step_statuses` about the keys that may have changed (each kind in one query): the
+   targets whose topics woke, a newly expanded node's targets that the runner does not hold, or,
+   when the job attempt changed or the fallback interval passed, every target still outstanding.
+   A target found done is not judged again (done is permanent, so the evaluator keeps its
+   result), so a pass costs what changed, not what is outstanding; a
    step whose result an equal attempt has completed is *taken*, in a short write transaction after
    the snapshot
    (`execution.take_step_results`: this job's bindings, for all the pass's keys at once), and only
    then counts as done; a target found
    due with nothing running it is pushed onto the runner's queue (its trigger was another job's
-   attempt ending without a result, which no commit here saw). Once all of a node's targets are
+   attempt ending without a result, which no commit here saw); a step running under an attempt
+   the runner does not hold is polled for from then on. Once all of a node's targets are
    done its value is `nodes.collect` of their results, and if any is stopped the node gets an error
    marked as an interruption. Then it answers pending observes whose node has settled (the value,
    or `NodeFailedError` and an ending naming the node's origin), and, once the body has returned
@@ -466,10 +495,13 @@ that does it.
    attempt itself has no recorder or evaluator: its task loads the inputs from the request entity,
    runs the step through `StepRun`, and `StepAttempt.complete` writes the result's entities, then
    records the result and closes the attempt as completed (`complete_step`) in a transaction that
-   writes only ledger rows; each waiting job takes the result itself. A step's `ctx.log` lines are buffered on
-   the `StepAttempt` and written by a background flush task the attempt task runs for the
-   attempt's life (the sole writer of its logs; completing or closing stops it and awaits a final
-   flush first, so a final line is persisted while the attempt is still live).
+   writes only ledger rows; each waiting job takes the result itself. A step's `ctx.log` lines and
+   its latest `ctx.preview` are buffered on the `StepAttempt` and written by a background flush
+   task the attempt task runs for the attempt's life (the sole writer of both; every line is
+   written, the preview at most once per `PREVIEW_INTERVAL` with a burst coalesced into its last,
+   and built, when the step published a function, and serialized only then; completing or
+   closing stops it and awaits a final flush first, so a
+   final line and preview are persisted while the attempt is still live).
 6. **The attempt ends, then it is closed.** Two operations with two owners, defined in
    `attempts.py`'s docstring. An attempt *ends* once, in memory, when its outcome (`Completed`,
    `Failed`, `Interrupted`, `Abandoned`) is set by `Attempt.end` (`fail` and `abandon` are its
@@ -562,14 +594,40 @@ races with two transactions held open at once.
 `Database.wake(topic)` and `Database.wait_for(topic, timeout)` are named in-process events that a
 committing transaction sets from an `on_commit` callback, so waiters in the same process re-check
 the database at once instead of waiting out their poll interval. It is only an optimization for
-co-located tasks: every waiter also polls, since another process's commits do not wake it. Topics:
-`job:<id>` (something of the job changed state; `Jobs.wait` and the job's evaluators wait on it)
-and `step:<cache_key>` (the key's current attempt ended, or the key was cleared; an evaluator
-waiting on the key wakes). An evaluator waits on its job's topic and every key it is still waiting
-on with one event (`Database.wait_for_any`), so arming a wait costs a set insertion per key, not a
-task. The runner's own loop is woken directly by its item tasks and by
-`enqueue`, and re-derives what is due on an interval besides. Operations register wakes through
-`Transaction.wake(topic)`.
+co-located tasks: every waiter also polls, since another process's commits do not wake it.
+Operations register wakes through `Transaction.wake(topic)`. The topics (`execution.py` has a
+function for each):
+
+- `job:<id>`: something of the job changed state. Every attempt of the job starting or ending
+  wakes it, so only a waiter on the whole job listens to it (`Jobs.wait`), never something that
+  is itself one of many in the job.
+- `job-attempt:<job id>`: the job's active job attempt changed (created, settled, cancelled,
+  evicted), which changes what every unfinished target is.
+- `invocation:<id>`: an attempt of the invocation ended, in whatever state.
+- `step:<cache_key>`: the key's current attempt ended, or the key was cleared.
+
+**The cost of waiting must not grow with the job.** A job can have thousands of attempts live at
+once (a mapped child workflow), and one attempt can wait on thousands of targets (a mapped step).
+An evaluator therefore listens only to its own targets' topics and the job attempt's, through one
+standing `Database.subscribe()` subscription (a `Subscription`: topics are added as a run node
+expands and discarded as targets finish, and each wait returns the topics that woke), and a pass
+judges only the targets whose topics woke. An evaluator that listened to the job's topic, or
+judged everything outstanding on every wake, would make a job of N attempts cost N² passes.
+
+**What an evaluator polls for.** The runner *holds* a work item from the moment it is queued until
+its task ends (`WorkSink.holds`). While it does, what becomes of the item's target is a commit of
+this process, which wakes the target's topic; and the runner wakes that topic itself when it stops
+holding the item, whether or not anything was started for it. So a target the runner holds needs
+no polling, and a newly expanded one not even a first look. The exception is a step that is
+running under an attempt the runner does not hold (another job's process is computing it), or a
+result on offer that could not be taken: the evaluator polls for those at `poll_interval`. While
+it has none, its fallback is `reconcile_interval`, the same safety net for a missed wake as the
+runner's own reconciliation pass. A fallback pass, and a wake of the job attempt's topic, judge
+every outstanding target. The runner's heartbeat wakes the job attempt's topic when it finds the
+job attempt cancelled from another process, as a cancel committed here would have.
+
+The runner's own loop is woken directly by its item tasks and by `enqueue`, and re-derives what is
+due on an interval besides.
 
 ## Cancellation
 
@@ -592,11 +650,26 @@ yields a `Transaction` (`execute`, `on_commit(callback)`, `wake(topic)`, `upsert
 one dialect-specific construct; the underlying connection is exposed for metadata operations)
 committed on normal exit, then its callbacks run, and rolled back on an exception; the commit and
 the rollback are shielded from cancellation, so a cancelled task still returns its connection to
-the pool. `create_schema` / `drop_schema` create or drop the tables registered on `schema.py`'s
-`metadata`. A `Database` may name a Postgres schema (`pg_schema`, a namespace within the server's
+the pool. `create_schema` brings the tables to the newest migration, creating the Postgres schema
+first when it is missing; an advisory lock on the schema's name makes concurrent callers take
+turns across processes, and a process-wide `anyio` lock makes this process's calls for different
+schemas take turns (Alembic keeps the running migration in module-level state). `drop_schema`
+drops them: the named Postgres schema whole, or, with none named, the tables and the runner's
+own row of the default schema's `alembic_version`, which other Alembic-managed tables there
+may share. A database outlives the fxtr version that created it, so the
+tables change only by migration (`migrations/`, whose `__init__.py` docstring is the reference):
+`schema.py` describes the tables as they are now, each change to it comes with an Alembic
+revision making the same change, and `tests/test_runner_postgres_migrations.py` checks that the
+revisions build exactly what `schema.py` declares. Revision `0001` creates the tables as fxtr
+first managed them with migrations (`migrations.FIRST_REVISION_TABLES` lists them, frozen, so a
+schema created before migrations can be checked against it); `0002` adds `job_entities`,
+`0003` adds `job_attempt_provenance.from_other_job`, and `0004` adds `attempt_previews`, which a
+schema created before migrations may have (`migrations.ALSO_CREATED_BEFORE_MIGRATIONS`). A `Database` may name a Postgres schema (`pg_schema`, a namespace within the server's
 database) that becomes every connection's `search_path`, so several independent runner states can
 share one server; the `database` test fixture uses this to give each test a fresh, throwaway
-namespace.
+namespace. It also carries the in-process wake signal ("Waking and polling"): `wake`, the
+one-shot waits `wait_for` and `wait_for_any`, and `subscribe`, which returns a `Subscription`, a
+standing wait on a changing set of topics that reports which of them woke.
 
 **`entities.py`.** `PostgresEntityStorage(database)` is the entity store, an
 `FxtrEntityStorage` over the `entities` table (cid, `type_tag` — the type id string — for inspection
@@ -660,6 +733,11 @@ self-contained so it is easy to remove when an event-streaming mechanism replace
 attempts' lines are written from the recorder's batch transaction; step attempts' from the
 `StepAttempt` flush task.
 
+**`previews.py`.** The `attempt_previews` table's write and read: `record_preview(tx, attempt_id,
+seq, data)` upserts an attempt's one row, `get_preview` reads its record and bytes, and
+`list_previews_many` reads many attempts' records (`PreviewRecord`: seq and time) without the
+bytes. Written only by the `StepAttempt` flush task; no rule reads it.
+
 **`ledger.py`.** The facts of the durable record and the rules that keep them valid, read in the
 order its module docstring gives: jobs and invocations (`create_job`, `create_invocation`), what a
 running attempt records (`record_emissions`, `record_observation`, `record_return`,
@@ -692,7 +770,8 @@ between the two statements of the cache rules, which `assert_policy_agrees` in
 `tests/postgres_testing.py` checks from every staging helper. `invocation_records` reads selected invocation states with their
 answering attempts' errors and reasons for `Jobs`, and `named_step_records` reads every step row
 of one job with its step's name, which is what `Jobs.status` shows for each step; both keep the
-SQL in this operations module. `step_records` reads the step rows at many keys in one query, and
+SQL in this operations module. `step_records` reads the step rows at many keys in one query (its
+statement is built once for the process, since every evaluator pass that judges a step runs it), and
 `conflict_records` the rows in `conflict`;
 `execution.step_statuses` turns them into `TargetStatus`es with no further reads, and `Jobs`
 hydrates requested details from them. Detailed readers and the viewer aggregate or page the same
@@ -712,20 +791,22 @@ its module docstring gives: job attempts and the lease (`create_job_attempt`,
 `take_step_results`, the same rules for many keys, reading each kind of row once for all of them
 and the one implementation the single-key forms call; `complete_step`,
 `close_step_attempt`, `clear_cache_entry`, which can require the entry to offer a given step
-result, `adopt_step_result`, and `cache_conflicts`, a job's conflicts from the step relation); `status` and `step_statuses` (with `step_status`, one
-key's), the evaluator's one view of a child or a step (`Done`, `Ready`, `Pending`, `Stopped`), and
+result, `adopt_step_result`, and `cache_conflicts`, a job's conflicts from the step relation); `statuses` and `step_statuses`
+(with `status` and `step_status`, one target's), the evaluator's one view of its children or steps,
+each kind in a query or two however many are asked about (`Done`, `Ready`, `Pending`, `Stopped`), and
 `invocation_state` for display; `resume` (returning the job attempt taken, or `AlreadyFinished`);
 then the readers (`get_job_attempt`, `list_job_attempts`, `get_cache_entry`,
 `list_cache_entries`, `select_cache_entries`, `get_attempt`, `list_attempts`,
 `list_owned_attempts`) and the record types (`JobAttemptRecord` with `fresh()`, `AttemptRecord`,
 `CacheEntryRecord`). Transitions wake the
-`job:<id>` and `step:<key>` topics on commit. Each policy rule is one branch, so automatic retry,
+topics on commit (see "Waking and polling"). Each policy rule is one branch, so automatic retry,
 approval flows, or holding abandoned work are local changes here.
 
 **`runner.py`.** `JobRunner(database, job_attempt, *, execute, limits, settings,
 verify_determinism)` and `run_job(database, job_id, registry, *, code_version, ...)`; `RunLimits` (concurrent steps;
 workflow bodies are unbounded), `RunnerSettings` (the heartbeat, reconciliation, and poll
-intervals), `WorkSink` (what an evaluator pushes work onto), `JobEvictedError`. The module docstring
+intervals), `WorkSink` (what an evaluator pushes work onto, and asks whether the runner holds an
+item), `JobEvictedError`. The module docstring
 is the reference for the queue's four sources, the item tasks, settling, and the four ways a run
 ends; "The life of an attempt" above walks the attempt task. The runner logs one INFO line when an
 attempt starts and one when it ends (WARNING when it failed), naming the job by its id's first
@@ -742,8 +823,8 @@ evaluator task expands and collects. It computes a query node like any other der
 through `nodes.compute`, which runs the plan in DuckDB on the event loop's thread; a query's value
 is not stored for its own sake, so a restarted attempt runs the query again. `attempts.py`'s `StepAttempt` is a step attempt's runtime
 object: an entity store and the same ending-and-closing lifecycle, with `complete` recording the
-result, plus the log buffer and the background flush task (`flush_logs`, started by the attempt
-task) that is the sole writer of the step's `ctx.log` lines.
+result, plus the log buffer, the waiting preview, and the background flush task (`flush`,
+started by the attempt task) that is the sole writer of the step's `ctx.log` lines and preview.
 
 **`jobs.py`.** `Jobs` (`client.jobs`) is the local inspection surface: `create(workflow, inputs,
 root=, tx=)` checks the inputs against the signature and creates the job and its root invocation,
@@ -761,8 +842,9 @@ step in `conflict`, with the step and kind of what owns the key, from the step r
 `result` loads the root's result; `describe` returns everything recorded (the job attempts;
 invocations with nodes, spawns, attempts, and each attempt's events and `ctx.log` lines; each step
 request with its binding, what the policy says the key is to the job, the attempt behind it, and
-that attempt's log lines, read for all of a description's steps at once, each kind of row in one
-query, so describing an invocation with thousands of mapped steps costs a few queries); `cancel(job, hard=, reason=)` cancels the active job attempt (see
+that attempt's log lines and preview record, read for all of a description's steps at once, each kind of row in one
+query, so describing an invocation with thousands of mapped steps costs a few queries);
+`get_preview(attempt_id)` reads a step attempt's preview bytes; `cancel(job, hard=, reason=)` cancels the active job attempt (see
 "Cancellation"); `resume(job, owner=, code_version=)` takes the job for an owner and returns the new
 job attempt (`NotResumableError` for a succeeded job). The descriptions also say which code ran,
 read from the ledger: a `Provenance` is a job attempt's fact with its loaded `CodeVersion` (the
@@ -792,27 +874,59 @@ entry still offers the step result that is in the way. `adopt_cache` makes the c
 results a job is bound to, local or imported, through `execution.adopt_step_result`: it creates or
 takes over an entry where nothing live or equal is, and overwrites a different request's result only
 when asked. `export_job` refuses a job with an active job attempt and otherwise writes its record in
-one snapshot transaction; `import_job` reads a record file, checks its commits with the environment,
-and in one transaction takes the job's row if it has the job (refusing it without `update`, or when
-a process holds it) and inserts the record. `client.jobs` is the `Jobs` inspection surface, which
+one snapshot transaction; `import_job` reads a record file under a pull's limits
+(`fxtr.project.job_record.IMPORT_LIMITS`: the file may come from outside the project), checks
+its commits with the environment, and in one transaction takes the job's row if it has the job
+(refusing it without `update` or `replace`, or when a process holds it), forgets the job with
+`replace`, and inserts the record. `client.jobs` is the `Jobs` inspection surface, which
 the viewer reads.
 
 **`job_records.py`.** A job's record is the ledger's rule made concrete: a ledger row refers only
 to ledger rows and entities, so `build_record` reads the job's rows (one select per table, each
 keyed by the job or one of its invocations), the step results its bindings name, and the job
 attempt facts its rows and those name, into a `fxtr.project.job_record.JobRecord`.
+The same snapshot includes settled attempts, events, errors, and logs. A settled job attempt is
+exported with its `settled_at` as its `heartbeat_at`, since the owning process goes on
+refreshing the heartbeat after settling (a draining soft cancel), and the record's id must not
+change with it. Import merges that history atomically with the facts, comparing existing rows
+and ignoring the lease (`owner`, which is this database's process label, and `heartbeat_at`).
+History naming a job attempt, invocation, or step request the database has no fact for
+fails the tables' foreign keys, which `insert_execution_record` reports as the record's fault
+(`RecordFileError`, naming the constraint), and `fxtr.project.execution_record
+.validate_execution_record` refuses the states, kinds, and kind-column combinations the tables'
+check constraints would before any transaction, so a bad record is refused rather than a database
+error.
 `export_job` encodes the record (it is not stored), collects the stored entities it reaches
-(`reachable_blocks`: read in batches, decoded, followed), and writes them after the record as a CAR. Importing reverses it.
-`read_record` keeps only the blocks the record's rows reach, walked from the rows (never the
-record's own block), and refuses a file whose root is not one record of this format or that lacks a
-block the rows reach. `insert_record` writes the entities, then merges every row by its table's
+(`reachable_blocks`: read in batches, decoded, followed), and writes them after the record as a CAR. `record_cid` encodes
+the record the same way and returns only its id, in DASL string form: the id `export_job` would
+give the job as the database holds it now, which a sync compares with the id the other side holds
+to tell whether the job changed. `record_job_entities` walks the same way and records the
+reached entities in `job_entities` for a job the table does not name (one imported before the
+table existed); `Database.create_schema(after_upgrade=)` runs such work in the upgrade's
+transaction, with the revision the schema was at before, so data a migration cannot fill
+commits with the revision or not at all. Importing reverses the export.
+`fxtr.project.job_record.read_record` (which needs no database) keeps only the blocks the
+record's rows reach, walked from the rows (never the record's own block), and refuses a file whose
+root is not one record of a supported format, that lacks a block the rows reach, or whose rows
+disagree with each other (`validate_record`). `insert_record` writes the entities, then merges every row by its table's
 primary key (`_merge`: inserted if absent, compared if present, a difference refusing the import):
 first the facts the record shares with the database (job attempt facts, `step_requests` rebuilt
 from the request entities, step results), then the job's own rows, against everything the
-database has of the job. That makes an existing job an *update*: refused if the database knows a
+database has of the job. A job attempt fact of another job that is new here is inserted with
+`from_other_job` set, and the job's own attempts (in `build_record`, the update check below, and
+`seq`) leave such facts out, so another job's record cannot add an attempt to a job; the import
+of the job such a fact names takes it over, with its record's values. A job's own fact is never
+changed, and a fact naming one job is never given to another (`_merge_attempt_facts`). Once the job's row is in, every entity the file carries is recorded
+against the job in `job_entities` (`ON CONFLICT DO NOTHING`, so an update adds only what the
+later record reaches); the file carries exactly the entities the record's rows reach, so the
+import is where that set is known. That makes an existing job an *update*: refused if the database knows a
 job attempt or a row of the job the record lacks, and otherwise extended, an invocation's
 monotonic columns (`returned_node`, `result_cid`, `job_attempt_id`, `finished_at`) set where the
-database has them null. Nothing is removed.
+database has them null. An update removes nothing. `forget_job` lets a record the update refuses
+replace the job: it removes the job's row, what cascades from it, and its attempts, with any
+`step_cache` entry that points at one of those attempts (a failed or abandoned step). The step
+results stay, so the cache and other jobs keep them, and the job's `job_attempt_provenance` facts
+stay to explain them, marked `from_other_job`; the import takes back those its record holds.
 
 ## Not yet built
 
@@ -823,23 +937,39 @@ over once its lease is stale); resuming a step directly by key.
 
 - `tests/test_runner_postgres_database.py`, `test_runner_postgres_entities.py`,
   `test_runner_postgres_json_values.py`, `test_runner_postgres_project_arrays.py`,
-  `test_runner_postgres_client.py`: the plumbing, the entity store, the codec, project arrays and
+  `test_runner_postgres_client.py`: the plumbing (transactions, the wake signal's one-shot waits
+  and standing subscriptions), the entity store, the codec, project arrays and
   snapshots, the local client (submit, resume, handles, cancel and interrupt, the cache, and
   `from_project`, over a fake environment).
+- `tests/test_runner_postgres_migrations.py`: the migrations build exactly the tables `schema.py`
+  declares (Alembic's comparison, plus check constraints by name); the first revision's frozen
+  table list matches what it builds; a schema created before migrations is adopted at the first
+  revision, or refused when it lacks a table or column of it; a schema at the first revision
+  needs an upgrade and is brought to the head with its rows kept; repeated and concurrent
+  upgrades, of one schema and of several in one process.
 - `tests/test_runner_postgres_ledger.py`: the ledger's facts on their own: expansion, step spawns,
   the result.
 - `tests/test_runner_postgres_job_records.py`: exporting a job's record (what it carries, a cache
   hit's producer included) and refusing a held or unknown job; importing it into a second
   project's schema (results and provenance as they were, nothing adopted), each refusal, a job
-  whose producer's fact arrived with another job, and resuming an imported stopped job; updating
-  an imported job from a later record, and refusing a held job, a job resumed on both sides, and
-  a row the record lacks or contradicts.
+  whose producer's fact arrived with another job, another job's record naming attempts of a job
+  (before, after, and during that job's import), and resuming an imported stopped job; updating
+  an imported job from a later record (a heartbeat after the first export included), and refusing
+  a held job, a job resumed on both sides, and a row the record lacks or contradicts; replacing a
+  job from a record an update refuses (its results staying in the step cache, a key its failed
+  attempt held, and refusing a held job); what an
+  import records in `job_entities` (the record's entities, an update's additions, nothing for a
+  job run locally, and the table absent from a re-export); `record_cid` naming the record an
+  export writes and changing after a resume; execution
+  history refused for a value the tables would not accept (and that the values accepted are the
+  ones `schema.py`'s check constraints list), or for a fact the database lacks.
 - `tests/test_runner_postgres_execution.py`: the execution state and policy: the lease (heartbeat,
   a takeover racing an open heartbeat, eviction sweeping what a job attempt owns, the guard
   refusing only an attempt that is no longer running), job attempts and what they cover, what is
   due and starting it idempotently (two processes starting one invocation, a start racing an
   eviction, settling racing a start, two resumes of an untaken job, a resume settling a job
-  attempt whose process died before settling), `status` and `invocation_state`, the step
+  attempt whose process died before settling), `status`, `statuses` and `invocation_state`,
+  which topics an ending wakes, the step
   resolution rules through `resolve_step`, `start_attempt`, and `take_step_result` (two jobs
   starting one key, two takeovers of one key, a cache conflict, a failed attempt retried by
   another job, a stale owner's step waited on until evicted, each job taking a completed result
@@ -854,17 +984,23 @@ over once its lease is stale); resuming a step directly by key.
   ledger already has is adopted, a step attempt completes or fails.
 - `tests/test_runner_postgres_evaluator.py`: `derive` and `evaluate` on their own.
 - `tests/test_runner_postgres_runner.py`: the runner over a real database: seeding, pushes,
-  idempotence, settling `succeeded` and `stopped`, the running row covered from the moment it
+  idempotence, settling `succeeded` and `stopped`, what the evaluators judge (a done target
+  never again; each target of a mapped child workflow a bounded number of times, with the
+  fallback intervals out of reach), holding an item and waking its topic, the running row covered from the moment it
   exists (a task cancelled while seeding or loading), the heartbeat noticing an eviction, a cancel
-  from elsewhere and an interrupt draining, a second interrupt abandoning, the step limiter, a step
+  from elsewhere and an interrupt draining, a cancel from another process interrupting what waits
+  at the next heartbeat, a second interrupt abandoning, the step limiter, a step
   held by an evicted job attempt taken over.
 - `tests/test_runner_postgres_jobs.py`: jobs end to end through `run_job` and a runner in a second
   task: failures, a runner stopped mid-body and the job resumed, determinism, the verification run, a
   project array snapshot as a root input, job inspection, child workflows, steps across jobs (sharing an attempt, a clear leaving
   bindings intact, a failed step interrupting every waiting job, a cache conflict until cleared,
   one key for two requests failing, a pending job taking over an evicted step, two runners sharing a step,
-  a pending step waking on its key's topic), cancellation (soft, hard, a runner started on a
+  a pending step waking on its key's topic, a step another process computes polled for), cancellation (soft, hard, a runner started on a
   cancelled job attempt, two-level Ctrl-C, an evicted runner's late writes refused), and logging.
+- `tests/test_runner_postgres_previews.py`: step previews: visible while the step runs, kept
+  after it fails and deleted when it completes, written at most once per interval, the last one
+  and log line written when the step fails during a slow write, an unserializable one dropped.
 - `tests/test_runner_postgres_debug_web.py`: the viewer's readers over a job run through
   `run_job`.
 - `tests/test_semantics_reference.py`: the backend-neutral reference examples of a correct

@@ -12,7 +12,7 @@
  * frame's width minus the rank's, and the share is the pan for a rank that overflows and the
  * rank's place in the layout for one that fits. A rank exactly as wide as the frame has no slack,
  * so a rank starting or stopping to overflow as the zoom changes never jumps. When the whole
- * layout fits, every rank is where the layout put it: the view is the layout, centred.
+ * layout fits, every rank is where the layout put it: the view is the layout, centered.
  *
  * A rank's width is its cards', so the lanes of edges passing through it beside its cards can lie
  * off screen even when the cards do not. Those lanes are squeezed, in order, into the room between
@@ -35,7 +35,7 @@ export interface ParallaxView {
   scale: number
 }
 
-/** The screen span every rank is placed within: the viewport, or the layout centred in it. */
+/** The screen span every rank is placed within: the viewport, or the layout centered in it. */
 function frame(layout: FlowchartLayout, scale: number, viewportWidth: number) {
   const width = Math.min(viewportWidth, scale * layout.width)
   return { left: (viewportWidth - width) / 2, width }

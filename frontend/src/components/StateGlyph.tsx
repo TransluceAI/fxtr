@@ -107,7 +107,7 @@ export function GlyphShape({ cx: x, cy: y, r, glyph, counts, spin = false, muted
   )
 }
 
-/** Three quarters of a ring turning about its centre, as the viewer's other loading spinners. */
+/** Three quarters of a ring turning about its center, as the viewer's other loading spinners. */
 function Spinner({ x, y, r, strokeWidth }: { x: number; y: number; r: number; strokeWidth: number }) {
   return (
     <path

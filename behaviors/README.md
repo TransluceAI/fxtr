@@ -18,9 +18,11 @@ installed with the `models` extra. Import providers from their modules:
 - `behaviors.implementations.models.anthropic.AnthropicMessagesAPI`
 - `behaviors.implementations.models.openai_compatible.OpenAICompatibleAPI`
 - `behaviors.implementations.models.openai_responses.OpenAIResponsesAPI`
+- `behaviors.implementations.models.gemini.GeminiGenerateContentAPI`
+- `behaviors.implementations.models.openrouter.OpenRouterAPI`
 
-Each of those modules also has a `ModelProvider` (`AnthropicMessagesProvider`, ...) that serves any
-model id over one shared client. The base-model user simulator
+Each of those modules but `openrouter` also has a `ModelProvider` (`AnthropicMessagesProvider`,
+...) that serves any model id over one shared client. The base-model user simulator
 (`behaviors.implementations.context_policies.base_model_user_simulator`) needs the `models` extra
 too.
 
@@ -135,14 +137,22 @@ Install `behaviors[docent]` to convert transcript trees into Docent data models 
 `behaviors.implementations.docent.DocentReadingStep`. The reading step renders a Docent prompt
 against a transcript or agent run, calls an injected `ModelAPI`, and parses and validates the
 response and citations. It operates on ordinary Python objects without separate child save/load
-calls. Provider and Docent SDKs remain optional dependencies. There is no supplied general
-judging implementation.
+calls. Provider and Docent SDKs remain optional dependencies.
+
+## Judging
+
+`behaviors.judging.judge.judge` asks a model for a judgment of the entities it is given, such as an agent
+run and a rubric, placed in a context template. It returns a
+`Judgment`: the model's answer, checked against a JSON Schema, a `Citation` for each citation in
+it, and every call that was made. It needs the `jsonschema` package, which the `docent` extra
+installs. The docs site describes it under "Judging" in `docs/behaviors/reference/api.mdx`.
 
 ## Development
 
 [`example_projects/behavior_rollouts/`](../example_projects/README.md) is a complete fxtr
-experiment using this library (scripted and OpenAI conversations), an independent project with
-launchers, a view bundle, and its own setup instructions and tests.
+experiment using this library (scripted and OpenAI conversations, the OpenAI ones judged with
+`behaviors.judging`), an independent project with launchers, a view bundle, and its own setup
+instructions and tests.
 
 From the repository root:
 

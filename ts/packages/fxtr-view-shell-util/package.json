@@ -6,6 +6,7 @@
   "description": "Helpers for shells hosting fxtr-view renderers: the dispatch registry and the components dispatching through it, caching data hooks, and a DRISL entity loader; under ./testing, an in-memory shell for tests. Renderer code never imports this.",
   "exports": {
     ".": "./src/index.ts",
+    "./hosted": "./src/hosted.ts",
     "./testing": "./testing/index.ts"
   },
   "scripts": {

@@ -16,17 +16,26 @@ imports it only when a command or launcher needs it.
 project/
 ├── config.py        Project, the two configuration files ([tool.fxtr.views] included, and
 │                    load_views for that table alone), locating a project from an anchor, the
-│                    local config writer, load_env_file (the project's .env)
+│                    local config writer, load_env_file (the project's .env); the
+│                    remotes of both files, merged (RemotesConfig, RemoteConfig,
+│                    load_remotes)
 ├── environment.py   Environment (locate the project, pin the code, check the venv, find
-│                    commits, read a file at a commit), Pin, Problem, LocalEnvironment over
-│                    git, jj, and uv
+│                    commits, read a file at a commit, push and fetch commits),
+│                    Pin, Problem, LocalEnvironment over git, jj, and uv
 ├── code_version.py  CodeVersion: the code a process ran a job at (the pinned commit, the project,
 │                    the environment check, where each runnable function is); function_sources
 ├── client.py        ProjectClient and JobHandle, the interface user code talks to (and, optional,
 │                    where the project's viewer runs: viewer_url); their records (JobStatus,
 │                    CacheConflict, JobSummary, ArrayInfo, Snapshot, CacheEntry, AdoptReport) and errors
+├── execution_record.py  ExecutionRecord: how one job's attempts went (job attempts with no
+│                    process identity, attempts, events, log lines), embedded in its JobRecord;
+│                    validate_execution_record (which also refuses the states, kinds, and
+│                    kind/column combinations the runner's tables' check constraints would)
 ├── job_record.py    JobRecord: one job's facts, and the facts they refer to, as one entity whose
-│                    tag carries the format's version; one row type per ledger table
+│                    tag carries the format's version; one row type per ledger table;
+│                    read_record, which reads a record file without a database, under
+│                    RecordLimits (IMPORT_LIMITS bounds a file from outside the project),
+│                    upgrading an earlier supported format; validate_record
 ├── running.py       run_job, wait_for_job, and report_job_status: the CLI and Python
 │                    launchers' shared execution and output (show_job shows a job in the viewer);
 │                    open_local_client and launch_cli;
@@ -51,6 +60,7 @@ project/
 │                    wheel and for vendoring (stdlib only: fxtr/hatch_build.py loads it by path)
 ├── new.py           a new project (`fxtr new`): write_project, find_checkout, render, init_git
 ├── template/        the files new.py renders, as *.tmpl mirroring the project's layout
+├── remotes/         remotes, to push and pull jobs, and hub sign-in (its own CODE_OVERVIEW.md)
 └── cli.py           the fxtr script, a small user of ProjectClient
 ```
 
@@ -95,16 +105,38 @@ own; a job's launch version is its first job attempt's. A resume may pin another
 and every entity it reaches as a CAR file (`core/car.py`). The record is the job's facts from the
 ledger: its own rows, the step results its bindings name, and the facts of the job attempts that
 produced them (another job's, for a cache hit), so every result in it still says which code
-produced it; execution state is left out. `import_job` adds such a job to another project as new
+produced it. Settled execution history travels with those facts. `import_job` adds such a job to another project as new
 facts: it refuses a file that is not a whole record of this format, results produced at commits
 the repository lacks (`Environment.missing_commits`), a job the project already has, and a fact it
-shares with the project (a step result another job here took too) that differs. With `update`, a
+shares with the project (a step result another job here took too) that differs. With `replace`,
+the record replaces the project's copy of the job. With `update`, a
 job the project has is brought up to date from a later record of it instead, provided the record
 holds everything the project knows of the job; nothing is removed. The job arrives settled,
 `succeeded` or `stopped` and resumable here, and the step cache is left alone. `adopt_cache`
 (`fxtr cache adopt`, or `fxtr jobs import --adopt-cache`) then makes the cache offer the job's
-results, so later jobs here reuse them, with their provenance. Building, writing, reading, and
-inserting records is the local client's (`runner/postgres/job_records.py`).
+results, so later jobs here reuse them, with their provenance. Reading a record file needs no
+database (`job_record.read_record`); building, writing, and inserting records is the local
+client's (`runner/postgres/job_records.py`). Records are kept after they move, so a reader accepts
+every format in `SUPPORTED_RECORD_FORMATS`, upgrading an earlier one to the current one. A file
+can come from someone else, so `read_record` takes `RecordLimits` (the CAR's sizes as stored and
+decompressed; `import_job` and pulls from a remote read under `IMPORT_LIMITS`, the sizes the
+release hub accepts of a push) and checks the rows against each other with
+`validate_record`: unique
+keys, the root invocation present and of the job's workflow, every other invocation created by a
+spawn, the job's own rows belonging to the job, every reference to a row the record holds. A
+record of format v0.1, written once, is kept as `tests/fixtures/job_record_v0_1.car`, so a
+change that stops a reader reading existing records fails a test.
+
+**Execution history travels with the job.** `JobRecord.execution` carries the settled
+`ExecutionRecord`: job attempts, body and step attempts, events, errors, and logs. Export reads
+facts and execution in one snapshot. Import merges them in one transaction and permits resuming a stopped job. For each job attempt
+whose history the record file includes, import refuses conflicting or missing local rows, and
+keeps the history of the job's other job attempts, which the record says nothing about. Process
+owners are written as
+`exported`; active leases and the step cache do not travel. `read_record` reads a v0.1 record
+file, which carries no execution history, and a v0.2 one, which does (`SUPPORTED_RECORD_FORMATS`);
+`export_job` writes v0.2 (`JOB_RECORD_TYPE`). Export and update refuse while owned work is running, including steps finishing after a soft
+cancel.
 
 **User code holds one object.** `ProjectClient` is the top-level counterpart of
 `WorkflowContext`: an `FxtrEntityStorage` that also has the project arrays, the jobs, and the step
@@ -246,13 +278,15 @@ job attempt the call creates overwrites the cache conflicts it finds with comple
 ## The command line
 
 `cli.py` is `fxtr`: `new <dir>`, `run <workflow>`, `resume <job>`,
-`jobs list|status|cancel|export|import`, `cache list|clear|adopt`, `init`, `views build`, `view`. Every job, cache,
-and `init` command opens the local client of the project the working directory (or `--project`)
+`jobs list|status|cancel|export|import`, `cache list|clear|adopt`, `init`, `views build`, `view`,
+and `push|pull|remote|hub` (over `remotes/`). Every job, cache, `push|pull`, and `init` command
+opens the local client of the project the working directory (or `--project`)
 is in and uses only the `ProjectClient` interface after that, so what it prints is what any
 client could report; `view` is the one local-only command, serving `runner/postgres/debug_web/`,
 and `new`, `views vendor`, and `views build` open no client at all (`new` writes a project that has
 no database yet; `views vendor` only copies renderer packages; `views build` needs only
-`[tool.fxtr.views]`). `new` ends by printing the commands to sync the venv, write the local config, build the
+`[tool.fxtr.views]`; `remote` and `hub` edit configuration files and
+talk to a hub). `new` ends by printing the commands to sync the venv, write the local config, build the
 renderer bundle, and commit (including the renderer lockfile). Empty projects link to the
 first-experiment walkthrough; `--example` also prints the commands to run the demo.
 `run` takes a registered workflow name and inputs that are JSON
@@ -292,7 +326,7 @@ pass their own client opener.
   cache-conflict output is tested with the job that has the conflicts, in
   `tests/test_runner_postgres_jobs.py`.
 - `tests/test_project_config.py`: locating a project, reading both files strictly, the override,
-  the schema default, the writer, loading `.env`.
+  the schema default, the remotes of both files, the writer, loading `.env`.
 - `tests/test_project_views.py`: reading a bundle's manifest and its refusals, `build_views`
   against a temporary package whose `build` script writes a bundle (skipped without npm),
   including a failed build keeping the previous bundle; the sources fingerprint (linked packages
@@ -317,7 +351,8 @@ pass their own client opener.
   repositories and a real uv project (jj cases skipped without jj).
 - `tests/test_project_cli.py`: every command through a local client with a fake environment over
   the test database: output, exit status, inputs, the refusals and their command-line notes,
-  and matching launch output through the CLI and Python API.
+  and matching launch output through the CLI and Python API; `push|pull` through the
+  in-memory remote of `tests/project_remotes_testing.py`.
 - `tests/test_runner_postgres_client.py`: the local client against the interface (submit, resume,
   handles, cancel and Ctrl-C, the cache, `from_project`), with `FakeEnvironment`
   (`tests/postgres_testing.py`).

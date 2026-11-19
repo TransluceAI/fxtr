@@ -18,6 +18,7 @@ has setup and development commands.
 | `frontend/` | The experiment viewer: a Vite/React app, and a shell of the visualization system, over the viewer backend in fxtr | ts, fxtr's viewer API |
 | `example_projects/basic_project/` | The example project, set up the way a user's is, and the home of fxtr's example experiments | fxtr, ts |
 | `example_projects/behavior_rollouts/` | The maintained example of a project using behaviors | fxtr, behaviors, ts |
+| `example_projects/joke_eval/` | The example project of the first-experiment skill: its guide's joke evaluation, whose code the guide shows | fxtr, behaviors, ts |
 
 ## Repository layout
 
@@ -71,7 +72,8 @@ has setup and development commands.
     ├── README.md           what the example projects share: setup, the viewer, testing
     ├── example_project_testing.py  the Postgres test fixture the example projects share
     ├── basic_project/      a unit
-    └── behavior_rollouts/  a unit
+    ├── behavior_rollouts/  a unit
+    └── joke_eval/          a unit
 ```
 
 ## How the units fit together
@@ -99,7 +101,9 @@ tab only when no page is open.
   `core/entity_data.py`); the frontend decodes them in the browser with `fxtr-view-shell-util`'s
   DRISL loader, so an entity id and a string stay distinct.
 - **The viewer API** is GraphQL, a few plain routes, and the events WebSocket under `/api`,
-  defined by fxtr's `runner/postgres/debug_web/` and read by `frontend/src/api/`.
+  defined by fxtr's `runner/postgres/debug_web/` and read by `frontend/src/api/`. Its
+  `ViewerReader` and `create_reader_app` can serve stored jobs from an existing database schema
+  without loading a project; `fxtr view` adds local source files, bundles, and events.
 - **The view bundle contract** is `fxtr-view`'s `view_bundle.ts` (`VIEW_API_VERSION`, the manifest,
   the shared modules); fxtr's `project/views.py` mirrors its constants, and a test checks the two
   agree.
@@ -132,8 +136,8 @@ tab only when no page is open.
   (`scripts/release_version.py check`), and a check that every copy of the `LICENSE` and `NOTICE`
   matches.
 - **CI** (`.github/workflows/ci.yml`, GitHub Actions) runs on every pull request and push to main:
-  the pre-commit hooks over all files; the pytest suite against a Postgres service; behaviors'
-  tests against the lowest fxtr its range allows, from PyPI; the pnpm workspace's typecheck and
+  the pre-commit hooks over all files; the pytest suite against a Postgres service, with both
+  locked and lowest allowed direct dependencies; behaviors' tests against the lowest fxtr its range allows, from PyPI; the pnpm workspace's typecheck and
   tests, including the skill preparation and plugin sync tests; each example's renderer
   environment; and `pnpm build:dist` with behaviors' build.
 - **The skills' plugin.** The fxtr, behaviors, and first-experiment skills and the documentation

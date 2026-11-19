@@ -24,7 +24,7 @@ import * as fxtrView from 'fxtr-view'
 import { VIEW_API_VERSION, VIEW_BUNDLE_MANIFEST_FILENAME, type AnyRenderer, type SharedModules, type ViewBundleFactory, type ViewBundleManifest } from 'fxtr-view'
 import { dispatchRegistry, type DispatchRegistry } from 'fxtr-view-shell-util'
 import { defaultRenderers } from 'fxtr-view-default-renderers'
-import { VIEWS_BASE } from '../config'
+import { viewerConfig } from '../config'
 
 const ASSET_TIMEOUT_MS = 15_000
 const VIEWS_VERSION_HEADER = 'X-Fxtr-Views-Version'
@@ -59,7 +59,9 @@ const importBundle: ImportBundle = (url) => import(/* @vite-ignore */ url) as Pr
  *  when that manifest names another version. Each version is attempted at most once per load. */
 export async function loadViews(version: string | null = null, importer: ImportBundle = importBundle): Promise<ViewsLoad> {
   const failed = (problem: string | null): ViewsLoad => ({ views: defaultViews(problem), stylesheet: null })
-  const manifestUrl = new URL(`${VIEWS_BASE}/${VIEW_BUNDLE_MANIFEST_FILENAME}`, window.location.href)
+  const base = viewerConfig().viewsBase
+  if (base === null) return failed(null)
+  const manifestUrl = new URL(`${base}/${VIEW_BUNDLE_MANIFEST_FILENAME}`, window.location.href)
   const fetchManifest = (wanted: string | null) => {
     const url = new URL(manifestUrl)
     if (wanted !== null) url.searchParams.set('v', wanted)

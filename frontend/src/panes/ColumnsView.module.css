@@ -101,7 +101,8 @@
   cursor: grab;
 }
 .thumb:hover { background: var(--fg-dim); }
-/* Where a link would open, over everything. */
+/* Where a link would open, over everything but a hover preview (`HoverPreview`), which is open at
+   the same time and is drawn above it. */
 .highlight { position: fixed; z-index: 1000; pointer-events: none; }
 .hline, .vline {
   border-radius: 3px;

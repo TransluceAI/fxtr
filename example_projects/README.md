@@ -3,8 +3,14 @@
 The projects here are officially maintained examples of how to use fxtr and behaviors.
 
 - `basic_project/`: fxtr workflow, array, mapping, and visualization examples using mock data.
-- `behavior_rollouts/`: deterministic EchoAPI conversations and a multi-model OpenAI sweep over
-  ordered question sequences, with transcript and side-by-side comparison views.
+- `behavior_rollouts/`: three experiments: deterministic EchoAPI conversations (`echo`), whether
+  models keep to the instructions in force (`instructions_in_force`), and whether supporting a
+  distressed user reinforces beliefs the evidence doesn't warrant (`belief_reinforcement`).
+  Multiple models judge conversations repeatedly, with results overviews that open each judgment,
+  and conversation views. Its [README](behavior_rollouts/README.md) describes the launchers.
+- `joke_eval/`: the example project of the `first-experiment` skill: the joke evaluation that its
+  guide, [Your first experiment](../docs/fxtr/first-experiment.mdx), builds. The guide shows its
+  experiment module and launchers, so they are tested here.
 
 Each directory is an independent uv/fxtr project with its own lockfile and environment. Its
 `[tool.fxtr]` lists the modules the CLI and viewer import; `[tool.fxtr.views]` points to its
@@ -51,8 +57,8 @@ launchers are at the project root, and `views/` contains the project's renderers
 The reusable conversation renderers are `../ts/packages/fxtr-view-behaviors`.
 
 Run `uv run --group dev pytest -n auto` and `uv run --group dev pyright` from
-`behavior_rollouts/`. The repository's full pytest suite also collects its tests; the basic
-project's tests live in `fxtr/tests/`. Workflow tests need `FXTR_TEST_DATABASE_URL`; they use
+`behavior_rollouts/` or `joke_eval/`. The repository's full pytest suite also collects their
+tests; the basic project's tests live in `fxtr/tests/`. Workflow tests need `FXTR_TEST_DATABASE_URL`; they use
 throwaway schemas and fake code pins. Pure data and scoring unit tests run without a database.
 Provider calls require the explicit `llm_integration` marker. `example_project_testing.py`
 supplies the shared database fixture, importing the repository's fake environment from

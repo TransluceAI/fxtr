@@ -17,6 +17,10 @@ a value or array referencing an id the table does not hold is refused before it 
 naming an attempt the proxy has no table for (cancelled, finished, or never assigned) raises
 :class:`~fxtr.runner.session.AttemptClosedError` at once, as an in-process session would.
 
+**Previews.** A step's ``preview_step`` calls do not cross: the wire has no frame for them, and the
+proxy drops them after checking the attempt, so a step that publishes previews runs the same
+remotely, unwatched.
+
 **Stores.** ``store_raw_data`` first validates the value as an engine would (a tagged mapping, every
 reference an id this attempt received or stored). Then, *pipelined* (the default), it encodes the
 value, takes the cid of the bytes, queues a one-way :class:`~.wire.Store`, and returns the id at
@@ -55,6 +59,7 @@ from fxtr.core.entity_data import (
 )
 from fxtr.entity_defns.array import Array, ArrayType, CombineJoin, Join, KeyValue
 from fxtr.entity_defns.converter import DEFAULT_CONVERTER
+from fxtr.experiment.steps import PreviewSource
 from fxtr.runner.experimental.multiplexed import (
     Assigned,
     AttemptCancelled,
@@ -437,6 +442,11 @@ class RemoteWorkerSession(AsyncContextManagerMixin):
     def log_message(self, attempt_id: AttemptID, message: str) -> None:
         self._known(attempt_id)
         self._queue(wire.LogMessage(attempt_id, message))
+
+    def preview_step(self, attempt_id: AttemptID, value: PreviewSource) -> None:
+        # The wire carries no previews (pure observability, and a frame per streamed token would
+        # cost more than it shows): dropped here, after the same attempt check as a log line.
+        self._known(attempt_id)
 
     async def store_raw_data(self, attempt_id: AttemptID, data: StorableFxtrDataValue) -> EntityID:
         known = self._known(attempt_id)

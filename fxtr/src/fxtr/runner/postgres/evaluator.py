@@ -14,11 +14,10 @@ when it feeds a step or a child workflow or is the attempt's return.
 
 :class:`Evaluator` is the task that drives evaluation for one live attempt
 (:class:`~fxtr.runner.postgres.attempts.Attempt`). It is woken by the recorder having committed a
-batch, by the job's wake topic (another invocation of the job changed state), and by the topic of
-every cache key it is waiting on (another job's step attempt ended there), with the runner's poll
-interval as the fallback for changes made in other processes. It waits on all of those topics with
-one event (:meth:`~fxtr.runner.postgres.database.Database.wait_for_any`), so arming a wait costs a
-set insertion per topic rather than a task per topic. On each wake it evaluates, answers
+batch, by the topic of every target it is waiting on (an attempt of a child ended; a step attempt
+at a cache key ended, wherever it ran), and by the job attempt's topic (the job's active job
+attempt changed, which changes what every target is), with a fallback interval for changes no
+wake announced. On each wake it evaluates, answers
 the observes whose node has settled (the value, or a failure of the attempt if the node failed),
 and, once the body has returned and the returned node has a value, materializes the result and
 closes the attempt as completed. It is the only writer of node values and errors in the view, and
@@ -34,11 +33,10 @@ cache key (:func:`~fxtr.runner.postgres.ledger.record_step_request`) and resolve
 cache entry (:func:`~fxtr.runner.postgres.execution.resolve_step`). What the expansion created for
 this job to run (children; step requests nothing else is computing) is pushed onto the runner's
 queue (:class:`~fxtr.runner.postgres.runner.WorkSink`) when the transaction commits, so work is
-created where the ledger fact is written. On later wakes (a child finishing, or a step attempt
-closing, wakes the job's topic; a step attempt ending anywhere wakes its cache key's topic) it
-*collects*, asking the policy's :func:`~fxtr.runner.postgres.execution.status` (children) and
-:func:`~fxtr.runner.postgres.execution.step_status` (steps) about each target it has not yet found
-done. Done is permanent (a binding, or an invocation's result), so the evaluator keeps each done
+created where the ledger fact is written. On later wakes it
+*collects*, asking the policy's :func:`~fxtr.runner.postgres.execution.statuses` (children) and
+:func:`~fxtr.runner.postgres.execution.step_statuses` (steps) about the targets that may have
+changed. Done is permanent (a binding, or an invocation's result), so the evaluator keeps each done
 target's result and never judges that target again. A step whose result
 another job's equal attempt has produced is *taken*: the evaluator writes this job's binding
 (:func:`~fxtr.runner.postgres.execution.take_step_result`), and only then is the target done; a
@@ -49,6 +47,20 @@ Once every target is done, the run node's value is the stack of their results
 that is stopped gives the run node an error marked as an *interruption*, since the fault is another
 invocation's (a failed child or step, a cache conflict with another job's request, no active job
 attempt). The evaluator never reads attempt states or the cache itself.
+
+**What a pass judges, and when.** A job can have thousands of attempts live at once, each waiting
+on its own few targets, and one attempt can wait on thousands of targets. So a pass costs what
+changed, not what is outstanding: the evaluator holds one standing
+:class:`~fxtr.runner.postgres.database.Subscription` to its targets' topics, which tells it which
+were woken, and judges only those targets. A target is first judged when its run node is first
+seen expanded, unless the runner holds it
+(:meth:`~fxtr.runner.postgres.runner.WorkSink.holds`): then it is pending, and the runner wakes
+its topic when it stops holding it. Every outstanding target is judged again when the job
+attempt's topic wakes and when the fallback interval passes. That interval is the runner's poll
+interval while some target is *polled for*, one that no commit of this process is sure to
+announce: a step another job's process is computing, or a result on offer that could not be
+taken. Otherwise it is the runner's reconciliation interval, a safety net for a missed wake,
+since everything the attempt waits on is then this process's own to run and announce.
 
 **Errors** are not written to node rows. A derived node's error is a deterministic function of the
 leaves, like its value, so it is recomputed by whoever needs it; what the ledger records is the
@@ -64,7 +76,8 @@ are fixed lets it complete); any error of its own makes it *failed*.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping, Sequence
+import itertools
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 import anyio
@@ -78,7 +91,12 @@ from fxtr.runner.nodes import Node, NodeIdentity, node_inputs, node_type
 from fxtr.runner.postgres import execution, ledger
 from fxtr.runner.postgres.attempts import Attempt, Completed, Observe
 from fxtr.runner.postgres.database import Database, Transaction
-from fxtr.runner.postgres.execution import StaleAttemptError, job_topic, step_topic
+from fxtr.runner.postgres.execution import (
+    StaleAttemptError,
+    invocation_topic,
+    job_attempt_topic,
+    step_topic,
+)
 from fxtr.runner.postgres.ledger import CacheAddressReuseError, SpawnRecord
 from fxtr.runner.session import (
     AttemptClosedError,
@@ -239,75 +257,100 @@ class Evaluator:
     Args:
         attempt: The attempt whose view this evaluates.
         database: The runner's database.
-        poll_interval: Seconds to wait for a wake before re-evaluating anyway.
         sink: Where the work an expansion creates is pushed: the runner's queue.
+        poll_interval: Seconds to wait for a wake before judging everything again anyway, while
+            the attempt waits on a target no commit of this process is sure to announce.
+        reconcile_interval: The same wait while every target is this process's own to run: a
+            safety net, since its commits wake this task.
     """
 
     def __init__(
-        self, attempt: Attempt, database: Database, poll_interval: float, sink: WorkSink
+        self,
+        attempt: Attempt,
+        database: Database,
+        sink: WorkSink,
+        *,
+        poll_interval: float,
+        reconcile_interval: float,
     ) -> None:
         self._attempt = attempt
         self._database = database
-        self._poll_interval = poll_interval
         self._sink = sink
+        self._poll_interval = poll_interval
+        self._reconcile_interval = reconcile_interval
         # The results of each run node's targets found done so far. A target once done stays
-        # done (its binding, or its invocation's result, is permanent), so a pass judges only
-        # the targets not in here: it costs what is still outstanding, not the whole node.
+        # done (its binding, or its invocation's result, is permanent), so it is not judged
+        # again.
         self._done: dict[NodeIdentity, dict[Key, BoundID[Array[Any]]]] = {}
+        # The targets still waited on, by the topic that announces a change of theirs: the spawns
+        # of every watched run node that have not been found done, each with its position in the
+        # order they were first waited on, which is the order a pass judges them in.
+        self._waiting: dict[str, dict[tuple[NodeIdentity, Key], tuple[int, SpawnRecord]]] = {}
+        self._watched: set[NodeIdentity] = set()
+        self._positions = itertools.count()
+        # The topics whose targets the next pass judges, and those whose targets have to be
+        # polled for (see the module docstring).
+        self._to_judge: set[str] = set()
+        self._polled: set[str] = set()
+        self._job_attempt_topic = job_attempt_topic(attempt.invocation.job_id)
+        self._subscription = database.subscribe()
+        self._subscription.add(self._job_attempt_topic)
 
     async def run(self) -> None:
         """Evaluate on every wake until the attempt is closed."""
         attempt = self._attempt
-        while not attempt.ended:
-            await self._wait_for_change()
-            if attempt.ended:
-                return
-            await self.step()
+        try:
+            while not attempt.ended:
+                await self._wait_for_change()
+                if attempt.ended:
+                    return
+                await self.step()
+        finally:
+            self._subscription.close()
 
     async def _wait_for_change(self) -> None:
-        """Wait until the recorder has published something, another invocation of the job changed
-        state, a cache key this attempt waits on changed, or the poll interval passes; then arm the
-        next wait."""
+        """Wait until the recorder has published something, a target this attempt waits on
+        changed, the job's active job attempt changed, or the fallback interval passes; note
+        which targets the next pass has to judge; then arm the next wait.
+
+        A wake of a target's topic marks that target. A change of the job attempt changes what
+        every target is, and the fallback is for changes no wake announced, so both mark every
+        target. The fallback is the poll interval while some target is polled for, and the
+        reconciliation interval otherwise."""
         attempt = self._attempt
-        changed = attempt.changed
-        if not changed.is_set():
-            async with anyio.create_task_group() as tg:
-
-                async def first(wait: Callable[[], Any]) -> None:
-                    await wait()
-                    tg.cancel_scope.cancel()
-
-                async def topics() -> None:
-                    await self._database.wait_for_any(
-                        [
-                            job_topic(attempt.invocation.job_id),
-                            *(step_topic(key) for key in self._pending_step_keys()),
-                        ],
-                        self._poll_interval,
-                    )
-
-                tg.start_soon(first, changed.wait)
-                tg.start_soon(first, topics)
+        woken = await self._subscription.wait(
+            attempt.changed, self._poll_interval if self._polled else self._reconcile_interval
+        )
         attempt.changed = anyio.Event()
+        if woken is None or self._job_attempt_topic in woken:
+            self._to_judge.update(self._waiting)
+        else:
+            self._to_judge.update(woken)
 
-    def _pending_step_keys(self) -> set[str]:
-        """The cache keys this attempt is waiting on: those of every unsettled run node that has
-        expanded into steps, except keys already found done. A completing step attempt wakes
-        their topics, wherever it ran."""
-        keys: set[str] = set()
-        for identity, state in self._attempt.dag.items():
-            if state.settled:
-                continue
-            for spawn in self._outstanding(identity):
-                if spawn.step_cache_key is not None:
-                    keys.add(spawn.step_cache_key)
-        return keys
+    def _watch(self, identity: NodeIdentity) -> None:
+        """Start waiting on the targets of an expanded run node: every spawn is waited on under
+        its topic, and judged by the next pass unless the runner holds it. What the runner holds
+        is pending, as an expansion has just found it, and its topic is woken when that changes
+        (:meth:`~fxtr.runner.postgres.runner.WorkSink.holds`)."""
+        self._watched.add(identity)
+        for spawn in self._attempt.spawns[identity]:
+            topic = _topic(spawn)
+            self._waiting.setdefault(topic, {})[identity, spawn.key] = (
+                next(self._positions),
+                spawn,
+            )
+            self._subscription.add(topic)
+            if not self._sink.holds(_item(spawn)):
+                self._to_judge.add(topic)
 
-    def _outstanding(self, identity: NodeIdentity) -> list[SpawnRecord]:
-        """The spawns of a run node whose targets have not been found done: what a pass judges
-        and a wait subscribes to."""
-        done = self._done.get(identity, {})
-        return [spawn for spawn in self._attempt.spawns.get(identity, ()) if spawn.key not in done]
+    def _forget(self, topic: str, identity: NodeIdentity, key: Key) -> None:
+        """Stop waiting on one target: it is done, or its run node has settled without it."""
+        waiting = self._waiting.get(topic)
+        if waiting is None or waiting.pop((identity, key), None) is None or waiting:
+            return
+        del self._waiting[topic]
+        self._subscription.discard(topic)
+        self._polled.discard(topic)
 
     async def step(self) -> None:
         """One evaluation pass: compute what is computable, expand run nodes whose inputs have
@@ -493,108 +536,60 @@ class Evaluator:
         """Give every expanded, unsettled run node its value once all its targets have finished,
         or an interruption if any target has failed.
 
-        The targets are read in one snapshot transaction (a child's row and its attempts must
-        agree for its state to be judged), and only what was read is kept; the view is changed and
-        the results loaded afterwards, so the transaction holds no I/O but its own. A target found
-        done on an earlier pass is not judged again: done is permanent (a binding, or an
-        invocation's result), so the evaluator keeps its result and a pass judges only the targets
-        still outstanding. Each of those is judged by the execution policy,
-        :func:`~fxtr.runner.postgres.execution.status` for a child and
-        :func:`~fxtr.runner.postgres.execution.step_statuses` for the steps (all of the pass's steps
-        in one query): done, ready to take (an equal attempt completed at the key; this job binds
-        to it in a short write transaction after the snapshot, through
+        A pass judges the targets marked for it (:meth:`_wait_for_change`) and, of a run node
+        seen for the first time, those the runner does not hold (:meth:`_watch`). They are read
+        in one snapshot transaction (a
+        child's row and its attempts must agree for its state to be judged), and only what was
+        read is kept; the view is changed and the results loaded afterwards, so the transaction
+        holds no I/O but its own. A target found done is not judged again: done is permanent (a
+        binding, or an invocation's result), so the evaluator keeps its result and stops waiting
+        on it. Each target is judged by the execution policy,
+        :func:`~fxtr.runner.postgres.execution.statuses` for the children and
+        :func:`~fxtr.runner.postgres.execution.step_statuses` for the steps (each kind in one
+        query for all of the pass's targets): done, ready to take (an equal attempt completed at
+        the key; this job binds to it in a short write transaction after the snapshot, through
         :func:`~fxtr.runner.postgres.execution.take_step_result`, and the target is done once the
         binding is written), pending (the node waits), or stopped (an interruption of the node). A
         pending target that nothing is running is due, and is pushed onto the runner's queue: its
         trigger was another job's attempt at the key ending without a result, which no commit in
-        this process saw. Several stopped targets are all named in the node's error; an
-        interruption follows as soon as one has stopped, without waiting for the rest. A result
-        that does not fit the node's declared type is the node's own error.
+        this process saw. A step running under an attempt the runner does not hold, and a result
+        on offer that could not be taken, are polled for from here on. Several stopped targets
+        are all named in the node's error; an interruption follows as soon as one has stopped,
+        without waiting for the rest. A result that does not fit the node's declared type is the
+        node's own error.
         """
         attempt = self._attempt
-        pending = [
-            (identity, state)
+        pending = {
+            identity: state
             for identity, state in attempt.dag.items()
             if not state.settled and identity in attempt.spawns
-        ]
-        if not pending:
-            return
-        finished = {identity: self._done.setdefault(identity, {}) for identity, _ in pending}
-        outstanding = {identity: self._outstanding(identity) for identity, _ in pending}
-        failures: dict[NodeIdentity, list[str]] = {}
-        conflicts: dict[NodeIdentity, list[str]] = {}
-        to_take: list[tuple[NodeIdentity, Key, str]] = []
-        job_id = attempt.invocation.job_id
-        # One snapshot: a target's rows must agree.
-        async with self._database.transaction(snapshot=True) as tx:
-            steps = await execution.step_statuses(
-                tx,
-                job_id,
-                {
-                    spawn.step_cache_key
-                    for identity, _ in pending
-                    for spawn in outstanding[identity]
-                    if spawn.step_cache_key is not None
-                },
-            )
-            for identity, _ in pending:
-                for spawn in outstanding[identity]:
-                    if spawn.child_invocation_id is not None:
-                        child = await ledger.get_invocation(tx, spawn.child_invocation_id)
-                        judged = await execution.status(tx, job_id, child)
-                    else:
-                        assert spawn.step_cache_key is not None
-                        judged = steps[spawn.step_cache_key]
-                    match judged:
-                        case execution.Done(result=result):
-                            finished[identity][spawn.key] = result
-                        case execution.Ready():
-                            assert spawn.step_cache_key is not None
-                            to_take.append((identity, spawn.key, spawn.step_cache_key))
-                        case execution.Stopped(cache_conflict=True):
-                            assert spawn.step_cache_key is not None
-                            conflicts.setdefault(identity, []).append(spawn.step_cache_key)
-                        case execution.Stopped(reason=reason):
-                            failures.setdefault(identity, []).append(reason)
-                        case execution.Pending(attempt_id=None):
-                            # Due, and nothing is running it: make sure the runner knows. The
-                            # trigger was another job's attempt at the key ending without a
-                            # result, which no commit in this process saw.
-                            if spawn.child_invocation_id is not None:
-                                self._sink.enqueue(
-                                    execution.StartInvocation(spawn.child_invocation_id)
-                                )
-                            else:
-                                assert spawn.step_cache_key is not None
-                                self._sink.enqueue(execution.StartStep(spawn.step_cache_key))
-                        case execution.Pending():
-                            pass
-        for identity, cache_keys in conflicts.items():
-            # One clause for all of a run node's conflicts, however many spawns it has.
-            failures.setdefault(identity, []).append(execution.conflict_reason(cache_keys))
-        if to_take:
-            # Take what is on offer: this job's bindings, written on behalf of this attempt. A
-            # result no longer on offer (the key was cleared meanwhile) is simply not done yet.
-            try:
-                async with self._database.transaction() as tx:
-                    active = await execution.guard(tx, attempt.id)
-                    taken = await execution.take_step_results(
-                        tx, active, {cache_key for _, _, cache_key in to_take}
-                    )
-                    for identity, key, cache_key in to_take:
-                        if cache_key in taken:
-                            finished[identity][key] = taken[cache_key]
-            except StaleAttemptError as exc:
-                attempt.mark_closed(refusal=AttemptClosedError(str(exc)))
-                return
-        results = {
-            identity: found
-            for identity, found in finished.items()
-            if identity not in failures and len(found) == len(attempt.spawns[identity])
         }
-        for identity, state in pending:
+        for identity in pending:
+            if identity not in self._watched:
+                self._watch(identity)
+        judging, self._to_judge = self._to_judge, set()
+        # In the order the targets were first waited on, whatever order their topics woke in, so
+        # that what a pass reports does not depend on timing.
+        targets = [
+            (topic, identity, spawn)
+            for _, topic, identity, spawn in sorted(
+                (
+                    (position, topic, identity, spawn)
+                    for topic in judging
+                    for (identity, _), (position, spawn) in self._waiting.get(topic, {}).items()
+                ),
+                key=lambda target: target[0],
+            )
+        ]
+        failures: dict[NodeIdentity, list[str]] = {}
+        if targets:
+            await self._judge(targets, failures)
+            if attempt.ended:
+                return
+        for identity, state in pending.items():
             node = state.node
             assert isinstance(node, nodes.RunChildWorkflow | nodes.RunStep)
+            refs = self._done.setdefault(identity, {})
             if identity in failures:
                 state.error = AttemptError(
                     type_name="RunTargetFailedError",
@@ -603,8 +598,7 @@ class Evaluator:
                 )
                 state.origin = identity
                 state.interrupted = True
-            elif identity in results:
-                refs = results[identity]
+            elif len(refs) == len(attempt.spawns[identity]):
                 data = await attempt.entities.load_raw_data_many(
                     [ref.entity_id for ref in refs.values()]
                 )
@@ -617,6 +611,109 @@ class Evaluator:
                 except Exception as exc:  # a result that does not fit the declared type
                     state.error = AttemptError.from_exception(exc)
                     state.origin = identity
+            else:
+                continue
+            # Settled: whatever of it is still outstanding is no longer waited on.
+            for spawn in attempt.spawns[identity]:
+                self._forget(_topic(spawn), identity, spawn.key)
+
+    async def _judge(
+        self,
+        targets: Sequence[tuple[str, NodeIdentity, SpawnRecord]],
+        failures: dict[NodeIdentity, list[str]],
+    ) -> None:
+        """Judge the targets of one pass (see :meth:`_collect`): record the done ones, take the
+        results on offer, queue what is due, and note which are polled for.
+
+        Args:
+            targets: The targets, each with its topic and its run node.
+            failures: Filled in with the reasons of each run node's stopped targets.
+        """
+        attempt = self._attempt
+        job_id = attempt.invocation.job_id
+        conflicts: dict[NodeIdentity, list[str]] = {}
+        to_take: list[tuple[str, NodeIdentity, Key, str]] = []
+        # One snapshot: a target's rows must agree.
+        async with self._database.transaction(snapshot=True) as tx:
+            steps = await execution.step_statuses(
+                tx,
+                job_id,
+                {
+                    spawn.step_cache_key
+                    for _, _, spawn in targets
+                    if spawn.step_cache_key is not None
+                },
+            )
+            children = await execution.statuses(
+                tx,
+                job_id,
+                (
+                    await ledger.get_invocations(
+                        tx,
+                        {
+                            spawn.child_invocation_id
+                            for _, _, spawn in targets
+                            if spawn.child_invocation_id is not None
+                        },
+                    )
+                ).values(),
+            )
+        for topic, identity, spawn in targets:
+            cache_key = spawn.step_cache_key
+            if spawn.child_invocation_id is not None:
+                judged = children[spawn.child_invocation_id]
+            else:
+                assert cache_key is not None
+                judged = steps[cache_key]
+            polled = False
+            match judged:
+                case execution.Done(result=result):
+                    self._done.setdefault(identity, {})[spawn.key] = result
+                    self._forget(topic, identity, spawn.key)
+                    continue
+                case execution.Ready():
+                    assert cache_key is not None
+                    to_take.append((topic, identity, spawn.key, cache_key))
+                case execution.Stopped(cache_conflict=True):
+                    assert cache_key is not None
+                    conflicts.setdefault(identity, []).append(cache_key)
+                case execution.Stopped(reason=reason):
+                    failures.setdefault(identity, []).append(reason)
+                case execution.Pending(attempt_id=None):
+                    # Due, and nothing is running it: make sure the runner knows. The trigger
+                    # was another job's attempt at the key ending without a result, which no
+                    # commit in this process saw.
+                    self._sink.enqueue(_item(spawn))
+                case execution.Pending():
+                    # Running. If the runner does not hold it, another job's process runs it,
+                    # and nothing here is woken when it ends.
+                    polled = not self._sink.holds(_item(spawn))
+            if polled:
+                self._polled.add(topic)
+            else:
+                self._polled.discard(topic)
+        for identity, cache_keys in conflicts.items():
+            # One clause for all of a run node's conflicts, however many spawns it has.
+            failures.setdefault(identity, []).append(execution.conflict_reason(cache_keys))
+        if to_take:
+            # Take what is on offer: this job's bindings, written on behalf of this attempt. A
+            # result no longer on offer (the key was cleared meanwhile) is simply not done yet,
+            # and nothing announces what becomes of it: it is polled for.
+            try:
+                async with self._database.transaction() as tx:
+                    active = await execution.guard(tx, attempt.id)
+                    taken = await execution.take_step_results(
+                        tx, active, {cache_key for _, _, _, cache_key in to_take}
+                    )
+            except StaleAttemptError as exc:
+                attempt.mark_closed(refusal=AttemptClosedError(str(exc)))
+                return
+            for topic, identity, key, cache_key in to_take:
+                if cache_key in taken:
+                    self._done.setdefault(identity, {})[key] = taken[cache_key]
+                    self._forget(topic, identity, key)
+                else:
+                    self._polled.add(topic)
 
     def _fail_node(self, identity: NodeIdentity, exc: Exception) -> None:
         """Give a run node the error its expansion raised, with itself as origin: the node's own
@@ -713,6 +810,23 @@ class Evaluator:
             attempt.mark_closed(refusal=AttemptClosedError(str(exc)))
             return
         attempt.mark_closed(Completed())
+
+
+def _topic(spawn: SpawnRecord) -> str:
+    """The topic that announces a change of a spawn's target: an attempt of the child ending, or
+    the cache key's current attempt ending, wherever it ran."""
+    if spawn.step_cache_key is not None:
+        return step_topic(spawn.step_cache_key)
+    assert spawn.child_invocation_id is not None
+    return invocation_topic(spawn.child_invocation_id)
+
+
+def _item(spawn: SpawnRecord) -> execution.WorkItem:
+    """The unit of work that runs a spawn's target."""
+    if spawn.step_cache_key is not None:
+        return execution.StartStep(spawn.step_cache_key)
+    assert spawn.child_invocation_id is not None
+    return execution.StartInvocation(spawn.child_invocation_id)
 
 
 def _incomplete(failed: Mapping[NodeIdentity, AttemptError]) -> AttemptError:

@@ -148,6 +148,8 @@ export function useInvocationPage(step: StepDoc, state: CardTableState) {
         cells,
         invocation,
         ...(invocation.state === 'failed' ? { failure: { jobId: source.jobId, invocation } } : {}),
+        ...(invocation.state === 'running' && invocation.stepCacheKey !== null
+          ? { running: { jobId: source.jobId, cacheKey: invocation.stepCacheKey } } : {}),
       }
     })
   }, [page, source, step])

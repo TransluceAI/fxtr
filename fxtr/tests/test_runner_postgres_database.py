@@ -173,6 +173,64 @@ async def test_cancelled_wait_does_not_remove_another_waiters_subscription() -> 
         assert db._wakes == {}
 
 
+async def test_a_subscription_returns_the_topics_woken_since_its_last_wait() -> None:
+    async with Database("postgresql+asyncpg://unused@localhost/unused") as db:
+        subscription = db.subscribe()
+        subscription.add("a")
+        subscription.add("b")
+        subscription.add("a")
+        # A wake between two waits is kept for the next, which returns at once.
+        db.wake("a")
+        db.wake("unrelated")
+        assert await subscription.wait(anyio.Event(), 5) == {"a"}
+        # Nothing woke, and nothing else set the event: a timeout.
+        assert await subscription.wait(anyio.Event(), 0.001) is None
+        # The topics stay subscribed from one wait to the next; a discarded one no longer wakes.
+        subscription.discard("b")
+        subscription.discard("b")
+        db.wake("b")
+        db.wake("a")
+        assert await subscription.wait(anyio.Event(), 5) == {"a"}
+        subscription.close()
+        assert db._subscriptions == {}
+        db.wake("a")
+        assert await subscription.wait(anyio.Event(), 0.001) is None
+
+
+async def test_a_waiting_subscription_ends_on_a_wake_or_on_its_event() -> None:
+    async with Database("postgresql+asyncpg://unused@localhost/unused") as db:
+        subscription, other = db.subscribe(), db.subscribe()
+        subscription.add("shared")
+        other.add("shared")
+        results: list[set[str] | None] = []
+        event = anyio.Event()
+
+        async def waiter() -> None:
+            results.append(await subscription.wait(event, 5))
+
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(waiter)
+            await anyio.wait_all_tasks_blocked()
+            db.wake("shared")  # sets the waiter's event, which the caller shares
+            assert event.is_set()
+        assert results == [{"shared"}]
+        # Whatever else sets the event ends the wait too, with no topic to report.
+        event = anyio.Event()
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(waiter)
+            await anyio.wait_all_tasks_blocked()
+            event.set()
+        assert results == [{"shared"}, set()]
+        # The other subscription was woken by the same wake, and a cancelled wait loses nothing.
+        async with anyio.create_task_group() as tg:
+            tg.start_soon(waiter)
+            await anyio.wait_all_tasks_blocked()
+            tg.cancel_scope.cancel()
+        db.wake("shared")
+        assert await other.wait(anyio.Event(), 5) == {"shared"}
+        assert await subscription.wait(anyio.Event(), 5) == {"shared"}
+
+
 async def test_a_transaction_cancelled_while_connecting_finishes_and_gives_the_connection_back(
     database: Database,
 ) -> None:

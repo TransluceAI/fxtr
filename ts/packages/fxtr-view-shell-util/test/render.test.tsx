@@ -8,6 +8,7 @@ import {
   EntityHoverPreview,
   EntityInlineLink,
   InvocationPanel,
+  PartialEntityPanel,
   invocationRefKey,
   renderer,
   unwrap,
@@ -20,13 +21,15 @@ import {
   type InvocationRecord,
   type InvocationRef,
   type JsonValue,
+  type PartialEntityPanelProps,
   type Spawn,
 } from "fxtr-view";
-import { RenderEntity, RenderInvocation, dispatchRegistry, useRenderers } from "../src/index";
+import { RenderEntity, RenderInvocation, RenderValue, dispatchRegistry, useRenderers } from "../src/index";
 import { RenderSlot } from "../src/render";
 import { TableShellProvider } from "../testing";
 import { PendingShellProvider } from "./pending_shell";
 import { atom } from "jotai";
+import { useState } from "react";
 
 interface NoteData extends EntityData {
   readonly $type: "org.example.Note";
@@ -494,5 +497,61 @@ describe("views declared within another", () => {
       </TableShellProvider>,
     );
     expect(screen.getByText("detail 1 3")).toBeTruthy();
+  });
+});
+
+describe("RenderValue", () => {
+  function NoteValue({ value, partial }: PartialEntityPanelProps) {
+    return <div>note value:{String(value["body"])}{partial ? " (partial)" : ""}</div>;
+  }
+  function AnyValue({ value }: PartialEntityPanelProps) {
+    return <div>any value:{value.$type}</div>;
+  }
+  const valueRegistry = dispatchRegistry([
+    renderer(PartialEntityPanel, ANY_SUBJECT_TYPE, "tree", AnyValue),
+    renderer(PartialEntityPanel, "org.example.Note", "note", NoteValue),
+  ]);
+
+  it("dispatches on the value's type, the type's own renderer before the wildcard", () => {
+    render(
+      <TableShellProvider registry={valueRegistry} entities={new Map()}>
+        <RenderValue slot={PartialEntityPanel} value={NOTE} partial live storage={atom<JsonValue>(null)} />
+        <RenderValue slot={PartialEntityPanel} value={{ $type: "org.example.Odd" }} partial={false} live storage={atom<JsonValue>(null)} />
+      </TableShellProvider>,
+    );
+    expect(screen.getByText("note value:hello (partial)")).toBeTruthy();
+    expect(screen.getByText("any value:org.example.Odd")).toBeTruthy();
+  });
+
+  it("keeps the renderer mounted as the value changes, and shows the error fallback for untagged data", () => {
+    let mounts = 0;
+    function Counting({ value }: PartialEntityPanelProps) {
+      useState(() => { mounts += 1; return null; });
+      return <div>body:{String(value["body"])}</div>;
+    }
+    const counting = dispatchRegistry([renderer(PartialEntityPanel, "org.example.Note", "note", Counting)]);
+    const storage = atom<JsonValue>(null);
+    const tree = (body: string) => (
+      <TableShellProvider registry={counting} entities={new Map()}>
+        <RenderValue slot={PartialEntityPanel} value={{ ...NOTE, body }} partial live storage={storage} />
+      </TableShellProvider>
+    );
+    const { rerender } = render(tree("he"));
+    rerender(tree("hello"));
+    expect(screen.getByText("body:hello")).toBeTruthy();
+    expect(mounts).toBe(1);
+    render(
+      <TableShellProvider registry={counting} entities={new Map()}>
+        <RenderValue
+          slot={PartialEntityPanel}
+          value={{ body: "no tag" } as unknown as EntityData}
+          partial
+          live
+          storage={storage}
+          fallbacks={{ error: () => <div>untagged</div> }}
+        />
+      </TableShellProvider>,
+    );
+    expect(screen.getByText("untagged")).toBeTruthy();
   });
 });

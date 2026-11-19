@@ -34,11 +34,14 @@ known-first-party = [
     "behaviors",
     "basic_project",
     "behavior_rollouts",
+    "joke_eval",
 ]
 
 [tool.ruff.lint.per-file-ignores]
 "fxtr/src/fxtr/core/entities.py" = ["UP046"]
 "fxtr/tests/test_loader_registry.py" = ["E402", "UP046"]
+# Revisions are rendered by Alembic and frozen once released; the tables' long comments are strings.
+"fxtr/src/fxtr/runner/postgres/migrations/versions/*.py" = ["E501"]
 
 [tool.pytest.ini_options]
 testpaths = [
@@ -48,7 +51,7 @@ testpaths = [
 ]
 pythonpath = [
     "fxtr/tests", "example_projects/basic_project/src", "example_projects",
-    "example_projects/behavior_rollouts/src",
+    "example_projects/behavior_rollouts/src", "example_projects/joke_eval/src",
 ]
 markers = [
     "llm_integration: calls live LLM providers; requires API keys and explicit opt-in",

@@ -7,6 +7,13 @@ import { cx } from '../lib/cx'
 const OPEN_DELAY = 250
 const CLOSE_DELAY = 80
 
+/** Above the marker that shows where a hovered link would open (`.highlight` in
+ *  panes/ColumnsView.module.css, at 1000). The marker shows while the pointer is on a link, which
+ *  is also when the link's preview is open, so the preview has to be drawn over it. Set inline,
+ *  because Radix copies the content's z-index to the wrapper it positions, and an inline style is
+ *  not outranked by a caller's `className`. */
+const HOVER_PREVIEW_Z_INDEX = 1001
+
 /**
  * A preview card shown while the pointer rests on `trigger` (one element, which takes the hover
  * card's handlers). The card lets the pointer through (`hover-preview`): it closes as soon as the
@@ -29,7 +36,8 @@ export function HoverPreview({ trigger, children, className, side, align, collis
       {...(open === undefined ? {} : { open })} {...(onOpenChange === undefined ? {} : { onOpenChange })}>
       <HoverCard.Trigger asChild>{trigger}</HoverCard.Trigger>
       <HoverCard.Portal>
-        <HoverCard.Content className={cx('hover-preview', className)} side={side} align={align} sideOffset={6}
+        <HoverCard.Content className={cx('hover-preview', className)} style={{ zIndex: HOVER_PREVIEW_Z_INDEX }}
+          side={side} align={align} sideOffset={6}
           {...(collisionPadding === undefined ? {} : { collisionPadding })}>
           {children}
           <HoverCard.Arrow className="popover-arrow" />

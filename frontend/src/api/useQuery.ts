@@ -17,6 +17,12 @@ const RECENT_LIMIT = 500
  *  panel reopened, a level returned to) shows its data at once. */
 const recent = new Map<string, { value: unknown }>()
 
+/** Keep `value` as what `key` read last, as if a query had just read it: a query mounted (or
+ *  changed) to the key starts from it, and reads it afresh. */
+export function keepQueryValue(key: string, value: unknown) {
+  remember(key, value)
+}
+
 /** Drop every kept value (between tests, which reuse keys over different data). */
 export function forgetRecentQueries() {
   recent.clear()
@@ -70,7 +76,8 @@ export function useQuery<T>(
       do {
         dirty = false
         setResult(previous => {
-          if (previous.key !== key) {
+          // A changed key, or one enabled after mounting, starts from its kept value.
+          if (previous.key !== key || previous.valueKey !== key) {
             const hit = recent.get(key)
             if (hit) return { key, retainKey, value: hit.value as T, valueKey: key, fetching: true }
           }
@@ -108,9 +115,11 @@ export function useQuery<T>(
     }
   }, [version, reload])
 
-  // A key changed this render, before the effect reads it: its kept value, else the retained one.
-  const hit = result.key === key ? undefined : enabled ? recent.get(key) : undefined
-  const shown = result.key === key && result.retainKey === retainKey ? result : hit ? {
+  // A key changed (or enabled) this render, before the effect reads it: its kept value, else the
+  // retained one.
+  const current = result.key === key && result.retainKey === retainKey
+  const hit = enabled && !(current && result.valueKey === key) ? recent.get(key) : undefined
+  const shown = current && !hit ? result : hit ? {
     fetching: true,
     valueKey: key,
     value: hit.value as T,

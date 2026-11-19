@@ -1,7 +1,7 @@
 import { Suspense, useLayoutEffect, useRef, useState } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { Check, ChevronDown, Copy, SquareArrowOutUpRight } from 'lucide-react'
-import { useFile, useSource } from '../api/resources'
+import { missingSourceLabel, useFile, useSource } from '../api/resources'
 import { codeLocation, editorHref, filePath, shortCommit } from '../lib/code'
 import { cx } from '../lib/cx'
 import { EDITORS, setEditor, useEditor } from '../lib/editor'
@@ -28,7 +28,7 @@ export function CodeBody({ name, codeVersion }: { name: string; codeVersion: str
 
 function CodeFile({ name, codeVersion }: { name: string; codeVersion: string | null }) {
   const source = useSource(name, codeVersion)
-  if (!source) return <span className="detail-none">source not indexed</span>
+  if (!source) return <span className="detail-none">{missingSourceLabel()}</span>
   return <Lines source={source} />
 }
 

@@ -128,6 +128,9 @@ class FakeStepAttempt:
     def add_log(self, message: str) -> None:
         self.calls.append(("log", message))
 
+    def set_preview(self, value: Any) -> None:
+        self.calls.append(("preview", value))
+
     async def complete(self, result: Array[Any]) -> None:
         self.ended = True
         self.calls.append(("complete", result))

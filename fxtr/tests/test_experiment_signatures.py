@@ -316,6 +316,9 @@ class _StoreContext(StepContext):
     def log(self, message: str) -> None:
         pass
 
+    def preview(self, value: Any) -> None:
+        pass
+
     def is_known(self, entity_id: EntityID) -> bool:
         return self.storage.is_known(entity_id)
 

@@ -1,4 +1,28 @@
-.loading { padding: 18px; color: var(--fg-dim); font-size: var(--text-sm); }
+.loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  color: var(--fg-dim);
+  font-size: 13px;
+}
+.spinner {
+  flex: none;
+  box-sizing: border-box;
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--line);
+  border-top-color: var(--fg-dim);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}
+.nothing { padding: 18px; color: var(--fg-dim); font-size: var(--text-sm); }
 .problem {
   display: flex;
   flex-direction: column;

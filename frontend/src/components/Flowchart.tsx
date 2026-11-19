@@ -134,7 +134,7 @@ export function Flowchart({ levelKey, level, selectedId, onSelect }: Props) {
         update(panBy(layoutRef.current, current, viewport.clientWidth, pointerY, -event.deltaX, -event.deltaY))
       }
     }
-    // `=` and `-` zoom about the viewport's centre and `0` fits the graph, without Shift so `=`
+    // `=` and `-` zoom about the viewport's center and `0` fits the graph, without Shift so `=`
     // stands for `+`. Modified keys stay the browser's own page zoom.
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.ctrlKey || event.metaKey || event.altKey || event.isComposing ||

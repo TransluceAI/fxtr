@@ -4,6 +4,7 @@ path through a real Worker loop over a fake attempt."""
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any
 
 import anyio
@@ -12,6 +13,8 @@ from frozendict import frozendict
 from runs_testing import FakeAttempt, FakeStepAttempt, identity
 
 from fxtr.entity_defns.array import Array, ArrayType
+from fxtr.entity_defns.dataclass_bases import TaggedDataclass
+from fxtr.entity_defns.partial import Partial
 from fxtr.experiment.handles import ArrayHandle
 from fxtr.experiment.registry import FunctionRegistry
 from fxtr.experiment.workflows import WorkflowContext, workflow
@@ -65,6 +68,11 @@ async def registered(max_concurrency: int = 2, **kwargs: Any) -> tuple[Multiplex
     host = MultiplexedHost(**kwargs)
     await host.register([WorkflowSpec("wf"), StepSpec("s")], max_concurrency=max_concurrency)
     return host, Received(host)
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Note(TaggedDataclass, fxtr_type="test.fxtr.multiplexed.Note"):
+    text: str
 
 
 async def test_execute_sends_the_assignment_and_returns_when_the_run_completes() -> None:
@@ -211,7 +219,10 @@ async def test_wrong_kind_and_unknown_runs_are_refused() -> None:
             host.emit_combine(A2, T(1), {"a": T(0)}, "exact")
         with pytest.raises(AttemptClosedError, match="Unknown"):
             await host.complete_step(A1, Array.scalar(1, int))
+        preview = Partial(Note)
+        host.preview_step(A2, preview)
         await host.complete_step(A2, Array.scalar(1, int))
+        assert ("preview", preview) in step_attempt.calls
         host.shutdown("done")
 
 

@@ -8,6 +8,7 @@ import uuid
 from datetime import timedelta
 from typing import Any
 
+import anyio
 import pytest
 from postgres_testing import (
     OWNER,
@@ -562,6 +563,31 @@ async def test_starting_is_idempotent_and_refuses_what_cannot_start(database: Da
     assert job_attempt.state == "succeeded"
 
 
+async def test_a_stale_start_of_an_invocation_this_job_attempt_tried_starts_nothing(
+    database: Database,
+) -> None:
+    """A job attempt tries each invocation once: a start queued before the child's attempt ended
+    (an evaluator's push, a reconciliation) must not run it again once it failed or was
+    interrupted. (One that was abandoned is replaced; see the eviction tests.)"""
+    job_id = await a_job(database)
+    job_attempt = await active(database, job_id)
+    root = await start_root(database, job_id)  # stays running, so the job attempt stays active
+    _, (failing, interrupted) = await expand_children(database, root)
+    for child, state in ((failing, "failed"), (interrupted, "interrupted")):
+        started = await start_invocation(database, job_id, child)
+        if state == "failed":
+            await close(database, started.attempt_id, "failed", error=BOOM)
+        else:
+            await close(database, started.attempt_id, "interrupted", reason="a target stopped")
+        async with database.transaction() as tx:
+            assert await execution.start_attempt(tx, job_attempt, StartInvocation(child.id)) is None
+        assert [a.state for a in await attempts_of(database, job_id, child.pathname)] == [state]
+    # What is due agrees: neither child is due again under this job attempt.
+    await assert_policy_agrees(database, job_id)
+    due = await pending(database, job_id)
+    assert StartInvocation(failing.id) not in due and StartInvocation(interrupted.id) not in due
+
+
 async def test_two_processes_starting_one_invocation_start_it_once(database: Database) -> None:
     """Two transactions inserting the invocation's attempt collide on the one-running index: the
     second waits for the first to commit and then finds nothing to start."""
@@ -683,6 +709,77 @@ async def test_status_of_a_child_is_done_pending_or_stopped(database: Database) 
     await set_job_attempt_state(database, job_id, "cancelled")
     assert isinstance(await status_of(database, job_id, "root"), Stopped)  # root is running
     assert isinstance(await status_of(database, job_id, second.pathname), Done)
+
+
+async def test_statuses_judges_many_children_as_status_judges_each(database: Database) -> None:
+    job_id = await a_job(database)
+    root = await start_root(database, job_id)
+    _, (first, second) = await expand_children(database, root)
+    first_started = await start_invocation(database, job_id, first)
+
+    async def judged() -> dict[Any, Any]:
+        async with database.transaction() as tx:
+            children = await ledger.get_invocations(tx, [first.id, second.id])
+            many = await execution.statuses(tx, job_id, children.values())
+            for child in children.values():
+                assert many[child.id] == await execution.status(tx, job_id, child)
+            assert await execution.statuses(tx, job_id, []) == {}
+            return many
+
+    # One running, one due.
+    assert await judged() == {first.id: Pending(first_started.attempt_id), second.id: Pending()}
+    await close(database, first_started.attempt_id, "interrupted", reason="a child failed")
+    second_started = await start_invocation(database, job_id, second)
+    ref = await finish(database, second_started.attempt_id, 2)
+    many = await judged()
+    assert many[first.id] == Stopped(
+        f"child invocation {first.pathname!r} interrupted: a child failed"
+    )
+    assert isinstance(done := many[second.id], Done) and done.result.entity_id == ref.entity_id
+    # A job attempt tries an invocation again only after an abandoned attempt, so the next
+    # attempts of the first child run under the job's next job attempt.
+    await set_job_attempt_state(database, job_id, "stopped")
+    await resume(database, job_id)
+    # An abandoned attempt leaves its invocation due again; a failed one stops it.
+    again = await start_invocation(database, job_id, first)
+    await close(database, again.attempt_id, "abandoned", reason="gone")
+    assert (await judged())[first.id] == Pending()
+    last = await start_invocation(database, job_id, first)
+    await close(database, last.attempt_id, "failed", error=BOOM)
+    assert (await judged())[first.id] == Stopped(
+        f"child invocation {first.pathname!r} failed", error=BOOM
+    )
+    await set_job_attempt_state(database, job_id, "cancelled")
+    assert (await judged())[first.id] == Stopped("no active job attempt")
+
+
+async def test_an_ending_wakes_the_topic_of_what_ended_and_not_its_siblings(
+    database: Database,
+) -> None:
+    """What an attempt waiting on targets listens to: an attempt of a child ending wakes that
+    child's topic alone, and a change of the job's active job attempt wakes the job attempt's."""
+    job_id = await a_job(database)
+    root = await start_root(database, job_id)
+    _, (first, second) = await expand_children(database, root)
+    listener = database.subscribe()
+    for topic in (
+        execution.invocation_topic(first.id),
+        execution.invocation_topic(second.id),
+        execution.job_attempt_topic(job_id),
+    ):
+        listener.add(topic)
+    first_started = await start_invocation(database, job_id, first)
+    second_started = await start_invocation(database, job_id, second)
+    assert await listener.wait(anyio.Event(), 0.001) is None  # a start changes no target
+    await close(database, first_started.attempt_id, "failed", error=BOOM)
+    assert await listener.wait(anyio.Event(), 5) == {execution.invocation_topic(first.id)}
+    await finish(database, second_started.attempt_id, 2)
+    assert await listener.wait(anyio.Event(), 5) == {execution.invocation_topic(second.id)}
+    await cancel(database, job_id, hard=False)
+    assert await listener.wait(anyio.Event(), 5) == {execution.job_attempt_topic(job_id)}
+    await resume(database, job_id)
+    assert await listener.wait(anyio.Event(), 5) == {execution.job_attempt_topic(job_id)}
+    listener.close()
 
 
 async def test_invocation_state_follows_the_attempts(database: Database) -> None:
