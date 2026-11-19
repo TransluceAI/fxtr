@@ -2,7 +2,7 @@ import { Suspense, type ReactNode } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import { Info } from 'lucide-react'
 import { unwrap, useInvocation, type Spawn } from 'fxtr-view'
-import { stepStatus, type GqlProvenance } from '../api/graphql'
+import { resultNotTaken, stepStatus, type GqlProvenance } from '../api/graphql'
 import { useInvocationSnapshot, useOverviewSnapshot, useStepPin } from '../api/live'
 import { useSource } from '../api/resources'
 import { useNow } from '../lib/clock'
@@ -44,7 +44,8 @@ export function InvocationInfo({ spawn }: { spawn: Spawn }) {
 /**
  * One invocation's state and timing as one plain line, current while shown: `completed in 7s ·
  * <when it started>`, `running for 4s · started <when>`, `failed after 12s · <when>`, or just its
- * state before it starts. With `withError`, a failure's error follows on its own line.
+ * state before it starts. With `withError`, a failure's error follows on its own line. A step whose
+ * result the job has not taken (`resultNotTaken`) says so on a line below.
  */
 export function InvocationStatusLine({ spawn, withError = false }: { spawn: Spawn; withError?: boolean }) {
   const { ref } = spawn
@@ -62,8 +63,21 @@ export function InvocationStatusLine({ spawn, withError = false }: { spawn: Spaw
 }
 
 function StepStatus({ jobId, cacheKey, withError }: { jobId: string; cacheKey: string; withError: boolean }) {
-  return <StatusLine status={stepStatus(useStepPin(jobId, cacheKey))} withError={withError} />
+  const pin = useStepPin(jobId, cacheKey)
+  return (
+    <>
+      <StatusLine status={stepStatus(pin)} withError={withError} />
+      {resultNotTaken(pin) && <div className={styles.note}>{RESULT_NOT_TAKEN}</div>}
+    </>
+  )
 }
+
+/** What a step whose result the job has not taken says under its status. It holds in both cases
+ *  of `resultNotTaken`, the momentary one included. */
+export const RESULT_NOT_TAKEN =
+  'The job has not used this result yet. If the workflow invocation that asked for it has ended ' +
+  '(another of its steps failed, or the job was cancelled), resuming the job picks the result up ' +
+  'without running the step again.'
 
 function WorkflowStatus({ jobId, pathname, withError }: { jobId: string; pathname: string; withError: boolean }) {
   return <StatusLine status={useOverviewSnapshot(jobId, pathname).invocation} withError={withError} />

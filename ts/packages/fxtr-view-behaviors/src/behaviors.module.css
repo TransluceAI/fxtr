@@ -18,6 +18,7 @@
 .message[data-selected] { outline: 2px solid light-dark(#e0b100, #c99a00); outline-offset: 1px; }
 .role { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 8px; margin-bottom: 2px; font-size: var(--text-xs); font-weight: 600; text-transform: uppercase; letter-spacing: 0.02em; line-height: 1.7; overflow-wrap: anywhere; }
 .role .muted { text-transform: none; font-weight: normal; }
+.picked { background: light-dark(#ffe58a, #6b5600); color: inherit; border-radius: 2px; }
 .prose { white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.4; font-size: var(--text-md); }
 .details { margin: 3px 0; font-size: var(--text-xs); }
 .details > summary, .collection > summary { cursor: pointer; color: var(--fg-dim); padding: 3px 0; }

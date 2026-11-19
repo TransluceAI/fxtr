@@ -155,10 +155,11 @@ export function ColumnsView({ state, renderPanel, onSlide }: {
   }, [state.highlight])
 
   // A panel a link opened or used is scrolled into view, as little as will show its head and the
-  // start of its body (`revealScroll`), and flashes. The columns are never slid further over the
-  // trace for it: only back, as little as will show its column's left edge when that is slid out of
-  // view at the left (a column slid over the trace is still in view). A panel opened past the
-  // detail view's right edge is reached by sliding the columns by hand.
+  // start of its body (`revealScroll`), and flashes. When its column is slid out of view at the
+  // left, the columns slide back as little as will show its left edge (a column slid over the trace
+  // is still in view). When it ends past the detail view's right edge, the columns slide left as
+  // little as will show its right edge, and never so far that its left edge goes out of view
+  // (`slideIntoView`): the panel that opened it moves left, and it comes in at the right.
   const reveal = useStoreSelector(state.reveal, (value) => value)
   useLayoutEffect(() => {
     if (!reveal) return
@@ -167,6 +168,10 @@ export function ColumnsView({ state, renderPanel, onSlide }: {
     const column = element.parentElement!
     const hidden = clipLeft(frameRef.current!) - column.getBoundingClientRect().left
     if (hidden > 0) setSlide((current) => Math.max(0, current - hidden))
+    else {
+      const distance = slideIntoView(frameRef.current!, column)
+      if (distance > 0) setSlide((current) => current + distance)
+    }
     const scroll = revealScroll(column, element)
     if (scroll !== 0) column.scrollBy({ top: scroll, behavior: 'smooth' })
     flashPanel(stripRef.current, reveal.panelId)
@@ -545,6 +550,41 @@ function clipLeft(frame: HTMLElement): number {
     if (getComputedStyle(box).overflowX !== 'visible') return box.getBoundingClientRect().left + box.clientLeft
   }
   return 0
+}
+
+/** The right edge on screen of what shows the columns: the frame's, or that of the nearest box
+ *  around it that clips, or the window's, whichever is furthest left. */
+function clipRight(frame: HTMLElement): number {
+  let right = Math.min(frame.getBoundingClientRect().right, window.innerWidth)
+  for (let box = frame.parentElement; box; box = box.parentElement) {
+    if (getComputedStyle(box).overflowX !== 'visible') {
+      right = Math.min(right, box.getBoundingClientRect().left + box.clientLeft + box.clientWidth)
+    }
+  }
+  return right
+}
+
+/** How much room is left at the right of a column slid into view, in px, and how long the slide
+ *  takes, in ms. */
+const SLIDE_IN_GAP = 16
+const SLIDE_IN_MS = 220
+
+/** How far to slide the columns left so that `column`'s right edge is in view, keeping its left
+ *  edge in view: 0 when it is in view already. The frame is moved there at once, before the next
+ *  paint, and animated from where it was, so the slide starts in the frame the click is drawn in;
+ *  the caller adds the distance to the slide, which renders the frame where it already is. */
+function slideIntoView(frame: HTMLElement, column: HTMLElement): number {
+  const box = column.getBoundingClientRect()
+  const past = box.right + SLIDE_IN_GAP - clipRight(frame)
+  if (past <= 0) return 0
+  const distance = Math.max(0, Math.min(past, box.left - clipLeft(frame)))
+  if (distance === 0) return 0
+  frame.style.left = `${parseFloat(frame.style.left || '0') - distance}px`
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    frame.animate([{ translate: `${distance}px 0` }, { translate: '0 0' }],
+      { duration: SLIDE_IN_MS, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' })
+  }
+  return distance
 }
 
 function clamp(value: number, low: number, high: number): number {

@@ -98,7 +98,8 @@
             "group": "Guides",
             "pages": [
               "fxtr/guides/running-and-viewing-jobs",
-              "fxtr/guides/importing-external-datasets"
+              "fxtr/guides/importing-external-datasets",
+              "fxtr/guides/pushing-and-pulling-jobs"
             ]
           },
           {

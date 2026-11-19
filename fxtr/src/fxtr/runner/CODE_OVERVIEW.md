@@ -158,7 +158,12 @@ the new node. A query that only reads one handle and changes its presentation na
 instead. A `retype` that changes more than presentation emits its query node at once. `node_token_of` refuses a query that was
 never collected, so one passed to a context operation or returned says to call `collect()`.
 
-`RunnerStepContext` (over a `StepRunSession`) exposes the cache key. A step receives its inputs
+`RunnerStepContext` (over a `StepRunSession`) exposes the cache key and `ctx.preview(value)`,
+which checks that the value is a tagged dataclass, a `Partial` (`entity_defns/partial.py`), or a
+function building one when the host writes it (`PreviewSource`, `experiment/steps.py`), and
+forwards it to the session's `preview_step`: the latest value showing the result the step is
+producing, replacing the last, pure observability like the log and dropped by a session that
+cannot carry it. A step receives its inputs
 as concrete arrays and queries them locally. Both forward the raw storage methods to the session, and both expose
 `ctx.log(str)`, forwarded to the session's `log_message` — free-form per-attempt log lines, kept for
 observability and never deduped across a replay (each attempt writes its own). The host drops a
@@ -261,7 +266,8 @@ identity-based operations of one attempt (recording: `emit`, `emit_source_array`
 `inputs`). The split is what is per execution versus per attempt: the run owns the assignment,
 the token table, and the mode, and every session method on it is "resolve tokens, build the node,
 dispatch to the attempt by mode"; the attempt owns the DAG, the record, the verifier, and the
-lifecycle, speaks only in identities, and outlives its runs. Written once here, the dispatch is
+lifecycle, speaks only in identities, and outlives its runs. `StepAttemptOps` is the smaller
+step counterpart (`add_log`, `set_preview`, `complete`, `fail`, `abandon`). Written once here, the dispatch is
 shared by every backend. `WorkflowRun.start(attempt, mode, run_id=, verify_determinism=)` seeds the assembler
 from the attempt's inputs and builds the assignment. Ending begins synchronously on the attempt
 (`fail` / `abandon` end it and arrange the durable write of its outcome), which is what lets a
@@ -396,7 +402,8 @@ tagged unions) over `cbrrr`'s DAG-CBOR used as a plain serialization. From the w
 `Drain`, `Observe`, `CompleteWorkflow`, `CompleteStep`, `Fail`,
 `Abandon`, `StoreRequest`, `LoadRawData`) and one-way frames never answered (the five
 `Emit<Kind>` frames, one per `emit_<kind>` method but `emit_query`, `LogMessage`, and a
-pipelined `Store`); from the host, `Reply` (with a `NoResult`, `ValueResult`, or `IdResult`) and `Refused` for the requests, and the
+pipelined `Store`); there is no frame for a step's `preview_step`, which the proxy drops after
+checking the attempt, so a step that publishes previews runs remotely unwatched; from the host, `Reply` (with a `NoResult`, `ValueResult`, or `IdResult`) and `Refused` for the requests, and the
 `messages()` stream verbatim (`Assigned`, `AttemptCancelled`, `Shutdown`, the session's own
 dataclasses). A `Refused` carries a `Refusal`
 naming one of the protocol's exception classes, which the worker re-raises, or wrapping any other

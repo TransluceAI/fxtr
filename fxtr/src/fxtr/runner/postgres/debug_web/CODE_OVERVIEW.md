@@ -1,6 +1,6 @@
 # Debug viewer backend — code overview
 
-A small, **read-only** GraphQL server over the Postgres runner's state, and the server of the
+A small GraphQL server over the Postgres runner's state, which it only reads, and the server of the
 experiment viewer in `frontend/` at the repo root (see `frontend/CODE_OVERVIEW.md`). Its API,
 under `/api`, exposes job and invocation records, step state, and stored entities; every other
 path is the built viewer (`ViewerFiles`, each file with `Cache-Control: no-cache`; until it is
@@ -50,16 +50,26 @@ sockets, so its graceful shutdown does not wait on them.
 ```
 debug_web/
 ├── schema.graphql   the SDL (Ariadne schema-first)
-├── resolvers.py     Query resolvers and the scalars, over a LocalProjectClient
+├── reader.py        database, entity, and job readers without a runnable project, holding the
+│                    reader's JobScope
+├── scope.py         JobScope: which jobs a reader may show, the rules, and the table of how each
+│                    root field applies it
+├── resolvers.py     Query resolvers and the scalars, over a ViewerReader
 ├── versions.py      shared ledger-based invocation and per-run revisions
 ├── contracts.py     typed summary/page records and output-query inputs, matching the SDL
 ├── projections.py   shared typed node/error views for detailed resolvers and overview readers
-├── browse.py        payload-free job/level summaries and bounded invocation/dimension-key pages
+├── browse.py        payload-free job/level summaries and bounded invocation/dimension-key pages;
+│                    the job picker's reads (each job's launch commit, the step results it ran or
+│                    reused)
+├── git_history.py   the commits the jobs ran at, read from the project's git repository: where
+│                    each job is shown, the graph of the commits shown, and their branches
+├── starred.py       the starred jobs, kept in .fxtr/starred.json in the project root
 ├── output.py        current output pages, bounded immutable-array cache, and global table queries
 ├── table_values.py  table display/search text and ordering, verified against shared browser fixtures
 ├── app.py           the Starlette app: under /api the GraphQL mount (HTTP only) and the /entity,
-│                    /entities, /views (and /views/status), /events (a WebSocket), /launches,
-│                    /source, /file, /experiment_readme, and /info routes; the viewer (Viewer:
+│                    /entities, /previews, /views (and /views/status), /events (a WebSocket),
+│                    /launches, /source, /file, /experiment_readme, /info, /job_commits, and
+│                    /starred routes; the viewer (Viewer:
 │                    the dev server's redirect or ViewerFiles) elsewhere; client, view bundle
 │                    watcher, and dev server lifetime
 ├── events.py        the viewer's events: EventHub (fan-out to the open sockets, counted),
@@ -103,8 +113,82 @@ active job attempts are SQL projections.
 Shared node and error projections live below both readers and resolvers in `projections.py`;
 the overview projection exposes mapped/replica dimension names without replica value lists.
 
-The server holds one `LocalProjectClient` and never writes to the runner database. The complete-data
-queries used by custom renderers read through the client's detailed readers, which assemble
+The query and entity handlers read through a `ViewerReader`. The local app creates its reader
+from the client's database and lease-freshness setting; entering that client can create or migrate
+the schema before requests are served. `create_reader_app(reader)` serves only
+GraphQL and raw entities under `/api`; its caller owns the database and authorization. It does
+not create schemas, import project modules, or expose source, bundle, event, launch, preview,
+commit, or star routes.
+Its optional `max_entity_response_bytes` checks stored byte lengths before loading single or
+batched entity responses, and `max_single_entity_bytes`, when given, replaces it for single ones.
+The browser's loader asks for a batch answered 413 in halves, and for one entity on its own route. Repeated ids count each time they appear in the response;
+inaccessible or missing ids count as null in a batch. GraphQL is not covered by this entity limit.
+
+## The job scope
+
+A `ViewerReader` carries a `JobScope` (`scope.py`): the jobs it may show. `JobScope.all()` is
+every job, what `fxtr view` uses; `JobScope.of(job_ids)` names the allowed ones, and is what the
+hub passes when it builds a reader per request from the jobs the requester may read
+(`ViewerReader(database, stale_after=..., scope=JobScope.of(job_ids))`, then
+`create_reader_app(reader)`). The rules, stated in `scope.py`'s docstring with a table of every
+root field: job-keyed queries are filtered by the scope before paging, or answer for a job outside
+it exactly as for a job the database does not have (the same null or the same `NotFoundError`,
+so existence is not revealed); a step result reused from another job's cache shows with its
+provenance, but the producer's attempt, error, events, and logs show only when the producer's job
+is in the scope (`_step_pin` and `_cache_entries` in `resolvers.py` apply this, since the
+`Jobs` readers load a producer's attempt from any job); `stepCache` shows an entry only when
+the result it offers is bound by a job in the scope or its attempt ran under one; and entities
+(the raw routes, `entity`, `entityMetas`, `array`, an output source by cid) are served only when
+the `job_entities` table names the cid for a job in the scope, read in one query per request
+(`scope.reachable`, `ViewerReader.reachable`). `job_entities` is filled by the record import,
+so under a restricted scope a job this database ran itself has no reachable entities. The
+unrestricted scope adds no queries: `reachable` returns its input and `restrict` is a true
+clause. `browse.py`'s readers and `OutputStore` take the scope as a parameter; the resolvers
+read it from the reader. `test_debug_web_scope.py` checks that `scope.ROOT_FIELDS` names every
+root field of the schema, so a new field must say how it applies the scope.
+
+**The job picker's reads.** A job summary also names, for a failed job, the steps with a failed
+invocation (`failedSteps`: the most failures first, at most three, or its failed workflows when
+no step failed) and its root workflow's arguments (`inputs`: each one's array, and for a single
+short scalar its value as text, `input_texts`, where the reader's scope reaches the array), and which of those arguments were given a
+different array than in the job of the same workflow created just before it (`changedInputs`),
+and whether no job of its workflow was created after it (`latest`), read in a few more grouped
+queries per page of jobs. Those last two are the only parts of a summary that read jobs other
+than the one summarized, and both come from `_compare_with_other_jobs`, which counts only
+jobs in the reader's scope. `jobSummaries` takes a `workflow` to keep that workflow's jobs alone, and `jobWorkflows` names the workflows the jobs in the scope are of, for the picker's filters. `jobSummariesByIds` answers the summaries of the jobs named that are in the scope (at most 200), for the rows the
+picker's commit view has on screen. `jobReuse(jobId)` counts, for each run node of the job's root
+workflow, the step results the job uses under it (inside child workflows too, through a recursive
+walk of `spawns`) that the job ran itself and that it took from the cache (`job_reuse`: a step
+result's producer is its job attempt's job); a job outside the scope has no nodes there.
+
+The local app alone serves the next three routes; the reader app has none of them.
+`GET /api/job_commits` is the picker's commit view: the newest `JOB_COMMITS_LIMIT` jobs with the
+code each launched at (`browse.job_launches`: its first job attempt's `CodeVersion`, the ones
+already loaded kept in memory, since a code version never changes), placed on the commits of the
+git repository enclosing the project by `git_history.read_history`, whose module docstring has
+the rules: which commit a job is shown under (its own; one on a branch with the same file tree;
+for a launch from staged changes, the commit that was checked out; nowhere when the repository
+lacks it), which commits are shown (those with a job, each one's parents being the nearest shown
+commits), and which branch a commit is shown on. For a
+project inside a larger repository only the commits that changed the project's directory count:
+a job moves to the newest of them at or before where those rules put it, and keeps the commit it
+launched at as `launchedAt` (`ProjectFiles`). The directory is the one the job's code version
+recorded (`project_path`), so a job from before the project moved counts the commits that changed
+it where it was then. Every request runs git
+afresh (a few short commands, one of them walking the history reachable from the branches and
+the jobs' commits); nothing about the repository is cached. 404 when the project is in no git repository,
+which is how the viewer's page knows to leave the commit view out.
+
+`/api/starred` is the jobs someone starred in the picker, each with an optional name
+(`starred.py`): `GET` lists them, `PUT /api/starred/{job_id}` with JSON `{"name": ...}` stars or
+renames one, `DELETE` removes its star, each answering the starred jobs afterwards. They are kept
+in `.fxtr/starred.json` in the project root (this checkout's, gitignored), not in the database:
+it is the one thing the server writes. Like the launch route, the writes refuse another site's
+page (`same_origin`) and a `PUT` takes only JSON. `starred.py` serializes the complete
+read/modify/write operation across worker threads with one process-local lock.
+
+The complete-data
+queries used by custom renderers read through the reader's detailed queries, which assemble
 consistent snapshots (each in one `snapshot=True` transaction):
 
 - The **job overview** is `Jobs.status` (the derived job / per-invocation / per-step states, plus
@@ -117,7 +201,11 @@ consistent snapshots (each in one `snapshot=True` transaction):
   step (from `Jobs`' step description, the same one `describe_step` gives), so a run node can link,
   preview, and show the progress of each mapped call.
 - One **step** is `Jobs.describe_step(job_id, cache_key)`: the request, its binding,
-  the attempt and its logs, and the derived `StepState`.
+  the attempt and its logs, its latest preview's record (`preview { attemptId seq at }`), and the
+  derived `StepState`. The preview's bytes are not in GraphQL: `GET /api/previews/{attemptId}`
+  serves them as DAG-CBOR (`Jobs.get_preview`), with the seq in `X-Fxtr-Preview-Seq`, for the
+  client to decode itself as it does entities; the step pin's poll carries the seq, so a client
+  fetches the bytes again only when it grows.
 - The **jobs list** is `Jobs.list` with a `Jobs.status` call per row for its state (expensive for large jobs); ordinary browsing uses `jobSummaries` instead.
 - The **step cache** is `execution.list_cache_entries`, joined per entry to its request spec (`ledger.get_step_request`),
   current attempt (`execution.get_attempt`), and that attempt's logs (`logs.list_logs`) in one read
@@ -131,6 +219,17 @@ Derived intermediate node values are **not** rendered: only leaves (inputs, sour
 step/child results) and invocation results have stored values, and those are what the UI
 shows (a node's `valueCid`, an invocation's `resultCid`, a step pin's `resultCid`). Derived nodes
 show metadata only (kind, type, params, edges).
+
+A step's result is the one the job's request is bound to, else the one an equal request left on
+offer that the job has not taken (`StepDescription.result`; `spawn_query` for a spawn's row), and
+the step is `completed` with either. A step still running when the workflow attempt waiting on it
+ends (a sibling step failed, or the job was cancelled) finishes and leaves such a result: it shows
+as `completed`, with the result it produced, while its job attempt is still active and after it
+settles, and a step pin's `resultTaken` is false until a resume takes the result. Until it
+finishes it shows as `running`, with its attempt, preview, and logs, also under a job attempt that
+has settled (a job stopped gently lets its running steps finish), so its run's counts keep a
+polling page following it until its attempt ends. A different
+request's result at the key is a conflict and is never shown as the step's.
 
 ## The GraphQL shape
 
@@ -157,7 +256,7 @@ from the moment its row exists) and the `ownerJobAttemptId` of the job attempt w
 it. **Provenance** (which code ran) is read from the ledger (`jobs.provenance`): a `Provenance` is
 a job attempt's fact and its code version, flattened (`jobId`, `jobAttemptId`, `commit`, `tree`,
 `ephemeral`, `projectPath`, `environmentVerified`). Every `Attempt` has its owner's;
-`Invocation.provenance` is its result's producer's and `StepPin.provenance` its bound step
+`Invocation.provenance` is its result's producer's and `StepPin.provenance` its shown step
 result's (which for a cache hit names the job that computed it), both null until there is a
 result. A `CacheEntry` carries the provenance of what it holds (its current attempt, or the step
 result it offers); its `attempt` is null when it offers a step result whose producing attempt this
@@ -305,6 +404,7 @@ ordered strings before numbers, as `keyPage`'s jsonb order is, but strings by co
 the database collation; offsets snap to page boundaries, and a value is `compatible` when some
 row with it matches the source's selection of the other dims.
 
+`OutputStore` takes a `Database` directly; it needs no project or execution client.
 Two output requests can run concurrently. Loads coalesce by CID; cache hits and unrelated
 arrays do not wait on another fetch or decode. In-flight results also serve concurrent readers
 of oversized arrays, and surviving readers retry if the load owner is cancelled.
@@ -370,9 +470,16 @@ included, and browsers let a page of any site open a WebSocket to any address.
 ## Tests
 
 `tests/test_debug_web_browse.py` checks SQL status projections against the runner's full readers,
-including shared cache failures and resumes, and measures bounded responses/query counts
+including shared cache failures, resumes, a step finishing after its workflow attempt ended, and
+steps still running under a cancelled job attempt, and measures bounded responses/query counts
 with 100,000 mapped invocations. `tests/test_debug_web_output.py` covers large arrays, global
 filtering/sorting, exact CBOR values, repeated CIDs, and empty batches.
+
+`tests/test_debug_web_job_history.py` covers the commit view against temporary git repositories
+(a job on a branch, the branches listed, a staged launch before and after its changes are
+committed, a project inside a larger repository and one that moved, a deleted branch's commit, a
+commit the repository lacks, no repository), branch ownership and the shown
+commits' parents on hand-built histories, and the starred jobs' file, request checks, and routes.
 
 `tests/test_runner_postgres_debug_web.py` runs a tiny workflow (a step behind one run_step node) to
 completion in a job runner, then drives the resolvers through `ariadne.graphql`: spawn states, the job overview
@@ -383,16 +490,29 @@ cache key, the workflow `ctx.log` line, composite `id`s) and `step` (bound pin, 
 refusing WebSockets, the built viewer beside the `/api` routes (and its not-built message, and the
 installed copy preferred to the checkout's). A gated job (a mapped step and a mapped child
 workflow, one call of each held on an event) is walked through untaken, blocked, and finished,
-checking spawn states, version changes, and current-page updates as results arrive. This file
+checking spawn states, version changes, and current-page updates as results arrive. A mapped
+step whose calls are each held on an event checks steps that outlive what waited on them: after a
+sibling call failed, and after a gentle stop of the job (running until they end, then completed
+with a result the job has not taken, or stopped when a second interrupt abandons them). This file
 also covers all typed summary/page GraphQL selections, invalid input/field rejection, transparent
 output-cache eviction, byte budgets, 25-row defaults, and offset/source validation.
 Two jobs pinned at different commits (fake environments), the second reusing the first's step
 from the cache, check that each root and attempt says its own job and commit while the step, in
-both jobs and in the step cache, names the producing job and commit.
+both jobs and in the step cache, names the producing job and commit; and, for the job picker,
+each job's launch commit, its inputs as text, the step results it ran and reused, and the commit
+view counting jobs whose commits the repository lacks.
 It also covers the view bundle's routes and version header, `/api/info`, a second `serve` opening
 the running viewer, a taken port refused (the viewer's and the dev server's), and the dev server
 on its port or not at all.
 Skipped unless Ariadne is installed and `FXTR_TEST_DATABASE_URL` is set.
+
+`tests/test_debug_web_scope.py` covers the job scope with two jobs in one schema, the second
+reusing the first's step from the cache: a reader scoped to one lists only it, answers every
+job-keyed root query for the other as for a missing job (compared field by field with a job id
+that does not exist), shows the reused result and its producer without the producer's attempt
+and logs (and with them when both jobs are in scope), hides a cache entry a third job's request
+took over, serves through the entity routes and queries only the cids `job_entities` names for
+its jobs (inserted by the test), and that every root field of the schema is in `ROOT_FIELDS`.
 
 `tests/test_debug_web_ports.py` covers automatic selection, strict explicit ports, paired Vite
 conflicts, the 50-retry boundary, remembered ports, socket ownership and cleanup, and the chosen

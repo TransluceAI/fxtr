@@ -42,7 +42,7 @@ from behaviors.interfaces.context_policies import (
 from behaviors.types.content import (
     CacheableContentText,
     Content,
-    ContentSummarizedReasoning,
+    ContentReasoning,
     ContentText,
 )
 from behaviors.types.message import AssistantMessage, ChatMessage, SystemMessage, UserMessage
@@ -121,7 +121,7 @@ class ScriptedPilot:
         thinking, text = item if isinstance(item, tuple) else (None, item)
         content: list[Content] = []
         if thinking is not None:
-            content.append(ContentSummarizedReasoning(text=thinking, signature=None))
+            content.append(ContentReasoning(text=thinking, form="summary"))
         content.append(ContentText(text=text))
         return ModelResponse(
             id="msg",

@@ -1,4 +1,4 @@
-/* A pill centred over the trace, over the shared running hatch (`.hatch`). */
+/* A pill centered over the trace, over the shared running hatch (`.hatch`). */
 .indicator {
   position: absolute;
   left: 50%;

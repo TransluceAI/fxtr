@@ -47,7 +47,7 @@ from fxtr.runner.steps import StepRequest
 pytest.importorskip("sqlalchemy")
 
 from fxtr.runner.postgres import execution, ledger  # noqa: E402
-from fxtr.runner.postgres.database import Database  # noqa: E402
+from fxtr.runner.postgres.database import Database, Transaction  # noqa: E402
 from fxtr.runner.postgres.entities import PostgresEntityStorage  # noqa: E402
 from fxtr.runner.postgres.execution import (  # noqa: E402
     AttemptRecord,
@@ -269,6 +269,88 @@ async def test_collection_does_not_judge_a_target_again_once_done(
     assert judged_again == set()
 
 
+async def test_judging_stays_proportional_to_a_mapped_child_workflows_children(
+    database: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parent of many children, each waiting on a step of its own: every attempt is woken for
+    its own targets and judges only what changed, so the whole job judges each target a bounded
+    number of times. An attempt woken by its siblings, or judging everything outstanding on every
+    wake, would judge on the order of the square of the children. The fallback intervals are set
+    out of reach, so the targets' wakes alone carry the job."""
+    count = 16
+    ids = Array.from_items([((i,), i) for i in range(count)], IDS_TYPE)
+
+    @workflow(name="test.double_in_each_child", inputs={"ids": IDS_TYPE}, output=IDS_TYPE)
+    async def double_in_each_child(
+        context: WorkflowContext, ids: ArrayHandle[int]
+    ) -> ArrayHandle[int]:
+        return context.run_child_workflow("child", double_once, {"x": ids}, map_over=["id"])
+
+    job = await jobs(database).create(double_in_each_child, {"ids": ids})
+    runner = await a_runner(
+        database,
+        job,
+        double_in_each_child,
+        double_once,
+        double,
+        settings=RunnerSettings(reconcile_interval=60, poll_interval=60),
+    )
+    step_statuses, statuses = execution.step_statuses, execution.statuses
+    steps_judged = children_judged = 0
+
+    async def counted_steps(tx: Any, job_id: JobID, cache_keys: Any) -> dict[str, Any]:
+        nonlocal steps_judged
+        keys = set(cache_keys)
+        steps_judged += len(keys)
+        return await step_statuses(tx, job_id, keys)
+
+    async def counted_children(tx: Any, job_id: JobID, invocations: Any) -> dict[Any, Any]:
+        nonlocal children_judged
+        children = list(invocations)
+        children_judged += len(children)
+        return await statuses(tx, job_id, children)
+
+    monkeypatch.setattr(execution, "step_statuses", counted_steps)
+    monkeypatch.setattr(execution, "statuses", counted_children)
+    assert (await runner.run()).state == "succeeded"
+    assert await jobs(database).result(job) == Array.from_items(
+        [((i,), 2 * i) for i in range(count)], IDS_TYPE
+    )
+    # Each step is judged when it ends, and each child when it ends; a wake that lands while a
+    # pass is under way can make for one more look.
+    assert count <= steps_judged <= 2 * count
+    assert count <= children_judged <= 2 * count
+
+
+async def test_a_runner_holds_an_item_until_its_task_ends_and_then_wakes_its_topic(
+    database: Database,
+) -> None:
+    global GATE
+    GATE = anyio.Event()
+    job = await jobs(database).create(double_once, {"x": Array.scalar(2, int)})
+    runner = await a_runner(database, job, double_once, double)
+    listener = database.subscribe()
+    async with runner_task(runner) as outcome:
+        await wait_until_a_step_runs(database)
+        (attempt,) = await step_attempts(database)
+        assert attempt.cache_key is not None
+        item = execution.StartStep(attempt.cache_key)
+        assert runner.holds(item) and not runner.holds(execution.StartStep("elsewhere"))
+        # Nothing was started for an item whose step is running already; its topic is woken all
+        # the same once the runner no longer holds it, for whoever counted on the runner.
+        listener.add(execution.step_topic("elsewhere"))
+        runner.enqueue(execution.StartStep("elsewhere"))
+        assert runner.holds(execution.StartStep("elsewhere"))
+        assert await listener.wait(anyio.Event(), 5) == {execution.step_topic("elsewhere")}
+        assert not runner.holds(execution.StartStep("elsewhere"))
+        listener.add(execution.step_topic(attempt.cache_key))
+        GATE.set()
+    assert outcome.settled is not None and outcome.settled.state == "succeeded"
+    assert not runner.holds(item)
+    assert await listener.wait(anyio.Event(), 5) == {execution.step_topic(attempt.cache_key)}
+    listener.close()
+
+
 async def test_step_completions_progress_without_reconciling_a_live_workflow(
     database: Database, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -483,6 +565,38 @@ async def test_a_cancel_from_elsewhere_drains_and_lets_a_running_step_finish(
     assert settled.state == "succeeded" and STEP_CALLS[0] == 1
     async with database.transaction() as tx:
         assert await ledger.get_step_binding(tx, job, entry.cache_key) is not None
+
+
+async def test_a_cancel_from_another_process_interrupts_what_waits_at_the_next_heartbeat(
+    database: Database, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A cancel committed in another process wakes nothing here. The heartbeat that learns of it
+    wakes the job attempt's topic, so a workflow waiting on a step is interrupted then, without
+    waiting out a fallback interval (set out of reach here)."""
+    global GATE
+    GATE = anyio.Event()
+    job = await jobs(database).create(double_once, {"x": Array.scalar(2, int)})
+    runner = await a_runner(
+        database,
+        job,
+        double_once,
+        double,
+        settings=RunnerSettings(heartbeat_interval=0.05, reconcile_interval=60, poll_interval=60),
+    )
+    async with runner_task(runner) as outcome:
+        await wait_until_a_step_runs(database)
+        # As another process would: the commit's own wakes never reach this one.
+        with monkeypatch.context() as patched:
+            patched.setattr(Transaction, "wake", lambda self, topic: None)
+            await jobs(database).cancel(job)
+
+        async def interrupted() -> bool:
+            return [a.state for a in await attempts_of(database, job)] == ["interrupted"]
+
+        await wait_until(interrupted)
+        assert [a.state for a in await step_attempts(database)] == ["running"]
+        GATE.set()
+    assert outcome.settled is not None and outcome.settled.state == "cancelled"
 
 
 # ---- interrupting ----

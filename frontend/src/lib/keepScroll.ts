@@ -14,10 +14,17 @@ const RESTORE_MS = 3000
  * area's place among them (the first, the second, …), recorded as the user scrolls, and put back on
  * the new ones as they appear and grow tall enough, until the user scrolls, presses, or types in the
  * panel, or `RESTORE_MS` passes.
+ *
+ * `enabled` turns the putting back off. A change made while `enabled` is false puts nothing back.
+ * A caller passes false while the view inside autoscrolls (a transcript opened at a cited
+ * message), since putting the old scroll back would undo the view's own scroll.
  */
-export function useKeepScroll(root: RefObject<HTMLElement | null>, showing: string) {
+export function useKeepScroll(root: RefObject<HTMLElement | null>, showing: string, { enabled = true }: { enabled?: boolean } = {}) {
   const positions = useRef(new Map<number, { top: number; left: number }>())
   const restoring = useRef(false)
+  // Read when what is shown changes, which is the only time it matters.
+  const isEnabled = useRef(enabled)
+  isEnabled.current = enabled
 
   // Record positions the user scrolls to (not ones put back here).
   useEffect(() => {
@@ -42,7 +49,7 @@ export function useKeepScroll(root: RefObject<HTMLElement | null>, showing: stri
       return
     }
     const element = root.current
-    if (!element || positions.current.size === 0) return
+    if (!element || !isEnabled.current || positions.current.size === 0) return
     restoring.current = true
     const apply = () => {
       const areas = scrollers(element)

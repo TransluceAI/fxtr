@@ -8,7 +8,7 @@ export const TRANSCRIPT = "org.transluce.behaviors.Transcript.v1";
 export const TRANSCRIPT_GROUP = "org.transluce.behaviors.TranscriptGroup.v1";
 export const AGENT_RUN = "org.transluce.behaviors.AgentRun.v1";
 export const SET_SYSTEM_MESSAGE = "org.transluce.behaviors.SetSystemMessage.v1";
-export const MODEL_RESPONSE = "org.transluce.behaviors.ModelResponse.v1";
+export const MODEL_RESPONSE = "org.transluce.behaviors.ModelResponse.v2";
 
 /** Wire shapes of behaviors/types. Tagged inline records are maps, not entity references. */
 
@@ -16,21 +16,27 @@ export const MODEL_RESPONSE = "org.transluce.behaviors.ModelResponse.v1";
  *  (e.g. a `ModelResponse` that a model recorded on its turn). */
 export type MetadataEntries = readonly EntityData[];
 export interface TextContent extends EntityData {
-  readonly type: "text" | "reasoning" | "summarized_reasoning";
+  readonly type: "text";
   readonly text: string;
 }
-export interface RedactedContent extends EntityData {
-  readonly type: "redacted_reasoning";
-  readonly data: string;
+/** `form` says what `text` is: the model's own reasoning, a provider's summary of it, or
+ *  reasoning the provider withheld (empty text). `reasoning_state` is a provider payload that
+ *  only the provider's codec reads, so a viewer never shows it. */
+export interface ReasoningContent extends EntityData {
+  readonly type: "reasoning";
+  readonly text: string;
+  readonly form: "full" | "summary" | "redacted";
+  readonly reasoning_state: EntityData | null;
 }
 export interface ToolContent extends EntityData {
   readonly type: "tool_use";
   readonly id: string;
   readonly name: string;
-  readonly input: DataMap;
+  /** The call's arguments; null only in a rollout still being produced, before they are known. */
+  readonly input: DataMap | null;
   readonly parse_error: string | null;
 }
-export type ContentData = TextContent | RedactedContent | ToolContent;
+export type ContentData = TextContent | ReasoningContent | ToolContent;
 
 export interface MessageData extends EntityData {
   readonly role: "system" | "user" | "assistant" | "tool";
@@ -60,6 +66,18 @@ export type ChatRolloutData = EntityData & {
   readonly end: (EntityData & { readonly $type: typeof END_ROLLOUT; readonly metadata: MetadataEntries }) | null;
   readonly metadata: MetadataEntries;
 };
+/** A rollout still being produced (a step's live preview of a `ChatRollout`): how it ends is not
+ *  known (`status` is null) until it has ended, and its last model turn may be the one the model is
+ *  still generating. */
+export type PartialChatRolloutData = EntityData & {
+  readonly $type: typeof CHAT_ROLLOUT;
+  readonly initialization: EntityData | null;
+  readonly context_turns: readonly TurnData[];
+  readonly model_turns: readonly TurnData[];
+  readonly status: RolloutStatus | null;
+  readonly end: ChatRolloutData["end"];
+  readonly metadata: MetadataEntries;
+};
 export interface TranscriptData extends EntityData {
   readonly $type: typeof TRANSCRIPT;
   readonly name: string | null;
@@ -80,3 +98,8 @@ export interface SystemMessageData extends EntityData {
   readonly message: MessageData;
 }
 export type BehaviorData = ChatRolloutData | TranscriptData | TranscriptGroupData | SystemMessageData;
+/** The behaviors types a step can preview while still producing them: what a host hands a
+ *  `PartialEntityPanel` or `PartialEntityInline` renderer of behaviors, fields not yet known null. */
+export type PartialBehaviorData = EntityData & {
+  readonly $type: typeof CHAT_ROLLOUT | typeof TRANSCRIPT | typeof TRANSCRIPT_GROUP | typeof AGENT_RUN;
+};

@@ -1,7 +1,8 @@
 """Model implementations.
 
 Provider-backed ``ModelAPI`` implementations live in their own modules
-(``anthropic``, ``openai_compatible``, ``openai_responses``) and
+(``behaviors.implementations.models.anthropic``, ``.openai_compatible``, ``.openrouter``,
+``.openai_responses``, ``.gemini``) and
 are deliberately not re-exported here: importing them requires the provider
 SDKs from the ``models`` extra, which this package must not need at import
 time.

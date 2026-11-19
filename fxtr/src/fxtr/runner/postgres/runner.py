@@ -23,8 +23,12 @@ interval, as a safety net for anything the other three missed. The queue is an o
 set: an item already queued or running is not queued again, and items start in the order they
 arrived; starting an item is idempotent in the database (``start_attempt`` inserts nothing when the
 invocation is already running or the step resolved otherwise), so a stale or duplicate item costs
-one refused
-transaction and nothing else.
+one refused transaction and nothing else.
+
+An item is *held* (:meth:`JobRunner.holds`) from the moment it is queued until its task ends.
+While the runner holds an item, what becomes of its target is a commit of this process, and when
+it stops holding it, for whatever reason, it wakes the target's topic. An evaluator relies on
+both: it does not poll for a target the runner holds.
 
 **How work runs.** :meth:`JobRunner.run` opens one task group holding the heartbeat task and one
 *item task* per work item, with the scheduling loop in the runner's own task. An item task first
@@ -180,8 +184,11 @@ class RunnerSettings:
     Attributes:
         heartbeat_interval: Between refreshes of the lease.
         reconcile_interval: How long the scheduling loop lets pass without re-deriving what is
-            due; it also re-derives whenever nothing is live.
-        poll_interval: The evaluators' fallback wait for a change made in another process.
+            due; it also re-derives whenever nothing is live. Also how long an evaluator lets
+            pass without judging its targets again while this process runs all of them: both
+            are safety nets for a wake that was missed.
+        poll_interval: The evaluators' fallback wait for a change made in another process,
+            while they wait on a step another job's process is computing.
     """
 
     heartbeat_interval: float = 5.0
@@ -194,6 +201,12 @@ class WorkSink(Protocol):
 
     def enqueue(self, item: WorkItem) -> None:
         """Queue one unit of work, if it is not queued or running already."""
+        ...
+
+    def holds(self, item: WorkItem) -> bool:
+        """Whether the item is queued or running here. While it is, what becomes of it is a
+        commit of this process, and when it no longer is, its topic is woken: whoever waits on
+        its target need not poll for it."""
         ...
 
 
@@ -264,6 +277,10 @@ class JobRunner:
             return
         self._queue[item] = None
         self._signal()
+
+    def holds(self, item: WorkItem) -> bool:
+        """Whether the item is queued or running under this runner (:class:`WorkSink`)."""
+        return item in self._queue or item in self._live
 
     def interrupt(self) -> None:
         """Ask the runner to stop, as a Ctrl-C does. The first call settles the job attempt
@@ -425,6 +442,9 @@ class JobRunner:
                 self._stopping = True
                 self._queue.clear()
                 self._signal()
+                # Nothing unfinished is pending any more: the attempts waiting on targets look
+                # again, as they would have for a cancel committed in this process.
+                self._database.wake(execution.job_attempt_topic(self.job_id))
 
     # ---- item tasks ----
 
@@ -444,6 +464,9 @@ class JobRunner:
             self._item_scopes.pop(item, None)
             self._live.discard(item)
             self._signal()
+            # The runner no longer holds the item (:meth:`holds`): whoever waits on its target
+            # looks again, whether or not anything was started for it.
+            self._database.wake(_topic(item))
 
     async def _start_and_run(self, item: WorkItem) -> None:
         async with self._database.transaction() as tx:
@@ -503,7 +526,13 @@ class JobRunner:
             async with anyio.create_task_group() as tasks:
                 tasks.start_soon(Recorder(attempt, self._database).run)
                 tasks.start_soon(
-                    Evaluator(attempt, self._database, self._settings.poll_interval, self).run
+                    Evaluator(
+                        attempt,
+                        self._database,
+                        self,
+                        poll_interval=self._settings.poll_interval,
+                        reconcile_interval=self._settings.reconcile_interval,
+                    ).run
                 )
                 with body_scope:
                     await drive_workflow_attempt(
@@ -567,7 +596,7 @@ class JobRunner:
                 _on_change=self._attempt_changed,
             )
             async with anyio.create_task_group() as tasks:
-                attempt.start_log_flusher(tasks)
+                attempt.start_flusher(tasks)
                 await self._execute(StepRun(attempt.id, attempt))
                 await attempt.wait_ended()
         finally:
@@ -605,6 +634,13 @@ class JobRunner:
     def _attempt_changed(self, attempt: Attempt | StepAttempt) -> None:
         """An attempt has ended: the loop should re-check whether anything is left."""
         self._signal()
+
+
+def _topic(item: WorkItem) -> str:
+    """The wake topic of an item's target: the invocation's, or the cache key's."""
+    if isinstance(item, StartStep):
+        return execution.step_topic(item.cache_key)
+    return execution.invocation_topic(item.invocation_id)
 
 
 def _short(job_id: JobID) -> str:

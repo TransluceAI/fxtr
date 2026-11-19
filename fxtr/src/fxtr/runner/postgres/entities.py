@@ -55,7 +55,7 @@ from fxtr.core.entity_data import (
     StorableFxtrDataValue,
     get_entity_type_tag,
 )
-from fxtr.runner.postgres.database import Database, Transaction
+from fxtr.runner.postgres.database import Database, Transaction, any_of
 from fxtr.runner.postgres.schema import entities
 from fxtr.storage.util import EncodedEntity, encode_for_store
 
@@ -204,7 +204,7 @@ class PostgresEntityStorage(FxtrEntityStorage):
                 return await self.load_raw_bytes_many(entity_ids, own)
         rows = await tx.execute(
             select(entities.c.cid, entities.c.data, entities.c.type_tag).where(
-                entities.c.cid.in_(list(stored))
+                any_of(entities.c.cid, stored)
             )
         )
         for row in rows:

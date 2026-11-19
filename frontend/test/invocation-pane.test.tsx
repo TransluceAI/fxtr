@@ -13,7 +13,13 @@ vi.mock('fxtr-view-shell-util', async importOriginal => ({
   useRenderers: () => [], chosenRenderer: () => null, RenderInvocation: () => null,
 }))
 
-it.each(['failed', 'running', 'completed'])('shows a selected %s invocation in its step panel', async state => {
+const WITHOUT_OUTPUT: Record<string, string> = {
+  failed: 'important failure',
+  running: 'output appears when the step finishes',
+  stopped: 'the job stopped before this step finished',
+}
+
+it.each(['failed', 'running', 'stopped', 'completed'])('shows a selected %s invocation in its step panel', async state => {
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   const host = document.createElement('div')
   const root = createRoot(host)
@@ -33,9 +39,9 @@ it.each(['failed', 'running', 'completed'])('shows a selected %s invocation in i
     } else if (query.includes('outputPage')) {
       data = {outputPage: {type: table.type, rows: [{key: ['b'], value: base64Cbor('full scalar detail')}], offset: 0, total: 1, hasMore: false}}
     } else if (query.includes('step(')) {
-      data = {step: {stepName: 'roll', requestCid: 'request', state, resultCid: null,
+      data = {step: {stepName: 'roll', requestCid: 'request', state, resultCid: null, resultTaken: false,
         logs: [{seq: 0, message: 'latest progress log', at: '2026-09-24T00:00:00Z'}],
-        attempt: {state, startedAt: '2026-09-24T00:00:00Z', finishedAt: state === 'failed' ? '2026-09-24T00:00:01Z' : null,
+        attempt: {state, startedAt: '2026-09-24T00:00:00Z', finishedAt: state === 'running' ? null : '2026-09-24T00:00:01Z',
           error: state === 'failed' ? {typeName: 'Error', message: 'important failure', traceback: ''} : null}}}
     } else throw new Error(`unexpected query: ${query}`)
     return {ok: true, json: async () => ({data})}
@@ -51,7 +57,7 @@ it.each(['failed', 'running', 'completed'])('shows a selected %s invocation in i
       expect(host.querySelector('table')).toBeNull()
     } else {
       expect(host.textContent).toContain('latest progress log')
-      expect(host.textContent).toContain(state === 'failed' ? 'important failure' : 'output appears when the step finishes')
+      expect(host.textContent).toContain(WITHOUT_OUTPUT[state])
       expect(queries.some(query => query.includes('outputPage'))).toBe(false)
     }
   } finally {

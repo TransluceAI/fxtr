@@ -1,0 +1,37 @@
+.trigger {
+  position: fixed;
+  bottom: 8px;
+  left: 8px;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--bg);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.trigger:hover { background: var(--hover); color: var(--fg); }
+.menu { width: 280px; max-width: calc(100vw - 24px); z-index: 60; }
+.heading { margin: 6px 10px 12px; font-size: var(--text-sm); font-weight: 600; }
+.details {
+  display: block;
+  width: 100%;
+  padding: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--fg);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+.details:hover { background: var(--hover); }
+.notice {
+  padding: 6px 18px;
+  border-bottom: 1px solid var(--line-strong);
+  background: var(--bg);
+  color: var(--fg-dim);
+  font-size: var(--text-sm);
+}

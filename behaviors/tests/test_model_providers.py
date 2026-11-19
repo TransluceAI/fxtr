@@ -9,7 +9,7 @@ import pytest
 from anthropic import AsyncAnthropic
 from openai import AsyncOpenAI
 
-from behaviors.implementations.models.anthropic import FAST_MODE_BETA, AnthropicMessagesProvider
+from behaviors.implementations.models.anthropic import AnthropicMessagesProvider
 from behaviors.implementations.models.openai_compatible import OpenAICompatibleProvider
 from behaviors.implementations.models.openai_responses import OpenAIResponsesProvider
 from behaviors.implementations.models.providers import ModelOverrides, SingleModelProvider
@@ -115,11 +115,11 @@ async def test_openai_compatible_provider_applies_its_settings_to_every_model() 
         assert "max_tokens" not in body
 
 
-async def test_anthropic_provider_applies_its_request_options_to_every_model() -> None:
-    sent: list[tuple[dict[str, Any], str | None]] = []
+async def test_anthropic_provider_applies_its_request_option_to_every_model() -> None:
+    sent: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
-        sent.append((json.loads(request.content), request.headers.get("anthropic-beta")))
+        sent.append(json.loads(request.content))
         return httpx2.Response(400, json={"type": "error", "error": {"message": "captured"}})
 
     client = AsyncAnthropic(
@@ -130,8 +130,6 @@ async def test_anthropic_provider_applies_its_request_options_to_every_model() -
     provider = AnthropicMessagesProvider(
         client=client,
         final_block_cache_control=CacheControl(ttl="1h"),
-        thinking_display="omitted",
-        fast_mode=True,
     )
     request = ModelRequest(
         context=(UserMessage(content=(ContentText(text="hi"),)),),
@@ -147,12 +145,9 @@ async def test_anthropic_provider_applies_its_request_options_to_every_model() -
     finally:
         await client.close()
 
-    assert [body["model"] for body, _ in sent] == ["claude-a", "claude-b"]
-    for body, beta in sent:
-        assert body["thinking"] == {"type": "adaptive", "display": "omitted"}
+    assert [body["model"] for body in sent] == ["claude-a", "claude-b"]
+    for body in sent:
         assert body["messages"][-1]["content"][-1]["cache_control"] == {
             "type": "ephemeral",
             "ttl": "1h",
         }
-        assert body["speed"] == "fast"
-        assert beta == FAST_MODE_BETA

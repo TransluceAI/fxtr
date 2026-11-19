@@ -77,6 +77,15 @@ TypeScript typechecks and tests with `pnpm typecheck` and `pnpm test`, after the
 above; `pnpm test` includes the skill preparation and plugin sync tests, which
 `pnpm test:skills` runs alone.
 
+The tests of fxtr's OCI remotes against a real registry require
+`FXTR_TEST_OCI_REGISTRY`, a registry that takes anonymous pushes over plain HTTP. CI does not set
+it. A throwaway one runs with:
+
+```bash
+podman run -d --rm --name fxtr-registry -p 127.0.0.1:55000:5000 docker.io/library/registry:3
+export FXTR_TEST_OCI_REGISTRY=127.0.0.1:55000   # podman stop fxtr-registry removes it
+```
+
 ## Example projects
 
 [`example_projects/`](example_projects/README.md) holds maintained examples, each an independent
@@ -85,8 +94,11 @@ this checkout:
 
 - `basic_project/`: fxtr's workflows, arrays, mappings, and visualizations on mock data. fxtr's
   tests import its package to run the example experiments.
-- `behavior_rollouts/`: scripted and OpenAI rollouts with behaviors, with its own database
-  schema, launchers, and view bundle.
+- `behavior_rollouts/`: experiments with behaviors (echo conversations, instructions in force,
+  and belief reinforcement), judged with behaviors' judge, with its own database schema,
+  launchers, and view bundle.
+- `joke_eval/`: the example project of the `first-experiment` skill: the joke evaluation its guide
+  builds, so the guide's code is tested.
 
 Jobs run from a project's launchers or from the `fxtr` command (`fxtr run`, `fxtr jobs`,
 `fxtr cache`, `fxtr view`, ...).

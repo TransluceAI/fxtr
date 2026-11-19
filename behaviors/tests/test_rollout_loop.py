@@ -39,6 +39,7 @@ from behaviors.rollouts.chat import (
     ContextTurnEvent,
     ModelStreamEvent,
     ModelTurnEvent,
+    RolloutEndEvent,
     run_chat_rollout,
 )
 from behaviors.types import (
@@ -192,7 +193,7 @@ class EchoToolSession:
                 name="search",
                 description=None,
                 input_schema={"type": "object"},
-                strict=None,
+                strict=False,
                 input_examples=None,
             ),
         )
@@ -450,7 +451,7 @@ def test_bridge_snapshot_and_restore() -> None:
     anyio.run(go)
 
 
-def test_bridge_initial_messages_precede_policy_initialization() -> None:
+def test_bridge_policy_system_message_leads_the_initial_messages() -> None:
     async def go() -> None:
         baked_system = SystemMessage(content=(ContentText(text="baked"),))
         example = _user("example")
@@ -477,7 +478,7 @@ def test_bridge_initial_messages_precede_policy_initialization() -> None:
         )
         started = await with_policy.start_session(SetSystemMessage(message=policy_system))
         await started.generate_turn(ContextTurn(messages=(_user("hi"),), available_tools=None))
-        assert policy_api.requests[0].context[:2] == (example, policy_system)
+        assert policy_api.requests[0].context[:2] == (policy_system, example)
 
     anyio.run(go)
 
@@ -560,12 +561,13 @@ def test_rollout_event_callback() -> None:
     rollout = anyio.run(functools.partial(run_chat_rollout, model, policy, event_callback=record))
 
     # The streaming session's deltas arrive between the turn that prompted
-    # them and the assembled model turn.
+    # them and the assembled model turn; how the rollout ended comes last.
     assert [type(event).__name__ for event in events] == [
         "ContextTurnEvent",
         "ModelStreamEvent",
         "ModelStreamEvent",
         "ModelTurnEvent",
+        "RolloutEndEvent",
     ]
     # Events carry the same objects that land on the rollout.
     assert isinstance(events[0], ContextTurnEvent)
@@ -574,6 +576,46 @@ def test_rollout_event_callback() -> None:
     assert events[1].event == StreamTextDelta(text="hel")
     assert isinstance(events[3], ModelTurnEvent)
     assert events[3].turn is rollout.model_turns[0]
+    assert isinstance(events[4], RolloutEndEvent)
+    assert events[4].status is rollout.status and events[4].end is rollout.end
+    assert rollout.status == RolloutCompleted() and rollout.end is not None
+
+
+def test_rollout_end_event_reports_a_recorded_failure_but_not_a_raised_one() -> None:
+    failure = ModelCallFailure(
+        category="context_length", description="too long", provider_http_status=400
+    )
+    events: list[ChatRolloutEvent] = []
+
+    async def record(event: ChatRolloutEvent) -> None:
+        events.append(event)
+
+    def run(*, record_failure: bool) -> Any:
+        model = chat_session_model_from_api(ScriptedModelAPI(outputs=(failure,)), SamplingParams())
+        policy = context_policy_from_user_simulator(
+            ScriptedUserSimulator(messages=(_user("hi"),)), initialization=None
+        )
+        return anyio.run(
+            functools.partial(
+                run_chat_rollout,
+                model,
+                policy,
+                failure_categories_to_record=("context_length",) if record_failure else (),
+                event_callback=record,
+            )
+        )
+
+    rollout = run(record_failure=True)
+    assert [type(event).__name__ for event in events] == ["ContextTurnEvent", "RolloutEndEvent"]
+    assert isinstance(events[1], RolloutEndEvent)
+    assert events[1].status is rollout.status and events[1].end is None
+    assert rollout.status == RolloutFailed(failure=failure)
+
+    # A failure that is not recorded produces no rollout, so nothing says how one ended.
+    events.clear()
+    with pytest.raises(ModelCallFailedError):
+        run(record_failure=False)
+    assert [type(event).__name__ for event in events] == ["ContextTurnEvent"]
 
 
 def test_generator_context_policy() -> None:

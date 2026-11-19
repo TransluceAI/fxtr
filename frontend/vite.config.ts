@@ -13,6 +13,9 @@ export default defineConfig({
   },
   server: {
     proxy: { '/api': { target: backend, ws: true } },
+    // The same refusal to be framed that `fxtr view` sends with the built viewer: a page elsewhere
+    // could otherwise frame the dev server's `/?hosted` and configure it (src/hosted.ts).
+    headers: { 'Content-Security-Policy': "frame-ancestors 'none'" },
   },
   test: {
     setupFiles: ['test/setup.ts'],

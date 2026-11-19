@@ -14,7 +14,12 @@ and idle, with no attempt under the current episode to explain why: nothing will
 resume). The job is ``succeeded`` when its root is completed, ``running`` when any invocation is
 running or queued, and otherwise ``stopped``, a job nothing has taken included; a "failed" job is a
 stopped job with a failed invocation or step. A step still running when the job stops (a soft
-cancel) does not keep it running: nothing of the job waits on it until a resume. The job attempts
+cancel, or a failure elsewhere in the job) does not keep the job running: nothing of the job waits
+on it until a resume. The step itself is ``running`` for as long as its attempt runs, so a reader
+following it sees it end. When it finishes, its result is on offer to the job, which has not taken
+it: the step is ``completed`` all the same (it ran to the end, and taking the result costs a
+resume no work), and its description carries the result to show and says the job has not taken it
+(:attr:`StepDescription.offered_result`, :attr:`StepDescription.result_taken`). The job attempts
 say how the job is being executed, who owns it, and whether it was cancelled (see
 :mod:`fxtr.runner.postgres.execution`). Each requested step's state comes from the step relation
 (:mod:`fxtr.runner.postgres.status_queries`) in one query for the whole job, so a status costs the
@@ -67,6 +72,7 @@ from fxtr.runner.postgres.ledger import (
     StepResultID,
 )
 from fxtr.runner.postgres.logs import LogRecord, list_logs, list_logs_many
+from fxtr.runner.postgres.previews import PreviewRecord, get_preview, list_previews_many
 from fxtr.runner.postgres.status_queries import StatusQueries, StepState, StepStateRecord
 from fxtr.runner.session import AttemptError, AttemptID
 
@@ -103,8 +109,8 @@ class StepStatus:
         state: See :data:`StepState`.
         attempt_id: The attempt that answers for the step: the one that produced the step result
             the job's request is bound to (or that the cache entry offers), the failed one, or the
-            one its active job attempt waits on; ``None`` when none, or when the producing attempt
-            is not in this database.
+            one computing its result; ``None`` when none, or when the producing attempt is not in
+            this database.
         error: For ``failed``, what the step raised.
         cache_conflict: For ``conflict``, what owns the key. ``None`` in the other states.
     """
@@ -231,15 +237,26 @@ class StepDescription:
         spec: The queryable fields of that request (the step); the inputs are in the request
             entity, loadable by the fingerprint.
         binding: The result the request is bound to, once the job took a step attempt's result.
+        offered_result: The result an equal request left in the cache that the job has not taken
+            (``status`` is :class:`~fxtr.runner.postgres.execution.Ready`): the step ran to the
+            end, for this job or for another, and the job binds this result when a workflow
+            attempt of it next judges the step. That is at once while one is waiting on the step,
+            and at the next resume when none is: the attempt that requested it ended first (a
+            sibling step failed, or the job was cancelled). ``None`` once bound, and when nothing
+            is on offer.
         status: What the key is to this job now, as the execution policy judges it
             (:func:`~fxtr.runner.postgres.execution.step_status`): the same answer the job's own
             evaluator gets.
         display: The same judgement named for display, with its answering attempt and error.
         attempt: The attempt behind what the step shows: the one that produced the bound step
             result (else the one that produced the step result the cache entry offers), when
-            this database ran it; else the cache entry's current attempt; else ``None``.
+            this database ran it; else the cache entry's current attempt; else, with no cache
+            entry, the attempt the display answers with (the job's failed attempt at the key, for
+            one); else ``None``.
         logs: The free-form lines ``attempt`` recorded through ``ctx.log``, in order (empty when
             there is no attempt).
+        preview: The latest preview ``attempt`` published through ``ctx.preview``, without its
+            bytes (:func:`~fxtr.runner.postgres.previews.get_preview` reads them), or ``None``.
         provenance: The code behind what the step shows: the job attempt that produced the bound
             (else the offered) step result, as the ledger records it, whether or not this
             database has the attempt; else the code the current attempt runs; else ``None``.
@@ -248,17 +265,34 @@ class StepDescription:
     request: JobStepRequestRecord
     spec: StepRequestRecord
     binding: StepBindingRecord | None
+    offered_result: BoundID[Array[Any]] | None
     status: TargetStatus
     display: StepStatus
     attempt: AttemptRecord | None
     logs: list[LogRecord]
+    preview: PreviewRecord | None
     provenance: Provenance | None
 
     @property
+    def result(self) -> BoundID[Array[Any]] | None:
+        """The result the step has to show: the one the request is bound to, else the one on
+        offer (``offered_result``), which is not the job's until it takes it
+        (:attr:`result_taken`). The step's state is ``completed`` with either. ``None`` without
+        one."""
+        return self.binding.result if self.binding is not None else self.offered_result
+
+    @property
+    def result_taken(self) -> bool:
+        """Whether the job has taken the step's result: its request is bound. ``False`` for a
+        result on offer (:attr:`offered_result`), which the step shows as its own without the job
+        having used it, and without a result."""
+        return self.binding is not None
+
+    @property
     def result_provenance(self) -> Provenance | None:
-        """The code that produced the step result the request is bound to, which for a cache hit
-        is another job's; ``None`` until bound."""
-        return self.provenance if self.binding is not None else None
+        """The code that produced the result the step shows (:attr:`result`), which for a cache
+        hit is another job's; ``None`` without a result."""
+        return self.provenance if self.result is not None else None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -283,7 +317,8 @@ class InvocationDetail:
             spawn can be linked to the child it created.
         child_results: The result each spawned child invocation produced (``None`` until finished),
             by child id.
-        step_results: The result each spawned step is bound to (``None`` until bound), by cache key.
+        step_results: The result each spawned step shows (:attr:`StepDescription.result`: the
+            bound one, else the one on offer; ``None`` without either), by cache key.
         child_states: The derived state of each spawned child invocation, by child id.
         step_states: The derived state of each spawned step, by cache key.
     """
@@ -369,10 +404,10 @@ class Jobs:
                 await ledger.create_job(tx, job_id, workflow.name, root, refs)
         return job_id
 
-    async def list(self) -> list[JobRecord]:
-        """Every job, newest first."""
+    async def list(self, *, limit: int | None = None) -> list[JobRecord]:
+        """Jobs, newest first: every job, or the newest ``limit``."""
         async with self._database.transaction(snapshot=True) as tx:
-            return await ledger.list_jobs(tx)
+            return await ledger.list_jobs(tx, limit=limit)
 
     async def status(self, job_id: JobID) -> JobReport:
         """The job's derived state.
@@ -477,14 +512,15 @@ class Jobs:
     ) -> list[StepDescription]:
         """Describe requested steps, in their order: each one's binding, what the policy says the
         key is to the job, and what is behind it (see :class:`StepDescription`), with the
-        attempt's logs. Their status is derived together in one query, and each kind of row behind
-        them is read once for all of them, so a run node's many thousands of steps cost a few
-        queries, not a few per step. ``job_attempts`` are the job's, if already read (see
-        :func:`provenance`).
+        attempt's logs and preview. Their status is derived together in one query, and each kind
+        of row behind them is read once for all of them, so a run node's many thousands of steps
+        cost a few queries, not a few per step. ``job_attempts`` are the job's, if already read
+        (see :func:`provenance`).
 
         What is behind a step: a step result (the bound one, else the one the cache entry offers)
         when there is one, with its producing attempt if this database ran it and its producer as
-        the ledger records it; otherwise the cache entry's current attempt and its owner."""
+        the ledger records it; otherwise the cache entry's current attempt and its owner, or,
+        with no entry, the attempt the display answers with."""
         if requests is None:
             requests = await ledger.list_job_step_requests(tx, job_id)
         if not requests:
@@ -504,14 +540,23 @@ class Jobs:
         producing = await execution.find_attempts(
             tx, {ledger.producing_attempt(s) for s in step_result_ids.values()}
         )
-        current = await execution.get_attempts(
-            tx,
-            {
-                entry.attempt_id
-                for key, entry in entries.items()
-                if key not in step_result_ids and entry.attempt_id is not None
-            },
-        )
+        # Without a step result, the cache entry's current attempt; without an entry either (it
+        # was cleared, or the database holds the job's attempts but not the cache, as a hub's copy
+        # of a publication does), the attempt the step's display answers with.
+        unresolved = {
+            key: attempt_id
+            for key in keys
+            if key not in step_result_ids
+            and (
+                attempt_id := (
+                    entry.attempt_id
+                    if (entry := entries.get(key)) is not None and entry.attempt_id is not None
+                    else states[key].display_attempt_id
+                )
+            )
+            is not None
+        }
+        current = await execution.get_attempts(tx, set(unresolved.values()))
         behind: dict[str, tuple[AttemptRecord | None, JobAttemptID]] = {}
         for key in keys:
             if (step_result_id := step_result_ids.get(key)) is not None:
@@ -519,29 +564,39 @@ class Jobs:
                     producing.get(ledger.producing_attempt(step_result_id)),
                     step_results[step_result_id].job_attempt_id,
                 )
-            elif (entry := entries.get(key)) is not None and entry.attempt_id is not None:
-                attempt = current[entry.attempt_id]
+            elif (attempt_id := unresolved.get(key)) is not None:
+                attempt = current[attempt_id]
                 behind[key] = (attempt, attempt.owner_job_attempt_id)
         produced = await provenances(
             tx, self._entities, {producer for _, producer in behind.values()}, job_attempts
         )
-        logs = await list_logs_many(
-            tx, {attempt.id for attempt, _ in behind.values() if attempt is not None}
-        )
+        behind_ids = {attempt.id for attempt, _ in behind.values() if attempt is not None}
+        logs = await list_logs_many(tx, behind_ids)
+        previews = await list_previews_many(tx, behind_ids)
         descriptions = []
         for request in requests:
             key = request.cache_key
             spec = specs[request.request]
             attempt, producer = behind.get(key, (None, None))
+            status = execution.step_target_status(key, states[key])
+            # Only an equal request's result is the step's to show: a conflicting entry offers
+            # another request's.
+            offered = (
+                step_results.get(status.step_result_id)
+                if isinstance(status, execution.Ready)
+                else None
+            )
             descriptions.append(
                 StepDescription(
                     request,
                     spec,
                     bindings.get(key),
-                    execution.step_target_status(key, states[key]),
+                    None if offered is None else offered.result,
+                    status,
                     _step_display(states[key], spec.step_name),
                     attempt,
                     [] if attempt is None else logs[attempt.id],
+                    None if attempt is None else previews.get(attempt.id),
                     None if producer is None else produced[producer],
                 )
             )
@@ -629,9 +684,7 @@ class Jobs:
             status,
             child_pathnames={cid: r.pathname for cid, r in child_records.items()},
             child_results={cid: r.result for cid, r in child_records.items()},
-            step_results={
-                key: None if d.binding is None else d.binding.result for key, d in steps.items()
-            },
+            step_results={key: d.result for key, d in steps.items()},
             child_states=child_states,
             step_states={key: d.display.state for key, d in steps.items()},
         )
@@ -646,6 +699,12 @@ class Jobs:
             (description,) = await self._describe_steps(tx, job_id, [request])
             status = description.display
         return StepDetail(description, status)
+
+    async def get_preview(self, attempt_id: AttemptID) -> tuple[PreviewRecord, bytes] | None:
+        """A step attempt's latest preview (see :mod:`fxtr.runner.postgres.previews`) and its
+        canonical DAG-CBOR bytes, or ``None`` if it published none or there is no such attempt."""
+        async with self._database.transaction(snapshot=True) as tx:
+            return await get_preview(tx, attempt_id)
 
     async def cancel(
         self, job_id: JobID, *, hard: bool = False, reason: str = "cancelled"
@@ -760,7 +819,9 @@ async def provenances(
     }
     facts |= await ledger.get_job_attempt_provenances(tx, set(job_attempt_ids) - facts.keys())
     versions = {fact.code_version.entity_id: fact.code_version for fact in facts.values()}
-    loaded = await entities.load_raw_data_many(list(versions))
+    # In the caller's transaction: a second one would need a second connection, which a reader
+    # with a one-connection pool (the hub's viewer queries) never gets while this one is open.
+    loaded = await entities.load_raw_data_many(list(versions), tx)
     code_versions = {
         entity_id: versions[entity_id].loader.convert(data)
         for entity_id, data in zip(versions, loaded, strict=True)

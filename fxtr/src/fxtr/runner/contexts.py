@@ -56,7 +56,7 @@ from fxtr.entity_defns.array import (
 from fxtr.entity_defns.query_plan import PlannedQuery
 from fxtr.experiment.handles import ArrayHandle, ArrayHandleQuery
 from fxtr.experiment.signatures import Replicas, run_output_type
-from fxtr.experiment.steps import Step, StepContext
+from fxtr.experiment.steps import PreviewSource, Step, StepContext, is_preview_source
 from fxtr.experiment.workflows import Workflow, WorkflowContext, join_path
 from fxtr.runner.query_codec import encode_query
 from fxtr.runner.session import (
@@ -337,6 +337,14 @@ class RunnerStepContext(StepContext):
 
     def log(self, message: str) -> None:
         self._session.log_message(message)
+
+    def preview(self, value: PreviewSource) -> None:
+        if not is_preview_source(value):
+            raise TypeError(
+                "A preview is a tagged dataclass, a Partial of one, or a function returning one; "
+                f"got {type(value).__name__}"
+            )
+        self._session.preview_step(value)
 
     def is_known(self, entity_id: EntityID) -> bool:
         return self._session.is_known(entity_id)

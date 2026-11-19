@@ -17,7 +17,7 @@ const DIM_CLASS: Record<DimKind, string> = {
 const DOT_X = 18
 const PAD_Y = 8
 const ROW_H = 24
-/** Where a row's name and dim pips sit below its top; the dot is centred between them. */
+/** Where a row's name and dim pips sit below its top; the dot is centered between them. */
 const NAME_DY = 8
 const DIM_DY = 16
 const DIM_W = 8
@@ -53,7 +53,7 @@ interface Props {
   /** The root invocation's name, the first breadcrumb. */
   rootLabel: string
   /** Every invocation opened below the root, outermost first, including any below the current level. */
-  trail: LevelRef[]
+  trail: readonly LevelRef[]
   /** The breadcrumb shown: 0 is the root, `k` is `trail[k - 1]`. */
   depth: number
   level: StepDoc[]

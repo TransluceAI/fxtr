@@ -3,7 +3,7 @@
  * relative to the view it is drawn in, `panes/address.ts`, or both), opened at `params` through the
  * nearest `OpenEntityContext` like any link: a click shows it from the view (in the browsing panel
  * after the view, or with Alt in a pinned panel), hovering lights where it would open, and dragging
- * carries it. A relative location needs a view with an address of its own: a panel, or the centre.
+ * carries it. A relative location needs a view with an address of its own: a panel, or the center.
  * Anywhere else a relative link is null, and
  * the renderer shows its detail in place. A page has no location, so a link to one names none,
  * wherever it is drawn.

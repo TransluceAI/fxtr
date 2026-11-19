@@ -33,6 +33,8 @@ async def test_list_jobs(database: Database) -> None:
         jobs = await ledger.list_jobs(tx)
     assert [j.id for j in jobs] == [second, first]  # newest first
     assert all(j.workflow_name == "wf" for j in jobs)
+    async with database.transaction() as tx:
+        assert [j.id for j in await ledger.list_jobs(tx, limit=1)] == [second]
 
 
 async def test_expanding_a_run_node_creates_children_once(database: Database) -> None:

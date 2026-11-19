@@ -50,6 +50,9 @@ export function defineViewBundleConfig({ entry }: ViewBundleOptions): UserConfig
   return {
     // JSX through the shared `react/jsx-runtime`, whatever the package's tsconfig says.
     esbuild: { jsx: "automatic" },
+    // A library build leaves this for the application's bundler, and a bundle has none after it:
+    // in the browser `process` does not exist, so a library that reads it stops the bundle loading.
+    define: { "process.env.NODE_ENV": JSON.stringify("production") },
     build: {
       outDir: process.env[VIEW_BUNDLE_OUT_DIR_ENV] || VIEW_BUNDLE_OUT_DIR,
       emptyOutDir: true,

@@ -90,6 +90,30 @@ describe("createBatchedDrislEntityLoader", () => {
     expect(backend.requests.flat()).toEqual(Array.from({ length: 25 }, (_, n) => cid(n)));
   });
 
+  it("asks for a batch over the backend's size in halves, and one entity on its own route", async () => {
+    const stored = Object.fromEntries(Array.from({ length: 4 }, (_, n) => [cid(n), thing(n)]));
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string, init?: RequestInit) => {
+        if (url.startsWith("/api/entity/")) {
+          const alone = url.slice("/api/entity/".length);
+          asked.push(`alone ${alone}`);
+          return new Response(stored[alone]!.slice());
+        }
+        const { cids } = JSON.parse(init!.body as string) as { cids: string[] };
+        asked.push(`batch ${cids.length}`);
+        if (cids.length > 1 || cids[0] === cid(3)) return new Response("too large", { status: 413 });
+        return new Response(dagCbor.encode(cids.map((one) => stored[one])).slice());
+      }),
+    );
+    const load = createBatchedDrislEntityLoader(URL);
+    const values = await Promise.all(Array.from({ length: 4 }, (_, n) => load(new EntityID(cid(n)))));
+    expect(values.map((v) => v["n"])).toEqual([0, 1, 2, 3]);
+    expect(asked).toContain(`alone ${cid(3)}`);
+    expect(asked.filter((one) => one.startsWith("alone"))).toHaveLength(1);
+  });
+
   it("fails an entity the backend does not have, and only that one", async () => {
     const backend = fakeBackend({ [cid(1)]: thing(1) });
     const load = createBatchedDrislEntityLoader(URL);

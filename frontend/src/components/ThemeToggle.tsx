@@ -9,7 +9,7 @@ const CHOICES: readonly { theme: Theme; label: string; Icon: LucideIcon }[] = [
   { theme: 'dark', label: 'Dark theme', Icon: Moon },
 ]
 
-/** At the foot of the rail: follow the system's light or dark preference, or pick one. */
+/** Within viewer settings: follow the system's light or dark preference, or pick one. */
 export function ThemeToggle() {
   const [theme, setShown] = useState(currentTheme)
   return (

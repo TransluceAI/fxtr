@@ -54,3 +54,24 @@ export function typeNameOf(data: EntityData): string {
   }
   return tag;
 }
+
+/** The maps of a value a host hands a `PartialEntityPanel` or `PartialEntityInline` renderer that
+ *  are still being produced (see `markPartial`). A weak set, so marking keeps nothing alive and
+ *  adds nothing to the data. */
+const partialParts = new WeakSet<object>();
+
+/** For a host: mark a map of a value still being produced as itself still being produced. A host
+ *  unwrapping a partial value's wire form marks each map that came out of a partial wrapper, so a
+ *  renderer can tell which parts are finished (`isPartial`). Returns the map. */
+export function markPartial<T extends DataMap>(map: T): T {
+  partialParts.add(map);
+  return map;
+}
+
+/** Whether a part of a value handed to a `PartialEntityPanel` or `PartialEntityInline` renderer (the
+ *  value itself, or a map inside it) is still being produced: its fields not yet known are null,
+ *  and it may still grow. False for a finished part, and for anything not a map. Read it on the
+ *  value as handed over: a copy of a map is not marked. */
+export function isPartial(value: DataValue | undefined): boolean {
+  return typeof value === "object" && value !== null && partialParts.has(value);
+}

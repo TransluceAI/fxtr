@@ -75,7 +75,26 @@ class ModelStreamEvent:
     kind: Literal["model_stream_event"] = "model_stream_event"
 
 
-ChatRolloutEvent = ContextTurnEvent | ModelTurnEvent | ModelStreamEvent
+@dataclasses.dataclass(frozen=True)
+class RolloutEndEvent:
+    """The rollout ended: the last event of a rollout that returns, carrying how it ended, the
+    same objects that land on the rollout.
+
+    Emitted as soon as the outcome is known, before the sessions close. A rollout that raises
+    (a model failure that is not recorded, or any other exception) emits none.
+
+    Attributes:
+        status: How the rollout ended.
+        end: The context policy's ``EndRollout``, when the policy ended the rollout; ``None``
+            when the turn limit or a recorded failure did.
+    """
+
+    status: RolloutStatus
+    end: EndRollout | None
+    kind: Literal["rollout_end_event"] = "rollout_end_event"
+
+
+ChatRolloutEvent = ContextTurnEvent | ModelTurnEvent | ModelStreamEvent | RolloutEndEvent
 
 type ChatRolloutEventCallback = Callable[[ChatRolloutEvent], Awaitable[None]]
 """Receives each rollout event as it happens, for watching a rollout live.
@@ -108,9 +127,10 @@ async def run_chat_rollout(
     ``event_callback``, when given, receives each turn as it is produced —
     the same objects that land on the returned rollout — and, when the
     model's session is a ``StreamingChatSession``, the model's delta events
-    while each turn is generated. How the rollout ends is not an event; it is
-    on the returned rollout. See ``ChatRolloutEventCallback`` for the
-    delivery contract.
+    while each turn is generated. Its last event says how the rollout ended
+    (``RolloutEndEvent``), with the status and ``EndRollout`` the returned
+    rollout carries. See ``ChatRolloutEventCallback`` for the delivery
+    contract.
     """
     if max_turns is not None and max_turns < 0:
         raise ValueError("max_turns must be nonnegative")
@@ -159,6 +179,8 @@ async def run_chat_rollout(
                 if event_callback is not None:
                     await event_callback(ModelTurnEvent(turn=model_turn))
                 last_model_turn = model_turn
+            if event_callback is not None:
+                await event_callback(RolloutEndEvent(status=status, end=end))
 
     return ChatRollout(
         context_turns=tuple(context_turns),

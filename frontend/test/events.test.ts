@@ -32,7 +32,7 @@ class FakeSocket implements EventSocket {
 
 function connect(): { sockets: FakeSocket[]; stop: () => void } {
   const sockets: FakeSocket[] = []
-  const stop = connectViewerEvents((url) => {
+  const stop = connectViewerEvents('/api/events', (url) => {
     const socket = new FakeSocket(url)
     sockets.push(socket)
     return socket
@@ -46,10 +46,10 @@ afterEach(() => {
 })
 
 it('opens the socket at the page’s own address', () => {
-  expect(eventsSocketUrl('http://127.0.0.1:18000/#job=j')).toBe('ws://127.0.0.1:18000/api/events')
-  expect(eventsSocketUrl('https://viewer.example/')).toBe('wss://viewer.example/api/events')
+  expect(eventsSocketUrl('/api/events', 'http://127.0.0.1:18000/#job=j')).toBe('ws://127.0.0.1:18000/api/events')
+  expect(eventsSocketUrl('/api/events', 'https://viewer.example/')).toBe('wss://viewer.example/api/events')
   const { sockets, stop } = connect()
-  expect(sockets.map((s) => s.url)).toEqual([eventsSocketUrl()])
+  expect(sockets.map((s) => s.url)).toEqual([eventsSocketUrl('/api/events')])
   stop()
 })
 
@@ -101,4 +101,16 @@ it('stops for good: the socket is closed and not reopened', () => {
   document.dispatchEvent(new Event('visibilitychange'))
   vi.advanceTimersByTime(60_000)
   expect(sockets).toHaveLength(1)
+})
+
+it('connects and reconnects to the supplied endpoint rather than a built-in path', () => {
+  vi.useFakeTimers()
+  const open = vi.fn((url: string) => new FakeSocket(url))
+  const stop = connectViewerEvents('https://data.example/custom-events', open)
+  expect(open).toHaveBeenLastCalledWith('wss://data.example/custom-events')
+  open.mock.results[0].value.drop()
+  vi.advanceTimersByTime(500)
+  expect(open).toHaveBeenCalledTimes(2)
+  expect(open).toHaveBeenLastCalledWith('wss://data.example/custom-events')
+  stop()
 })

@@ -21,8 +21,8 @@
 
 import type { Params, Rel } from './address'
 
-/** The roots of the viewer that open panels: the trace (the centre: cards and their tables, the
- *  flowchart, a view of the level's workflow; and the minimap), at the centre's
+/** The roots of the viewer that open panels: the trace (the center: cards and their tables, the
+ *  flowchart, a view of the level's workflow; and the minimap), at the center's
  *  address, and the rail (the experiment, pages), at none. Each binds the slice, and comes before every
  *  panel in the sequence. */
 export const TRACE = '@trace'
@@ -55,6 +55,8 @@ export interface Detached {
   index: number
 }
 
+/** A history entry holds panels (`lib/urlState.ts`'s `Snapshot`), and outlives a build: a change
+ *  to this shape, or to `Column`'s, changes `SNAPSHOT_VERSION` there. */
 export interface PanelInstance extends Stored {
   id: string
   /** The panel before it in the sequence; null for the first, which comes after the roots. */
@@ -100,9 +102,32 @@ export function newPanelId(): string {
   return `panel-${nextId}`
 }
 
-function newColumn(panel: PanelInstance): Column {
+export function newColumnId(): string {
   nextId += 1
-  return { id: `column-${nextId}`, width: DEFAULT_COLUMN_WIDTH, panels: [panel] }
+  return `column-${nextId}`
+}
+
+function newColumn(panel: PanelInstance): Column {
+  return { id: newColumnId(), width: DEFAULT_COLUMN_WIDTH, panels: [panel] }
+}
+
+/** Keep new ids clear of the ids in `columns`, a layout restored from elsewhere (the browser's
+ *  history), whose ids were made by a counter that has since started over. */
+export function reserveIds(columns: Columns): void {
+  const numbers = [...columns.map((column) => column.id), ...allPanelsDeep(columns).map((panel) => panel.id)]
+    .map((id) => Number(/-(\d+)$/.exec(id)?.[1] ?? 0))
+  nextId = Math.max(nextId, ...numbers)
+}
+
+/** Every panel in `columns`, and every panel kept in their histories to be opened again. */
+function allPanelsDeep(columns: Columns): PanelInstance[] {
+  const found: PanelInstance[] = []
+  const visit = (panel: PanelInstance) => {
+    found.push(panel)
+    for (const step of [...panel.back, ...panel.forward]) for (const follower of step.followers) visit(follower.panel)
+  }
+  for (const column of columns) column.panels.forEach(visit)
+  return found
 }
 
 /** Each column's panels rewritten by `change`, its id and width kept, an emptied column dropped. */

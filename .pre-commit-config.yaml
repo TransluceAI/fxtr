@@ -88,3 +88,15 @@ repos:
         language: system
         files: ^(example_projects/behavior_rollouts/.*\.py|example_projects/behavior_rollouts/pyproject\.toml|example_projects/example_project_testing\.py|pyright-base\.json)$
         pass_filenames: false
+      - id: uv-lock-joke-eval
+        name: uv-lock (example_projects/joke_eval)
+        entry: uv lock --check --project example_projects/joke_eval
+        language: system
+        files: ^((fxtr|behaviors)/pyproject\.toml|example_projects/joke_eval/(pyproject\.toml|uv\.lock))$
+        pass_filenames: false
+      - id: pyright-joke-eval
+        name: pyright (example_projects/joke_eval)
+        entry: uv run --directory example_projects/joke_eval --frozen --group dev pyright
+        language: system
+        files: ^(example_projects/joke_eval/.*\.py|example_projects/joke_eval/pyproject\.toml|example_projects/example_project_testing\.py|pyright-base\.json)$
+        pass_filenames: false

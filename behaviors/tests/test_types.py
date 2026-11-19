@@ -4,6 +4,11 @@ import dataclasses
 
 import pytest
 
+from behaviors.implementations.dialects.anthropic_messages import (
+    AnthropicRedactedThinking,
+    AnthropicSignature,
+)
+from behaviors.implementations.dialects.openai_responses import OpenAIResponsesReasoning
 from behaviors.types import (
     AssistantMessage,
     CacheableContentText,
@@ -12,8 +17,6 @@ from behaviors.types import (
     ChatMessage,
     Content,
     ContentReasoning,
-    ContentRedactedReasoning,
-    ContentSummarizedReasoning,
     ContentText,
     ContentToolUse,
     ModelCallFailure,
@@ -26,13 +29,12 @@ from behaviors.types import (
     StopMaxTokens,
     StopOther,
     StopReason,
+    StopRefusal,
     StopStopSequence,
     StopToolUse,
     StreamEvent,
     StreamReasoningDelta,
     StreamRestart,
-    StreamSignatureDelta,
-    StreamSummarizedReasoningDelta,
     StreamTextDelta,
     StreamToolUseInputDelta,
     StreamToolUseStart,
@@ -48,29 +50,45 @@ from behaviors.types import (
     Usage,
     UserMessage,
 )
+from behaviors.types.streaming import StreamReasoningStart, StreamReasoningState
 from fxtr.entity_defns.dataclass_bases import ConversionError
 from fxtr.entity_defns.dataclass_entity import DataclassEntity
+from fxtr.entity_defns.dynamic_data import DynamicData
 from fxtr.storage.memory_storage import MemoryStorage
 
 
 def test_content_blocks_construct() -> None:
     text = ContentText(text="hello")
-    reasoning = ContentReasoning(text="thinking...")
-    summarized = ContentSummarizedReasoning(text="summary", signature="sig")
+    reasoning = ContentReasoning(text="thinking...", form="full")
+    summarized = ContentReasoning(
+        text="summary",
+        form="summary",
+        reasoning_state=DynamicData.from_tagged(AnthropicSignature("sig")),
+    )
     # OpenAI reasoning item with encrypted_content but no summary text
-    empty_summary = ContentSummarizedReasoning(text="", signature="enc")
-    unsigned = ContentSummarizedReasoning(text="summary", signature=None)
-    redacted = ContentRedactedReasoning(data="0xdeadbeef")
+    empty_summary = ContentReasoning(
+        text="",
+        form="summary",
+        reasoning_state=DynamicData.from_tagged(OpenAIResponsesReasoning(None, "enc")),
+    )
+    unsigned = ContentReasoning(text="summary", form="summary")
+    redacted = ContentReasoning(
+        text="",
+        form="redacted",
+        reasoning_state=DynamicData.from_tagged(AnthropicRedactedThinking("0xdeadbeef")),
+    )
     tool_use = ContentToolUse(
         id="tu_1", name="search", input={"query": "cats", "limit": 5}, parse_error=None
     )
 
     assert text.text == "hello"
     assert reasoning.text == "thinking..."
-    assert summarized.signature == "sig"
+    assert summarized.reasoning_state is not None
+    assert summarized.reasoning_state.as_type(AnthropicSignature).signature == "sig"
     assert empty_summary.text == ""
-    assert unsigned.signature is None
-    assert redacted.data == "0xdeadbeef"
+    assert unsigned.reasoning_state is None
+    assert redacted.reasoning_state is not None
+    assert redacted.reasoning_state.as_type(AnthropicRedactedThinking).data == "0xdeadbeef"
     assert tool_use.input == {"query": "cats", "limit": 5}
 
 
@@ -86,7 +104,7 @@ def test_messages_construct() -> None:
     tool_use = ContentToolUse(id="tu_1", name="search", input={"query": "cats"}, parse_error=None)
     assistant = AssistantMessage(
         content=(
-            ContentReasoning(text="the user greeted me"),
+            ContentReasoning(text="the user greeted me", form="full"),
             ContentText(text="hello!"),
             tool_use,
         ),
@@ -101,9 +119,9 @@ def test_messages_construct() -> None:
 def test_content_union_narrows() -> None:
     blocks: tuple[Content, ...] = (
         ContentText(text="a"),
-        ContentReasoning(text="b"),
-        ContentSummarizedReasoning(text="c", signature="s"),
-        ContentRedactedReasoning(data="d"),
+        ContentReasoning(text="b", form="full"),
+        ContentReasoning(text="c", form="summary"),
+        ContentReasoning(text="", form="redacted"),
         ContentToolUse(id="tu_1", name="f", input={}, parse_error=None),
     )
     texts = [block.text for block in blocks if isinstance(block, ContentText)]
@@ -138,7 +156,7 @@ def test_tool_param() -> None:
         name="noop",
         description=None,
         input_schema={"type": "object"},
-        strict=None,
+        strict=False,
         input_examples=None,
     )
     assert no_description.description is None
@@ -157,9 +175,17 @@ def _messages() -> tuple[ChatMessage, ...]:
         UserMessage(content=(ContentText(text="search"),)),
         AssistantMessage(
             content=(
-                ContentReasoning(text="think"),
-                ContentSummarizedReasoning(text="summary", signature="signature"),
-                ContentRedactedReasoning(data="encrypted"),
+                ContentReasoning(text="think", form="full"),
+                ContentReasoning(
+                    text="summary",
+                    form="summary",
+                    reasoning_state=DynamicData.from_tagged(AnthropicSignature("signature")),
+                ),
+                ContentReasoning(
+                    text="",
+                    form="redacted",
+                    reasoning_state=DynamicData.from_tagged(AnthropicRedactedThinking("encrypted")),
+                ),
                 CacheableContentText(text="answer", cache_control=CacheControl(ttl="1h")),
                 ContentToolUse(
                     id="call-1",
@@ -223,8 +249,9 @@ async def test_exchange_request_and_stream_events_roundtrip(choice: ToolChoice |
         events=(
             StreamTextDelta("hello"),
             StreamReasoningDelta("think"),
-            StreamSummarizedReasoningDelta("summary"),
-            StreamSignatureDelta("sig"),
+            StreamReasoningStart("summary"),
+            StreamReasoningDelta("summary"),
+            StreamReasoningState(DynamicData.from_tagged(AnthropicSignature("sig"))),
             StreamToolUseStart(index=0, id="call-1", name="search"),
             StreamToolUseInputDelta(index=0, partial_json='{"query":'),
             StreamRestart(),
@@ -245,7 +272,8 @@ async def test_exchange_request_and_stream_events_roundtrip(choice: ToolChoice |
         StopMaxTokens(),
         StopStopSequence("</answer>"),
         StopToolUse(),
-        StopContentFilter("refusal"),
+        StopRefusal("refusal", complete=None),
+        StopContentFilter("RECITATION"),
         StopOther("provider_specific"),
     ],
 )

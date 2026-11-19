@@ -8,6 +8,7 @@ workflow queries become nodes and when. What the host builds from them is the as
 
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, TypedDict, cast
 from unittest.mock import create_autospec
 
@@ -17,6 +18,8 @@ from frozendict import frozendict
 import fxtr
 from fxtr.core.entity_data import EntityID
 from fxtr.entity_defns.array import Array, ArrayType, ArrayTypeError, ArrayTypeSpec
+from fxtr.entity_defns.dataclass_bases import TaggedDataclass
+from fxtr.entity_defns.partial import Partial
 from fxtr.entity_defns.query import dim, value
 from fxtr.entity_defns.query_plan import PlannedQuery, QueryPlan
 from fxtr.entity_defns.schema import needs_presentation, optional, struct_of
@@ -597,3 +600,28 @@ async def test_step_context_log_forwards_to_session() -> None:
     session.assignment = assignment
     RunnerStepContext(session).log("step says hi")
     session.log_message.assert_called_once_with("step says hi")
+
+
+@dataclasses.dataclass(frozen=True, kw_only=True)
+class Draft(TaggedDataclass, fxtr_type="test.fxtr.contexts.Draft"):
+    text: str
+
+
+async def test_step_context_preview_forwards_tagged_values_and_functions_only() -> None:
+    session = make_session(StepRunSession)
+    session.assignment = StepAssignment(
+        attempt_id=ATTEMPT, step_name=count.name, cache_key="k", inputs=frozendict()
+    )
+    context = RunnerStepContext(session)
+    context.preview(Draft(text="done"))
+    context.preview(Partial(Draft))
+    build = lambda: Draft(text="later")  # noqa: E731
+    context.preview(build)
+    assert [c.args for c in session.preview_step.call_args_list] == [
+        (Draft(text="done"),),
+        (Partial(Draft),),
+        (build,),
+    ]
+    with pytest.raises(TypeError, match="tagged dataclass"):
+        context.preview({"text": "a dict"})  # type: ignore[arg-type]
+    assert session.preview_step.call_count == 3

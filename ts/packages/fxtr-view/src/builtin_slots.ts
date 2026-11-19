@@ -1,5 +1,5 @@
 // The built-in slots: the panel, the inline link, and the hover preview for entities; the panel
-// for invocations; and pages. Panels receive a storage atom for their state; entity views receive the one id
+// for a value still being produced (a step's live preview); the panel for invocations; and pages. Panels receive a storage atom for their state; entity views receive the one id
 // they show, invocation panels every spawn they show.
 
 import type { ComponentType } from "react";
@@ -8,7 +8,7 @@ import type { JsonValue } from "./ids";
 import type { Spawn } from "./invocation";
 import type { ViewParams } from "./link";
 import { renderer, type DeclaredViewProps, type Renderer, type ViewDecl } from "./renderer";
-import { declareViewSlot, type EntityViewProps, type InvocationViewProps } from "./slots";
+import { declareViewSlot, type EntityViewProps, type InvocationViewProps, type ValueViewProps } from "./slots";
 
 /** A panel's persistent per-mount state. JSON only, so a shell may persist it. */
 export type StorageAtom = PrimitiveAtom<JsonValue>;
@@ -36,6 +36,39 @@ export const EntityPanel = declareViewSlot<EntityPanelProps>("EntityPanel");
 export const EntityInlineLink = declareViewSlot<LinkProps>("EntityInlineLink");
 /** A compact preview of the entity, shown when a link to it is hovered. */
 export const EntityHoverPreview = declareViewSlot<HoverPreviewProps>("EntityHoverPreview");
+
+/** Props of a `PartialEntityPanel` view: the value a step is producing, whether it is still
+ *  partial, whether the step is still running, and per-mount storage. */
+export interface PartialEntityPanelProps extends ValueViewProps {
+  /** Whether the value is still being produced. A partial value's fields not yet known are null,
+   *  whatever their type says, and a list may be shorter than it will be; a renderer that reads a
+   *  field unconditionally must treat null as "not yet". Which parts inside it are still being
+   *  produced, `isPartial` says. False for a finished value the step published as its preview. */
+  readonly partial: boolean;
+  /** Whether the step is still running, so the value may still change. False for the last preview
+   *  of a step that failed or stopped: a partial value then will never be finished, and a renderer
+   *  should not say it is in progress. */
+  readonly live: boolean;
+  readonly storage: StorageAtom;
+}
+
+/** The full body of a panel showing a value a step is still producing: its latest preview
+ *  (`ctx.preview` in Python), which is not a stored entity. The host dispatches on the value's
+ *  type name, so a type's renderer for this slot shows its streaming values the way its
+ *  `EntityPanel` renderer shows its finished ones; registering one is how a renderer opts in to
+ *  partial values. A type with none gets the slot's wildcard, the same data tree a finished
+ *  entity's raw view shows. */
+export const PartialEntityPanel = declareViewSlot<PartialEntityPanelProps>("PartialEntityPanel");
+
+/** Props of a `PartialEntityInline` view: a `PartialEntityPanel` view's, without storage. */
+export type PartialEntityInlineProps = Omit<PartialEntityPanelProps, "storage">;
+
+/** A one-line summary of a value a step is still producing, flowing with surrounding text
+ *  (`<span>`): what a host shows in a running invocation's table row, where a finished one shows
+ *  its result's `EntityInlineLink`, so it says how far the value has got ("5 responses so far").
+ *  Static phrasing content, like `EntityInlineLink`. A type with none gets the slot's wildcard, its
+ *  type name and that it is partial. */
+export const PartialEntityInline = declareViewSlot<PartialEntityInlineProps>("PartialEntityInline");
 
 /** Props of an invocation panel: the spawns shown and per-mount storage, like an entity
  *  `EntityPanel`. */

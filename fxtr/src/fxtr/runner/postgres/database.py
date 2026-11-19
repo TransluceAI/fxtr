@@ -16,33 +16,45 @@ that several independent runner states can share one server. Tests use this to g
 namespace per test.
 
 A ``Database`` also carries the process's **wake** signal (:meth:`Database.wake`,
-:meth:`Database.wait_for`, :meth:`Database.wait_for_any`): named topics that a committing
-transaction wakes (from an :meth:`Transaction.on_commit` callback) so that waiters in the same
-process re-check the database at once instead of waiting out their poll interval. It is only an
-optimization for co-located clients; every waiter also polls, since another process's commits do
-not wake it.
+:meth:`Database.wait_for`, :meth:`Database.wait_for_any`, :meth:`Database.subscribe`): named
+topics that a committing transaction wakes (from an :meth:`Transaction.on_commit` callback) so
+that waiters in the same process re-check the database at once instead of waiting out their poll
+interval. It is only an optimization for co-located clients; every waiter also polls, since
+another process's commits do not wake it. A waiter that waits once names its topics in the call;
+one that waits again and again on a set of topics that changes a little each time holds a
+:class:`Subscription`, which also tells it which topics were woken.
 """
 
 from __future__ import annotations
 
 import os
 import re
-from collections.abc import AsyncIterator, Callable, Iterable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable, Mapping
 from contextlib import asynccontextmanager
 from types import TracebackType
 from typing import Any, Self
 
 import anyio
 import anyio.lowlevel
-from sqlalchemy import CursorResult, Executable, Table, text
-from sqlalchemy.dialects.postgresql import Insert
+from sqlalchemy import ColumnElement, CursorResult, Executable, Table, any_, literal, text
+from sqlalchemy.dialects.postgresql import ARRAY, Insert
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 
 from fxtr.project.config import DATABASE_URL_ENV_VAR
+from fxtr.runner.postgres import migrations
 from fxtr.runner.postgres.schema import metadata
 
 _PG_SCHEMA_NAME = re.compile(r"[a-z_][a-z0-9_]*")
+
+_UPGRADE_LOCK = anyio.Lock()
+"""Serializes every :meth:`Database.create_schema` of this process. Alembic keeps the running
+migration in module-level state (the ``alembic.context`` and ``alembic.op`` proxies), and
+``upgrade`` runs on the event loop's thread with greenlet switches at each statement, so two
+upgrades of different schemas in one process would interleave in that state. The advisory lock
+inside the transaction only serializes callers of one schema, across processes. An ``anyio``
+lock, not a thread lock: the waiters are tasks on the one thread, which a thread lock would block
+along with the holder."""
 
 
 class Transaction:
@@ -103,6 +115,85 @@ def _application_name(pg_schema: str) -> str:
     return f"fxtr:{pg_schema}"
 
 
+def any_of(column: ColumnElement[Any], values: Iterable[Any]) -> ColumnElement[bool]:
+    """A condition that ``column`` holds one of ``values``, sent as one array parameter. Postgres
+    takes at most 32,767 parameters in a statement, so a large job's ids do not fit an ``IN``
+    list."""
+    return column == any_(literal(list(values), ARRAY(column.type)))
+
+
+class Subscription:
+    """One waiter's standing interest in a set of topics, for a waiter that waits again and again
+    (:meth:`Database.subscribe`).
+
+    The topics are added and discarded one at a time, so a waiter on thousands of them pays for
+    the ones that change between two waits and not for all of them at every wait, and each wait
+    returns the topics woken since the last one returned, so the waiter can look at those alone.
+    A wake that arrives between two waits is kept for the next. Not for sharing between tasks:
+    one task waits on it. Close it when done.
+    """
+
+    def __init__(self, database: Database) -> None:
+        self._database = database
+        self._topics: set[str] = set()
+        self._woken: set[str] = set()
+        self._event: anyio.Event | None = None  # the event of the wait in progress
+
+    def add(self, topic: str) -> None:
+        """Start listening to ``topic``. A no-op if already listening."""
+        if topic not in self._topics:
+            self._topics.add(topic)
+            self._database._subscriptions.setdefault(topic, set()).add(self)
+
+    def discard(self, topic: str) -> None:
+        """Stop listening to ``topic``. A no-op if not listening. A wake of it already received
+        is still returned by the next wait."""
+        if topic in self._topics:
+            self._topics.remove(topic)
+            listening = self._database._subscriptions[topic]
+            listening.remove(self)
+            if not listening:
+                del self._database._subscriptions[topic]
+
+    async def wait(self, event: anyio.Event, timeout: float) -> set[str] | None:
+        """Wait until a topic is woken, ``event`` is set, or ``timeout`` seconds pass.
+
+        A wake sets ``event``, so the caller can share it with whatever else should end the wait.
+        Returns at once if ``event`` is already set or a topic was woken since the last wait.
+
+        Args:
+            event: The event to wait on, which a wake of a topic sets.
+            timeout: Seconds to wait.
+
+        Returns:
+            The topics woken since the last wait returned, empty if ``event`` was set by something
+            else; ``None`` if the wait timed out. Either way the caller should re-check the
+            database for what it cannot be woken for: wakes from other processes never arrive
+            here.
+        """
+        if not self._woken and not event.is_set():
+            self._event = event
+            try:
+                with anyio.move_on_after(timeout):
+                    await event.wait()
+            finally:
+                self._event = None
+            if not self._woken and not event.is_set():
+                return None
+        woken, self._woken = self._woken, set()
+        return woken
+
+    def close(self) -> None:
+        """Stop listening to everything."""
+        for topic in list(self._topics):
+            self.discard(topic)
+
+    def _wake(self, topic: str) -> None:
+        self._woken.add(topic)
+        if self._event is not None:
+            self._event.set()
+
+
 class Database:
     """One experiment's Postgres database: an engine, its pool, and the schema lifecycle.
 
@@ -120,6 +211,11 @@ class Database:
             the server's default (normally ``public``).
         pool_size: Persistent connections the pool keeps open.
         max_overflow: Temporary connections allowed beyond ``pool_size`` when it is busy.
+        hide_parameters: Leave a statement's parameters out of database errors, for a service
+            whose parameters include what people send it.
+        server_settings: More Postgres settings for every connection, such as
+            ``{"lock_timeout": "5s"}``.
+
 
     Raises:
         ValueError: If ``pg_schema`` is not a valid name.
@@ -132,33 +228,42 @@ class Database:
         pg_schema: str | None = None,
         pool_size: int = 5,
         max_overflow: int = 5,
+        hide_parameters: bool = False,
+        server_settings: Mapping[str, str] | None = None,
     ) -> None:
         if pg_schema is not None and not _PG_SCHEMA_NAME.fullmatch(pg_schema):
             raise ValueError(f"pg_schema must match {_PG_SCHEMA_NAME.pattern!r}, got {pg_schema!r}")
         self.url = url
         self.pg_schema = pg_schema
-        connect_args: dict[str, Any] = {}
+        settings = dict(server_settings or {})
         if pg_schema is not None:
-            connect_args["server_settings"] = {
-                "search_path": pg_schema,
-                "application_name": _application_name(pg_schema),
-            }
+            settings["search_path"] = pg_schema
+            settings["application_name"] = _application_name(pg_schema)
+        connect_args: dict[str, Any] = {"server_settings": settings} if settings else {}
         self.engine: AsyncEngine = create_async_engine(
             url,
             connect_args=connect_args,
             pool_size=pool_size,
             max_overflow=max_overflow,
             pool_pre_ping=True,
+            hide_parameters=hide_parameters,
         )
         self._wakes: dict[str, set[anyio.Event]] = {}
+        self._subscriptions: dict[str, set[Subscription]] = {}
 
     # ---- the in-process wake ----
 
     def wake(self, topic: str) -> None:
         """Wake every task waiting on ``topic`` in this process. Call from a
         :meth:`Transaction.on_commit` callback after a change waiters care about."""
-        for event in self._wakes.pop(topic, ()):
-            event.set()
+        for waiter in self._wakes.pop(topic, ()):
+            waiter.set()
+        for subscription in self._subscriptions.get(topic, ()):
+            subscription._wake(topic)
+
+    def subscribe(self) -> Subscription:
+        """A :class:`Subscription` to this process's wakes, listening to nothing yet."""
+        return Subscription(self)
 
     async def wait_for(self, topic: str, timeout: float) -> bool:
         """Wait until ``topic`` is woken or ``timeout`` seconds pass.
@@ -253,13 +358,35 @@ class Database:
             await begin.__aexit__(None, None, None)
         tx._committed()
 
-    async def create_schema(self) -> None:
-        """Create the Postgres schema (if one was named) and every table registered on
-        :data:`~fxtr.runner.postgres.schema.metadata` that does not exist yet."""
-        async with self.transaction() as tx:
+    async def create_schema(
+        self, *, after_upgrade: Callable[[Transaction, str | None], Awaitable[None]] | None = None
+    ) -> None:
+        """Create the Postgres schema (if one was named) and bring the runner's tables in it to
+        the newest migration (:mod:`fxtr.runner.postgres.migrations`): every table
+        :data:`~fxtr.runner.postgres.schema.metadata` declares, as it declares them. Safe to call
+        on a schema that is already current, and from several processes at once: an advisory lock
+        on the schema's name makes them take turns, and a process-wide lock (``_UPGRADE_LOCK``)
+        makes this process's calls for different schemas take turns too.
+
+        Args:
+            after_upgrade: Work the upgrade must bring with it, run in the upgrade's transaction
+                after the migrations, with the revision the schema was at before (``None`` for a
+                schema that recorded none). The data a migration cannot fill itself (it has no
+                entity storage or codec) commits with the revision or not at all, so a schema is
+                never at a revision whose data is missing, and an interrupted upgrade is tried
+                again whole.
+        """
+        async with _UPGRADE_LOCK, self.transaction() as tx:
+            await tx.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:name))"),
+                {"name": f"fxtr-migrate:{self.pg_schema or ''}"},
+            )
             if self.pg_schema is not None:
                 await tx.execute(text(f"CREATE SCHEMA IF NOT EXISTS {self.pg_schema}"))
-            await tx.connection.run_sync(metadata.create_all)
+            before = await tx.connection.run_sync(migrations.current_revision, self.pg_schema)
+            await tx.connection.run_sync(migrations.upgrade, self.pg_schema)
+            if after_upgrade is not None:
+                await after_upgrade(tx, before)
 
     async def drop_schema(self, *, lock_timeout: str = "10s") -> None:
         """Drop everything: the named Postgres schema with all its contents, or, with no schema
@@ -295,6 +422,16 @@ class Database:
             else:
                 await tx.execute(text(f"SET LOCAL lock_timeout = '{lock_timeout}'"))
                 await tx.connection.run_sync(metadata.drop_all)
+                # The default schema's version table may hold rows of other Alembic-managed
+                # tables too: only the runner's own row goes, and the table stays.
+                present = (
+                    await tx.execute(text("SELECT to_regclass('alembic_version') IS NOT NULL"))
+                ).scalar_one()
+                if present:
+                    await tx.execute(
+                        text("DELETE FROM alembic_version WHERE version_num = ANY(:known)"),
+                        {"known": sorted(migrations.known_revisions())},
+                    )
 
     async def dispose(self) -> None:
         """Close every pooled connection."""

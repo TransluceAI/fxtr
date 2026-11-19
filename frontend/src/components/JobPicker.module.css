@@ -25,60 +25,340 @@
   font-size: var(--text-md);
   font-weight: 600;
 }
+.name-text { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+/* Marks a job that a newer job of its workflow has followed. */
+.older { flex: none; color: var(--fg-dim); }
 .sub {
   max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   font-family: var(--font-mono);
-  font-size: var(--text-2xs);
+  font-size: var(--text-xs);
   color: var(--fg-dim);
 }
 .chevron { position: absolute; top: 12px; right: 9px; color: var(--fg-dim); }
 .trigger:hover .chevron { color: var(--fg); }
 
-.menu { width: 380px; max-width: calc(100vw - 16px); padding: 6px; }
+/* The picker: the jobs on the left and, once the pointer rests on a row, the previewed job on the
+   right, each reaching the edges (over the popover skin's padding). The list's width never changes
+   (rows moving under the pointer would move the preview): the preview widens the picker rightward,
+   away from where it is anchored. A window without room for both shows no preview (`JobPicker`). */
+.menu:global(.popover) {
+  display: flex;
+  width: fit-content;
+  max-width: calc(100vw - 16px);
+  height: min(640px, calc(var(--radix-popover-content-available-height, 90vh) - 8px));
+  padding: 0;
+  overflow: hidden;
+}
+.browse { display: flex; flex: none; flex-direction: column; width: min(624px, calc(100vw - 16px)); }
+.side { flex: none; width: 416px; overflow-y: auto; border-left: 1px solid var(--line); background: var(--bg-alt); }
+.controls { display: flex; align-items: center; gap: 6px; padding: 8px; border-bottom: 1px solid var(--line); }
 .search {
   display: flex;
+  flex: 1;
   align-items: center;
   gap: 6px;
-  padding: 4px 6px;
+  box-sizing: border-box;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
   border: 1px solid var(--line-strong);
   border-radius: 3px;
   color: var(--fg-dim);
 }
+.search:focus-within { border-color: var(--select-line); }
 .search input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: var(--text-md); }
-.list { max-height: 320px; margin: 6px 0 0; padding: 0; overflow-y: auto; list-style: none; }
-.item {
-  position: relative;
+.segments { display: flex; flex: none; box-sizing: border-box; height: 26px; border: 1px solid var(--line-strong); border-radius: 3px; overflow: hidden; }
+.segments button {
+  padding: 0 8px;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.segments button + button { border-left: 1px solid var(--line-strong); }
+.segments button:hover { background: var(--hover); }
+.segments button.is-on { background: var(--picked-bg); color: var(--picked-fg); }
+/* The search box's workflow: the one chosen, in the box, and those to choose, listed under it. */
+.search-box { position: relative; display: flex; flex: 1; min-width: 140px; }
+.search-workflow {
   display: flex;
-  flex-direction: column;
-  align-items: flex-start;
+  flex: 0 1 auto;
+  align-items: center;
   gap: 2px;
-  width: 100%;
-  padding: 6px 26px 6px 8px;
+  min-width: 0;
+  max-width: 60%;
+  padding: 0 2px 0 6px;
+  border-radius: 3px;
+  background: var(--picked-bg);
+  font-size: var(--text-sm);
+  color: var(--picked-fg);
+}
+.search-workflow-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-workflow button { display: flex; flex: none; padding: 1px; border: 0; border-radius: 2px; background: transparent; color: inherit; cursor: pointer; }
+.search-workflow button:hover { background: var(--hover); }
+.suggestions {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  left: 0;
+  z-index: 1;
+  max-height: 280px;
+  padding: 4px;
+  overflow-y: auto;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: var(--shadow-lg);
+}
+.suggestions-title { padding: 2px 8px 4px; font-size: var(--text-xs); color: var(--fg-dim); }
+.suggestion {
+  padding: 3px 8px;
+  overflow: hidden;
+  border-radius: 3px;
+  font-size: var(--text-md);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--fg);
+  cursor: pointer;
+}
+.suggestion.is-chosen { background: var(--select-bg); }
+.clear-filter {
+  flex: none;
+  padding: 1px 4px;
   border: 0;
   border-radius: 3px;
   background: transparent;
   font: inherit;
-  text-align: left;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
   cursor: pointer;
 }
-.item:hover { background: var(--hover); }
-.item.is-selected { background: var(--select-bg); box-shadow: inset 2px 0 0 var(--select-accent); }
-.item-name {
+.clear-filter:hover { background: var(--hover); color: var(--fg); }
+.list { flex: 1; min-height: 0; padding: 4px 6px 8px; overflow-y: auto; }
+
+.section-title {
   display: flex;
   align-items: center;
-  gap: 6px;
-  max-width: 100%;
+  gap: 5px;
+  padding: 4px 8px 2px;
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+}
+
+/* One job. */
+.job {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  padding: 2px 4px 2px 8px;
+  border-radius: 3px;
+  font-size: var(--text-md);
+  cursor: pointer;
+  user-select: none;
   overflow: hidden;
+}
+.job:hover { background: var(--hover); }
+.job:focus-visible { outline: 1px solid var(--select-line); outline-offset: -1px; }
+/* The row previewed (under the pointer, or stepped to with the arrow keys) is grey like a hovered
+   one; the job the page shows is blue. */
+.job.is-previewed { background: var(--hover); }
+/* Arrow keys focus the row they preview; its fill already marks it. */
+.job.is-previewed:focus-visible { outline: 0; }
+.job.is-current { background: var(--select-bg); }
+.job-state { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 12px; }
+/* When a row runs out of room the failure gives way first (the red × already says it failed), then
+   the name. */
+.job-name { flex: 0 3 auto; min-width: min(110px, 40%); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.job-time { flex: none; margin-left: auto; font-size: var(--text-xs); color: var(--fg-dim); white-space: nowrap; }
+/* An input: its name, dimmer and the first to shorten, then its value. */
+.input {
+  display: inline-flex;
+  flex: 0 1 auto;
+  box-sizing: border-box;
+  min-width: 64px;
+  max-width: 220px;
+  padding: 0 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--muted-bg);
+  font-family: var(--font-mono);
+  font-size: var(--text-xs);
+  line-height: 16px;
+  white-space: nowrap;
+  color: var(--picked-fg);
+}
+.input-name { flex: 0 3 auto; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; color: var(--fg-dim); }
+.input-name:last-child { flex-shrink: 1; color: inherit; }
+.input-value { flex: 0 1 auto; min-width: 3ch; overflow: hidden; text-overflow: ellipsis; white-space: pre; }
+.note { flex: none; font-size: var(--text-xs); font-style: italic; color: var(--fg-dim); white-space: nowrap; }
+.stopped { flex: none; font-size: var(--text-xs); color: var(--fg-dim); white-space: nowrap; }
+.failure { flex: 0 100 auto; min-width: 40px; overflow: hidden; font-size: var(--text-xs); text-overflow: ellipsis; white-space: nowrap; color: var(--danger); }
+/* A row's star, and a starred job's name beside it, sit just before its time, so their room is
+   taken from the gap and the times line up. */
+.actions { display: inline-flex; flex: 0 2 auto; align-items: center; gap: 2px; min-width: 0; margin-left: auto; }
+.job .actions + .job-time { margin-left: 0; }
+/* A starred job's name, gold like its star; a faint `Name` on hover when it has none. */
+.star-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 220px;
+  padding: 0 3px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
   text-overflow: ellipsis;
   white-space: nowrap;
-  font-size: var(--text-md);
+  color: var(--chart-4);
+  cursor: text;
 }
-.item-meta { display: flex; gap: 8px; font-size: var(--text-xs); color: var(--fg-dim); }
-.item-id { font-family: var(--font-mono); }
-.state { text-transform: uppercase; letter-spacing: 0.06em; font-size: var(--text-2xs); }
-.state.is-failed { color: var(--danger); }
+.star-label:hover { background: var(--hover-strong); }
+.star-label.is-empty { color: var(--fg-faint); visibility: hidden; }
+.job:hover .star-label.is-empty, .job:focus-within .star-label.is-empty { visibility: visible; }
+/* A starred job's name, while it is typed. */
+.rename {
+  flex: 0 1 180px;
+  box-sizing: border-box;
+  min-width: 80px;
+  height: 20px;
+  padding: 0 4px;
+  border: 1px solid var(--select-line);
+  border-radius: 3px;
+  outline: 0;
+  background: var(--bg);
+  font: inherit;
+  font-size: var(--text-md);
+  color: var(--fg);
+}
+.star {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 3px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-xs);
+  color: var(--fg-faint);
+  cursor: pointer;
+  visibility: hidden;
+}
+.job:hover .star, .job:focus-within .star, .star.is-starred { visibility: visible; }
+.star:hover { background: var(--hover-strong); color: var(--fg); }
+.star.is-starred { color: var(--chart-4); }
+
+/* One commit: its graph down the left edge, its own line, then its jobs. */
+.commit { position: relative; }
+.graph { position: absolute; top: 0; left: 0; overflow: visible; pointer-events: none; }
+.graph line, .graph path { fill: none; stroke-width: 1.5; }
+/* The dashed line from a commit's dot to its line: a divider's grey in light mode, brighter in dark
+   mode, where that grey nearly vanishes. */
+.graph .leader {
+  stroke: light-dark(var(--line-strong), color-mix(in srgb, var(--fg-faint), var(--fg-dim)));
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+}
+/* A commit's line is a heading over its jobs: grey, with no hover, so it never reads as a row to
+   pick. */
+.commit-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 20px; /* JobCommitsView's HEAD_HEIGHT */
+  padding: 0 4px 0 8px;
+  font-size: var(--text-md);
+  color: var(--fg-dim);
+  cursor: default;
+}
+.subject { flex: 0 1 auto; min-width: 40px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* A branch's name, outlined in its colour (`--branch-color`, set on it); filled with it when chosen. */
+.branch {
+  display: inline-block;
+  flex: none;
+  box-sizing: border-box;
+  max-width: 180px;
+  padding: 0 5px;
+  overflow: hidden;
+  border: 1px solid var(--branch-color);
+  border-radius: 8px;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--text-xs);
+  line-height: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--branch-color);
+  cursor: pointer;
+}
+.branch:hover { background: color-mix(in srgb, var(--branch-color) 10%, transparent); }
+.branch.is-chosen { background: var(--branch-color); color: var(--bg); }
+.hash { flex: none; font-family: var(--font-mono); font-size: var(--text-xs); color: var(--fg-dim); }
+.commit-head .job-time { margin-left: 0; }
+.footnote { margin-top: 8px; padding: 6px 8px 0; border-top: 1px solid var(--line); font-size: var(--text-xs); color: var(--fg-dim); }
 .none { padding: 8px; color: var(--fg-dim); font-size: var(--text-sm); }
-.succeeded { flex: none; color: var(--state-done); }
+/* The commit view's branches, over its commits: each one's name, in its colour, choosing it. */
+.branches { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; padding: 2px 8px 6px; border-bottom: 1px solid var(--line); }
+.branches-title { font-size: var(--text-xs); color: var(--fg-dim); }
+.more {
+  margin: 4px 8px;
+  padding: 3px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+  background: transparent;
+  font: inherit;
+  font-size: var(--text-sm);
+  color: var(--fg-dim);
+  cursor: pointer;
+}
+.more:hover { background: var(--hover); color: var(--fg); }
+
+/* The previewed job. */
+.preview { display: flex; flex-direction: column; gap: 8px; padding: 12px 14px; }
+.preview-head { display: flex; align-items: flex-start; gap: 8px; }
+/* A long name wraps, its state staying on the first line. */
+.preview-title { display: flex; flex: 1; align-items: flex-start; gap: 6px; min-width: 0; font-size: var(--text-lg); font-weight: 600; line-height: 22px; overflow-wrap: anywhere; }
+.preview-name { min-width: 0; }
+.status { display: flex; align-items: center; gap: 6px; font-size: var(--text-sm); color: var(--fg-dim); overflow-wrap: anywhere; }
+.status-glyph { display: inline-flex; flex: none; align-items: center; justify-content: center; width: 12px; }
+.succeeded { color: var(--state-done); }
+.status.is-failed { color: var(--danger); }
+.preview-meta { font-size: var(--text-xs); color: var(--fg-dim); overflow-wrap: anywhere; }
+.mono { font-family: var(--font-mono); }
+.section { display: flex; flex-direction: column; gap: 6px; }
+.section .section-title { flex-wrap: wrap; padding: 4px 0 0; }
+.inputs { display: flex; flex-wrap: wrap; gap: 4px; }
+.inputs .input { max-width: 100%; }
+/* The steps preview: small cards, filled by whether the job ran or failed each, and a tooltip. */
+.flow-frame { position: relative; }
+.flow { display: block; max-width: 100%; height: auto; }
+.flow-edge { fill: none; stroke: var(--fg-dim); stroke-width: 1.25; }
+.flow-edge.is-idle { stroke: var(--line-strong); }
+.flow g { cursor: pointer; }
+.flow-node { fill: transparent; stroke: var(--line-strong); stroke-width: 1; }
+.flow-node.is-ran { fill: var(--progress-done); stroke: var(--progress-done); }
+.flow-node.is-failed { fill: var(--danger); stroke: var(--danger); }
+.flow .is-hovered { stroke: var(--select-accent); stroke-width: 2; }
+.step-tip {
+  position: absolute;
+  z-index: 1;
+  max-width: 240px;
+  padding: 4px 7px;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  background: var(--bg);
+  box-shadow: var(--shadow-md);
+  font-size: var(--text-xs);
+  color: var(--fg-dim);
+  pointer-events: none;
+}
+.step-tip-name { overflow-wrap: anywhere; font-weight: 600; color: var(--fg); }

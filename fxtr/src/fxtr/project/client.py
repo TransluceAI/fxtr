@@ -55,6 +55,8 @@ from fxtr.core.entities import BoundID, FxtrEntityStorage
 from fxtr.core.entity_data import EntityID
 from fxtr.entity_defns.array import Array, ArrayType, ArrayTypeSpec, KeySpec
 from fxtr.experiment.workflows import Workflow
+from fxtr.project.config import Project
+from fxtr.project.environment import Environment
 from fxtr.runner.session import AttemptError
 
 JobID = NewType("JobID", uuid.UUID)
@@ -299,7 +301,15 @@ class ProjectClient(FxtrEntityStorage, abc.ABC):
     Entity storage is inherited: the client is the project's entity store. The methods below are
     the arrays, the jobs, and the cache. Keyword-only arguments follow the positional essentials
     everywhere, so a client may add options of its own after them.
+
+    Attributes:
+        project: The project that the client was opened for: its location and configuration.
+        environment: The environment that locates the project, pins its code, and runs git for
+            it.
     """
+
+    project: Project
+    environment: Environment
 
     # -- project arrays --
 
@@ -467,8 +477,8 @@ class ProjectClient(FxtrEntityStorage, abc.ABC):
         """
 
     @abc.abstractmethod
-    async def list_jobs(self) -> Sequence[JobSummary]:
-        """Every job, newest first."""
+    async def list_jobs(self, *, limit: int | None = None) -> Sequence[JobSummary]:
+        """Jobs, newest first: every job, or the newest ``limit``."""
 
     # -- job records --
 
@@ -484,7 +494,7 @@ class ProjectClient(FxtrEntityStorage, abc.ABC):
         """
 
     @abc.abstractmethod
-    async def import_job(self, path: Path, *, update: bool = False) -> JobID:
+    async def import_job(self, path: Path, *, update: bool = False, replace: bool = False) -> JobID:
         """Add the job a record file (written by :meth:`export_job`) holds to this project, with
         the entities it reaches, and return its id. The job arrives settled, as it was exported:
         ``succeeded``, or ``stopped`` and resumable here. Facts it shares with this project (the
@@ -496,14 +506,18 @@ class ProjectClient(FxtrEntityStorage, abc.ABC):
             update: Whether a job this project has already may be brought up to date from a later
                 record of it. The record must contain everything this project knows of the job
                 (each of its job attempts, each of its facts, equal); what it adds is added, and
-                nothing is removed. Without it, a job this project has is refused.
+                nothing is removed. Without it or ``replace``, a job this project has is refused.
+            replace: Whether the record replaces the copy of the job this project has, for a job
+                resumed both here and where the record came from. This removes the copy's job
+                attempts that the record lacks, with their events and logs. Their step results
+                stay in the step cache, and a new job can reuse them.
 
         Raises:
             ImportRefusedError: If the file is not a job record this fxtr reads; if a commit its
                 results were produced at is not in this project's repository; if the job is
-                already here and ``update`` is not given; if, with ``update``, a process holds the
-                job here or the record lacks something this project knows of it; or if a fact it
-                shares with this project differs.
+                already here and neither ``update`` nor ``replace`` is given; if, with either, a
+                process holds the job here; if, with ``update``, the record lacks something this
+                project knows of it; or if a fact it shares with this project differs.
         """
 
     async def run(

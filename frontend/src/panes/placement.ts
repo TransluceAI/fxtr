@@ -27,7 +27,8 @@ export interface Geometry {
   panelHeight: (panelId: string) => number
 }
 
-function estimateHeight(address: Address | null): number {
+/** How tall a panel at `address` is likely to be, before it renders. */
+export function estimateHeight(address: Address | null): number {
   switch (address?.location?.root) {
     case 'step':
       return address.location.path.length > 1 ? 240 : 360

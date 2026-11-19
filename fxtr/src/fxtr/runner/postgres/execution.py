@@ -137,8 +137,11 @@ into one view open a ``snapshot=True`` transaction and never write.
 Every function does one logical thing against the database given a
 :class:`~fxtr.runner.postgres.database.Transaction`, never opens one, and checks its own
 preconditions inside it. Transitions that change what is pending wake the relevant topics on commit
-(:meth:`~fxtr.runner.postgres.database.Transaction.wake`): a job's topic when something of the job
-changed, a cache key's topic when its current attempt ended or the key was cleared.
+(:meth:`~fxtr.runner.postgres.database.Transaction.wake`): an invocation's topic when an attempt
+of it ended, a cache key's topic when its current attempt ended or the key was cleared, a job
+attempt's topic when the job's active job attempt changed, and a job's topic when anything of the
+job changed. The first three are what an attempt waiting on targets listens to, each attempt only
+to its own targets'; the last is for a waiter on the whole job (see :func:`job_topic`).
 
 **How to read this module.** After the errors and record types: *job attempts and the lease*
 (create, find the active one, the row lock, heartbeat, evict, cancel);
@@ -159,7 +162,8 @@ from datetime import datetime, timedelta
 from typing import Any, Literal
 
 from frozendict import frozendict
-from sqlalchemy import Row, and_, case, func, null, or_, select, text, tuple_, update
+from sqlalchemy import Row, and_, any_, case, cast, func, null, or_, select, text, tuple_, update
+from sqlalchemy.dialects.postgresql import ARRAY
 
 from fxtr.core.entities import BoundID
 from fxtr.core.entity_data import EntityID, cid_from_str, cid_to_str
@@ -210,8 +214,25 @@ type InvocationState = Literal["queued", "running", "completed", "failed", "inte
 
 
 def job_topic(job_id: JobID) -> str:
-    """The wake topic set when something of a job changes state."""
+    """The wake topic set when something of a job changes state: what a waiter on the whole job
+    listens to. Every attempt of the job starting or ending sets it, so nothing that is itself
+    one of many in a job waits on it (see :func:`job_attempt_topic` and
+    :func:`invocation_topic`)."""
     return f"job:{job_id}"
+
+
+def job_attempt_topic(job_id: JobID) -> str:
+    """The wake topic set when a job's active job attempt changes: one is created, settled,
+    cancelled, or evicted. That is when what is pending under it stops or starts being pending
+    (:func:`status`, :func:`step_status`), so it is what an attempt waiting on targets listens to
+    beside the targets' own topics."""
+    return f"job-attempt:{job_id}"
+
+
+def invocation_topic(invocation_id: InvocationID) -> str:
+    """The wake topic set when an attempt of an invocation ends, in whatever state: with the
+    invocation's result, or failed, interrupted, or abandoned."""
+    return f"invocation:{invocation_id}"
 
 
 def step_topic(cache_key: str) -> str:
@@ -617,6 +638,7 @@ async def create_job_attempt(
         )
     )
     tx.wake(job_topic(job_id))
+    tx.wake(job_attempt_topic(job_id))
     return await get_job_attempt(tx, job_attempt_id)
 
 
@@ -772,6 +794,7 @@ async def evict(
         .values(state=settle_as, settled_at=func.now())
     )
     tx.wake(job_topic(job_attempt.job_id))
+    tx.wake(job_attempt_topic(job_attempt.job_id))
     return closed
 
 
@@ -801,6 +824,7 @@ async def cancel(
     if settled.rowcount == 0:
         raise NotCancellableError(f"Job attempt {job_attempt.id} is not active")
     tx.wake(job_topic(job_attempt.job_id))
+    tx.wake(job_attempt_topic(job_attempt.job_id))
     if hard:
         await evict(tx, job_attempt, f"cancelled: {reason}", settle_as="cancelled")
 
@@ -885,8 +909,9 @@ async def start_attempt(
     """Start one unit of due work under the job attempt: insert its attempt ``running`` and hand
     back what running it needs. Idempotent and safe to call on stale information: returns
     ``None`` when there is nothing to start after all (the job attempt is no longer active or was
-    evicted, the invocation finished or is running, the job attempt already has a failed attempt
-    at the step's key, the step request resolved to something other than running it, or another
+    evicted, the invocation finished or is running, the job attempt already tried the invocation
+    and its attempt ended other than abandoned, the job attempt already has a failed attempt at
+    the step's key, the step request resolved to something other than running it, or another
     process took the cache entry first).
 
     Takes the job attempt's row before inserting the attempt (:func:`lock_job_attempt`), so a
@@ -913,6 +938,26 @@ async def start_attempt(
             return await _start_step_attempt(tx, job_attempt, cache_key)
 
 
+async def _tried_here(
+    tx: Transaction, job_attempt_id: JobAttemptID, invocation_id: InvocationID
+) -> bool:
+    """Whether the job attempt already ran an attempt of the invocation that ended other than
+    abandoned: it tries each invocation once, plus replacements for abandonment (``pending_work``).
+    A request to start it that was queued before that attempt ended is stale."""
+    row = (
+        await tx.execute(
+            select(attempts.c.id)
+            .where(
+                attempts.c.owner_job_attempt_id == job_attempt_id,
+                attempts.c.invocation_id == invocation_id,
+                attempts.c.state.not_in(("running", "abandoned")),
+            )
+            .limit(1)
+        )
+    ).first()
+    return row is not None
+
+
 async def _start_workflow_attempt(
     tx: Transaction,
     job_attempt: JobAttemptRecord,
@@ -920,6 +965,8 @@ async def _start_workflow_attempt(
 ) -> Started | None:
     invocation = await ledger.get_invocation(tx, invocation_id)
     if invocation.finished or invocation.job_id != job_attempt.job_id:
+        return None
+    if await _tried_here(tx, job_attempt.id, invocation_id):
         return None
     attempt_id = AttemptID(str(uuid.uuid4()))
     row = (
@@ -1259,7 +1306,12 @@ async def _close(
                 else None,
                 finished_at=func.now(),
             )
-            .returning(attempts.c.kind, attempts.c.cache_key, job_attempts.c.job_id)
+            .returning(
+                attempts.c.kind,
+                attempts.c.cache_key,
+                attempts.c.invocation_id,
+                job_attempts.c.job_id,
+            )
         )
     ).first()
     if row is None:
@@ -1268,6 +1320,9 @@ async def _close(
         assert state != "interrupted", "step attempts fail or are abandoned, never interrupted"
         assert row.cache_key is not None
         tx.wake(step_topic(row.cache_key))
+    else:
+        assert row.invocation_id is not None
+        tx.wake(invocation_topic(InvocationID(row.invocation_id)))
     tx.wake(job_topic(JobID(row.job_id)))
     return True
 
@@ -1309,7 +1364,7 @@ async def settle(tx: Transaction, job_id: JobID) -> Settlement:
         state: JobAttemptState = "succeeded"
     else:
         due = tuple(await pending_work(tx, job_attempt))
-        if due or await _job_has_running_attempt(tx, job_id):
+        if due or await job_has_running_attempt(tx, job_id):
             return Settlement(None, due)
         state = "stopped"
     settled = await tx.execute(
@@ -1319,11 +1374,12 @@ async def settle(tx: Transaction, job_id: JobID) -> Settlement:
     )
     if settled.rowcount == 0:
         return Settlement(None, due)
+    tx.wake(job_attempt_topic(job_id))
     return Settlement(await get_job_attempt(tx, job_attempt.id))
 
 
-async def _job_has_running_attempt(tx: Transaction, job_id: JobID) -> bool:
-    """Whether any attempt owned by any of the job's job attempts is running (workflow or step)."""
+async def job_has_running_attempt(tx: Transaction, job_id: JobID) -> bool:
+    """Whether any attempt owned by this job is running, including after a soft cancel."""
     row = (
         await tx.execute(
             select(attempts.c.id)
@@ -1661,25 +1717,70 @@ async def status(tx: Transaction, job_id: JobID, invocation: InvocationRecord) -
     Every stop reported here is caused by something other than the asking attempt, so the asking
     attempt is interrupted by it, never failed.
     """
-    if invocation.result is not None:
-        return Done(invocation.result)
+    return (await statuses(tx, job_id, [invocation]))[invocation.id]
+
+
+async def statuses(
+    tx: Transaction, job_id: JobID, invocations: Collection[InvocationRecord]
+) -> dict[InvocationID, TargetStatus]:
+    """:func:`status` of each of the invocations, by id, in two queries whatever their number:
+    how the evaluator judges every child a pass waits on."""
+    judged: dict[InvocationID, TargetStatus] = {}
+    unfinished: dict[InvocationID, InvocationRecord] = {}
+    for invocation in invocations:
+        if invocation.result is not None:
+            judged[invocation.id] = Done(invocation.result)
+        else:
+            unfinished[invocation.id] = invocation
+    if not unfinished:
+        return judged
     job_attempt = await active_job_attempt(tx, job_id)
     if job_attempt is None:
-        return Stopped("no active job attempt")
-    running = await _running_attempt(tx, invocation.id)
-    if running is not None:
-        return Pending(running.id)
-    owned = [
-        a
-        for a in await list_attempts(tx, invocation.id)
-        if a.owner_job_attempt_id == job_attempt.id
-    ]
-    last = owned[-1] if owned else None
-    if last is not None and last.state == "failed":
-        return Stopped(f"child invocation {invocation.pathname!r} failed", error=last.error)
-    if last is not None and last.state == "interrupted":
-        return Stopped(f"child invocation {invocation.pathname!r} interrupted: {last.reason}")
-    return Pending()  # due: the owning process will start it
+        return judged | {id: Stopped("no active job attempt") for id in unfinished}
+    # What decides each: its running attempt, else the last attempt this job attempt owns.
+    rows = (
+        await tx.execute(
+            select(
+                attempts.c.id,
+                attempts.c.invocation_id,
+                attempts.c.state,
+                attempts.c.error,
+                attempts.c.reason,
+            )
+            .where(
+                attempts.c.invocation_id
+                == any_(cast(list(unfinished), ARRAY(attempts.c.invocation_id.type))),
+                or_(
+                    attempts.c.state == "running",
+                    attempts.c.owner_job_attempt_id == job_attempt.id,
+                ),
+            )
+            .order_by(attempts.c.started_at, attempts.c.id)
+        )
+    ).all()
+    running: dict[InvocationID, AttemptID] = {}
+    last: dict[InvocationID, Row[Any]] = {}
+    for row in rows:
+        invocation_id = InvocationID(row.invocation_id)
+        if row.state == "running":
+            running[invocation_id] = AttemptID(str(row.id))
+        else:
+            last[invocation_id] = row  # owned by this job attempt; the rows are oldest first
+    for invocation_id, invocation in unfinished.items():
+        ended = last.get(invocation_id)
+        if invocation_id in running:
+            judged[invocation_id] = Pending(running[invocation_id])
+        elif ended is not None and ended.state == "failed":
+            judged[invocation_id] = Stopped(
+                f"child invocation {invocation.pathname!r} failed", error=_error(ended.error)
+            )
+        elif ended is not None and ended.state == "interrupted":
+            judged[invocation_id] = Stopped(
+                f"child invocation {invocation.pathname!r} interrupted: {ended.reason}"
+            )
+        else:
+            judged[invocation_id] = Pending()  # due: the owning process will start it
+    return judged
 
 
 async def step_status(tx: Transaction, job_id: JobID, cache_key: str) -> TargetStatus:
@@ -2112,14 +2213,15 @@ def _error(value: Any) -> AttemptError | None:
 def _job_attempt_query() -> Any:
     """The job attempt columns with its fact's (which code, when created), the database's clock,
     so freshness is judged against the same clock the heartbeats are written with, and the job
-    attempt's position among its job's (``seq``), counted in creation order over the job's job
-    attempt facts (an imported history included)."""
+    attempt's position among its job's (``seq``), counted in creation order over the job's own job
+    attempt facts (an imported history included; not facts only another job's record brought)."""
     fact = job_attempt_provenance
     earlier = fact.alias("earlier")
     seq = (
         select(func.count())
         .where(
             earlier.c.job_id == fact.c.job_id,
+            ~earlier.c.from_other_job,
             tuple_(earlier.c.created_at, earlier.c.id) <= tuple_(fact.c.created_at, fact.c.id),
         )
         .correlate(fact)
@@ -2242,6 +2344,9 @@ __all__ = [
     "guard_step",
     "heartbeat",
     "invocation_state",
+    "invocation_topic",
+    "job_attempt_topic",
+    "job_has_running_attempt",
     "job_topic",
     "list_attempts",
     "list_cache_entries",
@@ -2255,6 +2360,7 @@ __all__ = [
     "select_cache_entries",
     "start_attempt",
     "status",
+    "statuses",
     "settle",
     "step_status",
     "step_statuses",

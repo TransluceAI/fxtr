@@ -24,17 +24,41 @@ from behaviors.interfaces.context_policies import (
     UserSimulator,
     UserSimulatorSession,
 )
+from behaviors.interfaces.dialect_codecs import (
+    AdaptedRequest,
+    DecodedRequest,
+    DialectCodec,
+    HarnessSideCodec,
+    ModelSideCodec,
+    Route,
+    RoutingError,
+    SseDecoder,
+)
 from behaviors.interfaces.model_apis import (
+    CodecModelAPI,
+    DescribedModelAPI,
     ModelAPI,
     ModelCallFailedError,
     ModelError,
     ModelProvider,
     StreamingModelAPI,
+    WrappingModelAPI,
+    describe,
 )
 from behaviors.interfaces.projections import AgentRunProjection, TranscriptProjection
 
 __all__ = [
     "AgentRunProjection",
+    "CodecModelAPI",
+    "AdaptedRequest",
+    "DecodedRequest",
+    "DescribedModelAPI",
+    "DialectCodec",
+    "HarnessSideCodec",
+    "ModelSideCodec",
+    "Route",
+    "RoutingError",
+    "SseDecoder",
     "ContextPolicy",
     "ContextPolicySession",
     "ModelCallFailedError",
@@ -61,4 +85,6 @@ __all__ = [
     "TranscriptProjection",
     "UserSimulator",
     "UserSimulatorSession",
+    "WrappingModelAPI",
+    "describe",
 ]

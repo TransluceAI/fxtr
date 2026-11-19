@@ -1,6 +1,16 @@
 export { EntityDataError, FxtrViewError, ShellFault } from "./errors";
 export { EntityID, idFromJson, idKey, idToJson, isEntityID, shortCid, type EntityIDJson, type JsonValue } from "./ids";
-export { TYPE_KEY, isDataMap, isEntityData, typeNameOf, type DataMap, type DataValue, type EntityData } from "./data";
+export {
+  TYPE_KEY,
+  isDataMap,
+  isEntityData,
+  isPartial,
+  markPartial,
+  typeNameOf,
+  type DataMap,
+  type DataValue,
+  type EntityData,
+} from "./data";
 export {
   ARRAY_TYPE,
   fieldOf,
@@ -25,7 +35,7 @@ export {
   type InvocationRef,
   type Spawn,
 } from "./invocation";
-export { type EntityViewProps, type InvocationViewProps, type ViewSlot } from "./slots";
+export { type EntityViewProps, type InvocationViewProps, type ValueViewProps, type ViewSlot } from "./slots";
 export {
   ANY_SUBJECT_TYPE,
   declareView,
@@ -66,6 +76,8 @@ export {
   InvocationPanel,
   EntityPanel,
   PagePanel,
+  PartialEntityInline,
+  PartialEntityPanel,
   declarePage,
   page,
   type HoverPreviewProps,
@@ -73,6 +85,8 @@ export {
   type PagePanelProps,
   type LinkProps,
   type EntityPanelProps,
+  type PartialEntityInlineProps,
+  type PartialEntityPanelProps,
   type StorageAtom,
 } from "./builtin_slots";
 export {

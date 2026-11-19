@@ -1,6 +1,6 @@
 /**
  * The mutable half of what the UI loads — workflow invocations, step pins, and the
- * levels built from payload-free overviews — kept current while a job runs. Full invocations
+ * levels built from payload-free overviews — kept current as a job changes. Full invocations
  * are separate entries loaded by custom renderers. Output pages belong to their mounted panes.
  *
  * **Entries.** Each record lives in one `Entry`, created on first use and kept for the page. Its
@@ -36,6 +36,9 @@ import { retryFailedResources } from './resources'
 
 /** How often a live job is polled. */
 export const POLL_INTERVAL = 1500
+/** How often it is polled instead while a step on screen is running and publishing previews
+ *  (`ctx.preview`), so the preview reads as a stream. */
+export const PREVIEW_POLL_INTERVAL = 400
 /** How long to wait after a failed poll before trying again. */
 const BACKOFF_INTERVAL = 5000
 
@@ -187,6 +190,27 @@ export function overviewEntry(jobId: string, pathname: string): Entry<OverviewSn
   return found.entry
 }
 
+/**
+ * An invocation's overview for a reader outside the job's view (the job picker's preview), read
+ * through the store, so that opening the job finds it loaded. Existing entries are revalidated:
+ * even a settled invocation may have resumed while unwatched. A successful read publishes into
+ * the same entry, including when retrying a failed first load.
+ */
+export async function readOverview(jobId: string, pathname: string): Promise<LevelOverview> {
+  const entry = overviewEntry(jobId, pathname)
+  const state = entry.state
+  if (state.status === 'pending') {
+    await state.promise
+    const loaded = entry.state
+    if (loaded.status === 'ready') return loaded.value.invocation
+    if (loaded.status === 'error') throw loaded.error
+  }
+  const snapshot = await fetchOverviewSnapshot(jobId, pathname, entry.value?.invocation)
+  entry.publish(snapshot)
+  kick()
+  return snapshot.invocation
+}
+
 export function useOverviewSnapshot(jobId: string, pathname: string): OverviewSnapshot {
   const entry = overviewEntry(jobId, pathname)
   useWatch(entry)
@@ -315,7 +339,8 @@ let timer: number | null = null
 let inFlight = false
 let forceNext = false
 
-/** Poll the job while the calling component (the job's view) is mounted. */
+/** Keep watched records current while the job view is mounted. Settled records refresh when
+ *  `Jobs` pokes them on its summary timer or a launch event. */
 export function useLivePolling(jobId: string) {
   useEffect(() => {
     startPolling(jobId)
@@ -407,7 +432,11 @@ async function tick() {
     await poll(jobId, watchedInvocations, watchedSteps, overviewChanged || force)
     if (polledJob === jobId) setStatus({ reconnecting: false })
     inFlight = false
-    if (polledJob === jobId) schedule(forceNext ? 0 : POLL_INTERVAL)
+    // Decided from what this poll fetched, so the first preview speeds up the very next poll.
+    const previewing = watchedSteps.some(
+      (found) => isLive(runStateOf(found.entry.value!.state)) && found.entry.value!.preview !== null,
+    )
+    if (polledJob === jobId) schedule(forceNext ? 0 : previewing ? PREVIEW_POLL_INTERVAL : POLL_INTERVAL)
   } catch {
     inFlight = false
     if (polledJob === jobId) {

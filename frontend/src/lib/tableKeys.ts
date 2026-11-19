@@ -21,10 +21,10 @@ export interface ChipPlace {
   position: number
 }
 
-/** The rows of a table body that can hold chips: its data rows, less a failed invocation's
- *  (whose cells are not the columns'). */
+/** The rows of a table body that can hold chips: its data rows, less a failed invocation's and
+ *  a running one's showing its preview (whose cells are not the columns'). */
 function chipRows(body: HTMLTableSectionElement): HTMLTableRowElement[] {
-  return Array.from(body.querySelectorAll<HTMLTableRowElement>('tr[data-row]:not([data-failure])'))
+  return Array.from(body.querySelectorAll<HTMLTableRowElement>('tr[data-row]:not([data-failure]):not([data-preview])'))
 }
 
 function chipsIn(cell: Element): HTMLElement[] {

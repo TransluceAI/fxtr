@@ -78,7 +78,7 @@ beforeEach(async () => {
   )
   host = document.createElement('div')
   document.body.append(host)
-  disconnect = connectViewerEvents(() => (socket = new Socket()))
+  disconnect = connectViewerEvents('/api/events', () => (socket = new Socket()))
   await render()
 })
 
@@ -116,13 +116,17 @@ async function click(label: string) {
 
 it('a page that follows launches switches to each one, says why, and can go back', async () => {
   expect(window.location.hash).toBe('#job=job-a')
+  // Each switch of job is an entry of the tab's history.
+  const entries = window.history.length
   await launch('job-b')
   expect(window.location.hash).toBe('#job=job-b')
+  expect(window.history.length).toBe(entries + 1)
   expect(toasts()).toEqual([
     'showing the new jobwf-job-b was just launched, so this tab switched to itgo back',
   ])
   await click('go back')
   expect(window.location.hash).toBe('#job=job-a')
+  expect(window.history.length).toBe(entries + 2)
   expect(toasts()).toEqual([])
 
   // Going back is a pick: the page stays on its job, and offers the next launch instead.

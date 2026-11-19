@@ -11,7 +11,7 @@ import { LevelStateContext, useLevelState, type LevelState } from '../lib/levelS
 import type { Params } from '../panes/address'
 import type { PanelInstance } from '../panes/columns'
 import type { ColumnsState } from '../panes/useColumns'
-import type { Target } from '../panes/resolve'
+import type { Resolution, Target } from '../panes/resolve'
 import { StepPanel } from './StepPanel'
 import { PathMissingContext, PathValue } from './PathValue'
 import { panelBase } from '../lib/linkBase'
@@ -35,6 +35,14 @@ interface Props {
  * their slice, and the level of the node it shows as theirs; a pick made inside (a slice control)
  * sets them (`ColumnsState.setBindings`).
  */
+/** Whether the view a panel shows autoscrolls: true for an entity opened at params, such as a
+ *  transcript opened at a cited message, whose view scrolls to that message. The panel must not
+ *  put the old scroll position back then (`useKeepScroll`), since that would undo the view's own
+ *  scroll. */
+export function viewAutoscrolls(resolution: Resolution): boolean {
+  return resolution.target?.kind === 'entity' && Object.keys(resolution.viewParams).length > 0
+}
+
 export function DetailPane({ jobId, panel, columns, run }: Props) {
   const level = useLevelState()
   const state = columns.stateOf(panel.id)
@@ -64,7 +72,7 @@ export function DetailPane({ jobId, panel, columns, run }: Props) {
   }), [level, env, selected, levelPath, panel.id, setBindings])
   // A click in a parent that navigates this panel, or changes its params, keeps where it was scrolled.
   const rootRef = useRef<HTMLDivElement>(null)
-  useKeepScroll(rootRef, resolution.text)
+  useKeepScroll(rootRef, resolution.text, { enabled: !viewAutoscrolls(resolution) })
   const { namesNothing } = columns
   const missing = useCallback(() => namesNothing(panel.id, resolution.text), [namesNothing, panel.id, resolution.text])
   const setStepView = (view: string) => {

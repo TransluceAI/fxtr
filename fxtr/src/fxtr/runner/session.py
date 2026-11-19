@@ -91,6 +91,7 @@ from frozendict import frozendict
 from fxtr.core.entities import BoundID
 from fxtr.core.entity_data import EntityID, FxtrDataValue, StorableFxtrDataValue
 from fxtr.entity_defns.array import Array, ArrayType, CombineJoin, Join, KeyValue
+from fxtr.experiment.steps import PreviewSource
 
 AttemptID = NewType("AttemptID", str)
 """Identifies one attempt at running a user function; minted by the host."""
@@ -410,6 +411,18 @@ class StepRunSession(RunSessionBase, Protocol):
     async def complete_step(self, result: Array[Any]) -> None:
         """Record the step's result, which the host stores: the array the step produced, whose
         type the worker has checked against the step's signature.
+
+        Raises:
+            AttemptClosedError: If the attempt can no longer act.
+        """
+        ...
+
+    def preview_step(self, value: PreviewSource) -> None:
+        """Replace the attempt's preview: a value showing the result as it is being produced.
+
+        Synchronous and fire-and-forget, like :meth:`log_message`: only the latest preview is
+        kept, and the host may persist it less often than it is called. Pure observability; a
+        session that cannot carry previews may drop them.
 
         Raises:
             AttemptClosedError: If the attempt can no longer act.

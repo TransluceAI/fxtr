@@ -58,7 +58,7 @@ export function EntityLinkImpl({ id, place, to, params }: EntityLinkImplProps) {
           draggable
           onDragStart={onDragStart}
         >
-          <EntityLabel cid={id.cid} />
+          <EntityLabel id={id} />
         </button>
       }>
       {previewOpen && <RenderEntity slot={EntityHoverPreview} id={id} />}

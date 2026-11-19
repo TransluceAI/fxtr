@@ -7,6 +7,7 @@ import json
 import time
 import uuid
 from dataclasses import replace
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -47,6 +48,8 @@ from fxtr.runner.postgres.debug_web.browse import (  # noqa: E402
     run_page,
 )
 from fxtr.runner.postgres.debug_web.contracts import OutputSource, state_counts  # noqa: E402
+from fxtr.runner.postgres.debug_web.reader import ViewerReader  # noqa: E402
+from fxtr.runner.postgres.debug_web.scope import JobScope  # noqa: E402
 from fxtr.runner.postgres.entities import PostgresEntityStorage  # noqa: E402
 from fxtr.runner.postgres.ledger import Emission  # noqa: E402
 from fxtr.runner.postgres.schema import (  # noqa: E402
@@ -61,6 +64,11 @@ from fxtr.runner.postgres.status_queries import StatusQueries  # noqa: E402
 from fxtr.runner.session import AttemptError  # noqa: E402
 
 pytestmark = pytest.mark.anyio
+
+
+def a_reader(database: Database) -> ViewerReader:
+    """A reader of every job in the database, as ``fxtr view`` has."""
+    return ViewerReader(database, stale_after=timedelta(minutes=5), scope=JobScope.all())
 
 
 def producer(job: Any) -> Any:
@@ -103,9 +111,9 @@ async def test_run_revisions_detect_swapped_targets_without_refreshing_unrelated
             return next(node for node in overview["nodes"] if node["identity"] == identity)
 
         run_id, other_id = run.content_id().cid_str(), other_run.content_id().cid_str()
-        before = await level_overview(client, job, "root")
+        before = await level_overview(client.database, job, "root")
         await start_invocation(database, job, children[0])
-        after = await level_overview(client, job, "root")
+        after = await level_overview(client.database, job, "root")
         assert before is not None and after is not None
         assert after["version"] != before["version"]
         assert node(after, run_id)["version"] != node(before, run_id)["version"]
@@ -117,8 +125,8 @@ async def test_run_revisions_detect_swapped_targets_without_refreshing_unrelated
             await client.jobs.cancel(job, hard=True)
             await client.jobs.resume(job, owner=OWNER, code_version=await a_code_version(database))
             await start_invocation(database, job, child)
-            snapshots.append(await level_overview(client, job, "root"))
-            pages.append(await run_page(client, job, "root", run_id, {}, 25, None))
+            snapshots.append(await level_overview(client.database, job, "root"))
+            pages.append(await run_page(client.database, job, "root", run_id, {}, 25, None))
         left, right = snapshots
         assert left is not None and right is not None
         # Each resume's job attempt is due to run every unfinished invocation it has not tried.
@@ -127,7 +135,7 @@ async def test_run_revisions_detect_swapped_targets_without_refreshing_unrelated
         assert node(left, run_id)["counts"] == node(right, run_id)["counts"]
         assert node(left, run_id)["version"] != node(right, run_id)["version"]
         assert left["version"] != right["version"]
-        again = await level_overview(client, job, "root")
+        again = await level_overview(client.database, job, "root")
         assert again is not None and again["asOf"] >= right["asOf"]
         assert {**again, "asOf": None} == {**right, "asOf": None}
 
@@ -140,7 +148,7 @@ async def test_overview_reports_run_activity_and_failures_by_type(database: Data
         run_id = run.content_id().cid_str()
 
         async def run_node():
-            overview = await level_overview(client, job, "root")
+            overview = await level_overview(client.database, job, "root")
             assert overview is not None
             node = next(node for node in overview["nodes"] if node["identity"] == run_id)
             assert node["counts"] is not None and node["activity"] is not None
@@ -213,11 +221,12 @@ async def test_job_page_batches_mixed_statuses_and_single_reads_ignore_attempt_h
 
         event.listen(database.engine.sync_engine, "before_cursor_execute", record)
         try:
-            page = await job_page(client, 25, None)
-            assert len(statements) == 3
+            page = await job_page(a_reader(client.database), 25, None)
             assert len(page["items"]) == 25
             summaries = {item["id"]: item for item in page["items"]}
             assert summaries[str(job)]["state"] == "stopped" and summaries[str(job)]["failed"]
+            assert len(summaries[str(job)]["failedSteps"]) == 1
+            assert summaries[str(other)]["failedSteps"] == []
             assert (
                 summaries[str(other)]["state"] == "running" and not summaries[str(other)]["failed"]
             )
@@ -302,7 +311,8 @@ async def test_step_projection_matches_failures_conflicts_ready_and_bound(databa
             act = await execution.guard_step(tx, step_b.attempt.id, ending=True)
             await client.entities.flush(tx)
             await execution.complete_step(tx, act, result)
-        assert (await parity(client, job_b)).steps["shared"].state == "running"  # ready to bind
+        # A result on offer is the step's result before the job takes it.
+        assert (await parity(client, job_b)).steps["shared"].state == "completed"
         await take(database, root_b, "shared")
         assert (await parity(client, job_b)).steps["shared"].state == "completed"
         assert (await parity(client, job_a)).steps["shared"].state == "failed"
@@ -311,6 +321,216 @@ async def test_step_projection_matches_failures_conflicts_ready_and_bound(databa
         # Without an active job attempt, a job still shows what stopped it.
         assert (await parity(client, job_a)).steps["shared"].state == "failed"
         assert (await parity(client, job_c)).steps["shared"].state == "conflict"
+
+
+async def test_a_step_finishing_after_its_workflow_attempt_ends_shows_its_result(
+    database: Database,
+):
+    """A step still running when the workflow attempt waiting on it ends runs to the end and
+    leaves its result on offer. The job has not taken it, and the step shows as ``completed``
+    all the same, with the result it produced, in its description, its invocation's, and its
+    spawn's row: while the job attempt is still active (other steps of it are running) and once
+    it has settled. A different request at the key is in conflict with that result and shows
+    none."""
+    from fxtr.core import codec
+    from fxtr.runner.postgres.debug_web.output import OutputStore
+
+    async with a_client(database) as client:
+        job = await a_job(database)
+        root = await start_root(database, job)
+        other, other_root = await running_root(database)
+        source = SourceArray(name="x", array=await client.entities.store(Array.scalar(1, int)))
+        run = RunStep(
+            name="s",
+            step_name="s",
+            inputs=frozendict({"x": source.content_id()}),
+            map_over=("k",),
+            join="exact",
+            replicas=frozendict(),
+            cache_key_prefix="root/s",
+            type=ArrayType.of(("[k: int]", int)),
+        )
+        late, unrun = "root/s[k:0]", "root/s[k:1]"
+        same = await a_request(database, 1)
+        async with database.transaction() as tx:
+            act = await execution.guard(tx, root.attempt_id)
+            await client.entities.flush(tx)
+            await ledger.record_emissions(
+                tx, act, [Emission(source, ArrayType.of(int)), Emission(run, run.type)]
+            )
+            await ledger.record_step_spawns(tx, act, run.content_id(), {(0,): late, (1,): unrun})
+            await ledger.record_step_requests(tx, act, {late: same, unrun: same}, "s")
+        started = await start_step(database, job, late)
+        assert started is not None
+        await request(database, other, other_root, late, await a_request(database, 2))
+        result = await client.entities.store(Array.scalar(42, int))
+        async with database.transaction() as tx:
+            act = await execution.guard_step(tx, started.attempt.id, ending=True)
+            await client.entities.flush(tx)
+            await execution.complete_step(tx, act, result)
+        # The workflow attempt that requested the step has ended, so nothing of the job takes the
+        # result. Its job attempt is still active, as it is while other steps of it run.
+        await set_attempt_state(database, root.attempt_id, "interrupted")
+        status = await parity(client, job)
+        assert status.steps[late].state == "completed" and status.steps[unrun].state == "queued"
+        active = (await client.jobs.describe(job)).steps[late]
+        assert active.result is not None and active.result.entity_id == result.entity_id
+        assert not active.result_taken
+
+        # The job stops, still without having taken the result.
+        await set_job_attempt_state(database, job, "stopped")
+        await set_job_attempt_state(database, other, "stopped")
+
+        status = await parity(client, job)
+        assert status.steps[late].state == "completed" and status.steps[unrun].state == "stopped"
+        steps = (await client.jobs.describe(job)).steps
+        assert steps[late].binding is None and isinstance(steps[late].status, execution.Ready)
+        assert not steps[late].result_taken and not steps[unrun].result_taken
+        offered, shown = steps[late].offered_result, steps[late].result
+        assert offered is not None and offered.entity_id == result.entity_id
+        assert shown is not None and shown.entity_id == result.entity_id
+        produced = steps[late].result_provenance
+        assert produced is not None and produced.job_attempt.job_id == job
+        assert steps[unrun].result is None and steps[unrun].result_provenance is None
+        detail = await client.jobs.describe_invocation(job, "root")
+        assert detail is not None
+        in_detail = detail.step_results[late]
+        assert in_detail is not None and in_detail.entity_id == result.entity_id
+        assert detail.step_results[unrun] is None
+        assert detail.step_states == {late: "completed", unrun: "stopped"}
+
+        store = OutputStore(client.database, JobScope.all())
+        try:
+            page = await store.invocation_page(job, "root", run.content_id().cid_str(), {})
+        finally:
+            store.close()
+        finished, never_ran = page["items"]
+        assert finished["spawn"]["state"] == "completed"
+        assert finished["spawn"]["resultCid"] == result.entity_id.cid_str()
+        assert finished["rowCount"] == 1 and finished["value"] is not None
+        assert codec.decode(base64.b64decode(finished["value"])) == 42
+        assert never_ran["spawn"]["state"] == "stopped" and never_ran["spawn"]["resultCid"] is None
+
+        # The result answers a different request: nothing of the other job's to show.
+        theirs = (await client.jobs.describe(other)).steps[late]
+        assert theirs.display.state == "conflict"
+        assert theirs.offered_result is None and theirs.result is None
+
+        # Once the job runs again and takes the result, it is the job's: the same result, bound.
+        async with database.transaction() as tx:
+            await execution.resume(
+                tx, job, owner=OWNER, code_version=await a_code_version(database)
+            )
+        assert (await parity(client, job)).steps[late].state == "completed"  # ready to bind
+        ready = (await client.jobs.describe(job)).steps[late].result
+        assert ready is not None and ready.entity_id == result.entity_id
+        restarted = await start_root(database, job)
+        await take(database, restarted.attempt_id, late)
+        bound = (await client.jobs.describe(job)).steps[late]
+        assert bound.display.state == "completed" and bound.offered_result is None
+        assert bound.binding is not None and bound.result is not None
+        assert bound.result.entity_id == result.entity_id and bound.result_taken
+
+
+async def test_a_step_still_running_under_a_cancelled_job_attempt_shows_as_running(
+    database: Database,
+):
+    """A job attempt cancelled gently lets its running steps finish. The policy has nothing
+    pending for it, and a step whose attempt is still running shows as ``running`` all the same,
+    with that attempt, in its description, its spawn's row, and its run's counts, so a viewer
+    goes on following it; one that never started shows as ``stopped``. When the attempt ends, the
+    step shows what it ended as: ``completed``, with the result left on offer, or ``stopped``,
+    with its attempt finished, when stopping the job's work abandons it."""
+    async with a_client(database) as client:
+        job = await a_job(database)
+        root = await start_root(database, job)
+        source = SourceArray(name="x", array=await client.entities.store(Array.scalar(1, int)))
+        run = RunStep(
+            name="s",
+            step_name="s",
+            inputs=frozendict({"x": source.content_id()}),
+            map_over=("k",),
+            join="exact",
+            replicas=frozendict(),
+            cache_key_prefix="root/s",
+            type=ArrayType.of(("[k: int]", int)),
+        )
+        finishes, abandoned, unrun = "root/s[k:0]", "root/s[k:1]", "root/s[k:2]"
+        requests = {
+            finishes: await a_request(database, 1),
+            abandoned: await a_request(database, 2),
+            unrun: await a_request(database, 3),
+        }
+        async with database.transaction() as tx:
+            act = await execution.guard(tx, root.attempt_id)
+            await client.entities.flush(tx)
+            await ledger.record_emissions(
+                tx, act, [Emission(source, ArrayType.of(int)), Emission(run, run.type)]
+            )
+            await ledger.record_step_spawns(
+                tx, act, run.content_id(), {(0,): finishes, (1,): abandoned, (2,): unrun}
+            )
+            await ledger.record_step_requests(tx, act, requests, "s")
+        first = await start_step(database, job, finishes)
+        second = await start_step(database, job, abandoned)
+        assert first is not None and second is not None
+
+        async def counts() -> Any:
+            overview = await level_overview(client.database, job, "root")
+            assert overview is not None
+            (node,) = [node for node in overview["nodes"] if node["counts"]]
+            return node["counts"]
+
+        # A gentle cancel: the job attempt settles, the workflow attempt waiting on the steps is
+        # interrupted, and the steps that run go on running.
+        job_attempt = await client.jobs.cancel(job)
+        await set_attempt_state(database, root.attempt_id, "interrupted")
+        status = await parity(client, job)
+        assert status.state == "stopped"
+        assert {key: step.state for key, step in status.steps.items()} == {
+            finishes: "running",
+            abandoned: "running",
+            unrun: "stopped",
+        }
+        steps = (await client.jobs.describe(job)).steps
+        assert isinstance(steps[finishes].status, execution.Stopped)
+        assert steps[finishes].display.attempt_id == first.attempt.id
+        running = steps[finishes].attempt
+        assert running is not None and running.state == "running" and running.finished_at is None
+        assert steps[unrun].attempt is None
+        assert await counts() == state_counts() | {"running": 2, "stopped": 1}
+        detail = await client.jobs.describe_invocation(job, "root")
+        assert detail is not None
+        assert detail.step_states == {finishes: "running", abandoned: "running", unrun: "stopped"}
+
+        # One runs to the end: its result is on offer, which the job has not taken.
+        result = await client.entities.store(Array.scalar(42, int))
+        async with database.transaction() as tx:
+            act = await execution.guard_step(tx, first.attempt.id, ending=True)
+            await client.entities.flush(tx)
+            await execution.complete_step(tx, act, result)
+        status = await parity(client, job)
+        assert status.steps[finishes].state == "completed"
+        assert status.steps[abandoned].state == "running"
+        finished = (await client.jobs.describe(job)).steps[finishes]
+        assert finished.result is not None and finished.result.entity_id == result.entity_id
+        assert not finished.result_taken
+
+        # Stopping the job's running work abandons the other: stopped, with its attempt finished.
+        async with database.transaction() as tx:
+            assert await execution.evict(tx, job_attempt, "stopped now", settle_as="cancelled") == [
+                second.attempt.id
+            ]
+        status = await parity(client, job)
+        assert {key: step.state for key, step in status.steps.items()} == {
+            finishes: "completed",
+            abandoned: "stopped",
+            unrun: "stopped",
+        }
+        stopped = (await client.jobs.describe(job)).steps[abandoned].attempt
+        assert stopped is not None and stopped.state == "abandoned"
+        assert stopped.finished_at is not None
+        assert await counts() == state_counts() | {"completed": 1, "stopped": 2}
 
 
 async def test_invocation_projection_follows_resume(database: Database):
@@ -361,7 +581,7 @@ async def test_overview_and_key_pages_at_100000_spawns(database: Database):
         event.listen(database.engine.sync_engine, "before_cursor_execute", record)
         try:
             statements.clear()
-            await level_overview(client, job, "root")
+            await level_overview(client.database, job, "root")
             baseline_queries = len(statements)
             # Bulk seed real relational targets without spending 100k runner executions on the
             # fixture.
@@ -386,7 +606,7 @@ async def test_overview_and_key_pages_at_100000_spawns(database: Database):
                 )
             statements.clear()
             started = time.monotonic()
-            overview = await level_overview(client, job, "root")
+            overview = await level_overview(client.database, job, "root")
             elapsed = time.monotonic() - started
             assert len(statements) == baseline_queries
             assert overview is not None
@@ -402,30 +622,38 @@ async def test_overview_and_key_pages_at_100000_spawns(database: Database):
             assert len(full_status.invocations) == 100_001
             assert full_status.invocations["child-99999"].state == "queued"
             node = run_node["identity"]
-            keys = await key_page(client, job, "root", node, "k", {}, "", 50, None)
+            keys = await key_page(client.database, job, "root", node, "k", {}, "", 50, None)
             assert len(keys["items"]) == 50 and keys["total"] == 100_000
             # What the viewer's key list reads: the first KEY_LIST_LIMIT values, and whether more.
-            listed = await key_page(client, job, "root", node, "k", {}, "", 1000, None)
+            listed = await key_page(client.database, job, "root", node, "k", {}, "", 1000, None)
             assert [item["value"] for item in listed["items"]] == list(range(1000))
             assert listed["next"] is not None
             with pytest.raises(ValueError, match="between 1 and 1000"):
-                await key_page(client, job, "root", node, "k", {}, "", 1001, None)
+                await key_page(client.database, job, "root", node, "k", {}, "", 1001, None)
             for offset in [99_980, 100_000]:
-                jumped = await key_page(client, job, "root", node, "k", {}, "", 25, None, offset)
+                jumped = await key_page(
+                    client.database, job, "root", node, "k", {}, "", 25, None, offset
+                )
                 assert jumped["offset"] == 99_975 and jumped["next"] is None
                 assert [item["value"] for item in jumped["items"]] == list(range(99_975, 100_000))
-            empty = await key_page(client, job, "root", node, "k", {}, "absent", 25, None, 50)
+            empty = await key_page(
+                client.database, job, "root", node, "k", {}, "absent", 25, None, 50
+            )
             assert empty["offset"] == 0 and empty["items"] == [] and empty["total"] == 0
-            page = await run_page(client, job, "root", node, {"k": 99999}, 50, None)
+            page = await run_page(client.database, job, "root", node, {"k": 99999}, 50, None)
             assert page["total"] == 1 and page["items"][0]["key"] == [99999]
             for offset in [99_980, 100_000]:
-                jumped = await run_page(client, job, "root", node, {}, 25, None, offset=offset)
+                jumped = await run_page(
+                    client.database, job, "root", node, {}, 25, None, offset=offset
+                )
                 assert jumped["offset"] == 99_975 and jumped["next"] is None
                 assert [item["key"] for item in jumped["items"]] == [
                     [k] for k in range(99_975, 100_000)
                 ]
             with pytest.raises(ValueError, match="either an offset or a cursor"):
-                await run_page(client, job, "root", node, {}, 25, jumped["next"] or "x", offset=0)
+                await run_page(
+                    client.database, job, "root", node, {}, 25, jumped["next"] or "x", offset=0
+                )
             print(
                 f"100k overview: {elapsed:.3f}s, {baseline_queries} statements, "
                 f"{len(json.dumps(overview, default=str))} bytes"
@@ -506,8 +734,8 @@ async def test_viewer_reads_stay_linear_for_a_job_missing_from_planner_statistic
     async with a_client(database) as client:
         event.listen(database.engine.sync_engine, "before_cursor_execute", record)
         try:
-            overview = await level_overview(client, job, "root")
-            page = await run_page(client, job, "root", node, {}, 50, None)
+            overview = await level_overview(client.database, job, "root")
+            page = await run_page(client.database, job, "root", node, {}, 50, None)
         finally:
             event.remove(database.engine.sync_engine, "before_cursor_execute", record)
     assert overview is not None
@@ -573,7 +801,15 @@ async def test_dimension_pages_keep_values_and_cursor_when_other_selections_chan
 
         async def keys(dim="k", selection=None, search="", first=25, after=None):
             return await key_page(
-                client, job, "root", cid_to_str(node), dim, selection or {}, search, first, after
+                client.database,
+                job,
+                "root",
+                cid_to_str(node),
+                dim,
+                selection or {},
+                search,
+                first,
+                after,
             )
 
         assert (await keys())["items"] == [
@@ -659,7 +895,7 @@ async def test_current_output_batches_skip_empty_arrays_and_share_cached_cids(da
             "pathname": "root",
             "nodeId": run.content_id().cid_str(),
         }
-        store = OutputStore(client)
+        store = OutputStore(client.database, JobScope.all())
         statements: list[str] = []
 
         def record(_conn, _cursor, statement, _parameters, _context, _many):
@@ -744,7 +980,7 @@ async def test_invocation_pages_carry_results_and_filter_and_sort_on_every_cell(
                         "pathname": f"root/child[k:{k}]",
                     },
                 )
-        store = OutputStore(client)
+        store = OutputStore(client.database, JobScope.all())
         node = run.content_id().cid_str()
 
         async def page(**kwargs):
@@ -844,7 +1080,7 @@ async def test_output_selection_filters_inner_dims_and_lists_their_values(
             "pathname": "root",
             "nodeId": run.content_id().cid_str(),
         }
-        store = OutputStore(client)
+        store = OutputStore(client.database, JobScope.all())
         try:
 
             async def keys(source: OutputSource, selection: dict) -> list:

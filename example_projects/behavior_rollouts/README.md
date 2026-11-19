@@ -1,9 +1,23 @@
 # Behaviors rollout examples
 
-`scripted_rollout` uses a deterministic EchoAPI to demonstrate independent two-turn conversations.
-`openai_rollout` compares models over ten named, five-question sequences. Each sequence keeps
-its own conversation history; each model/sequence pair is a separate fxtr step. Rollouts are
-stored as behaviors `ChatRollout` entities and can be inspected and compared in the viewer.
+The project holds three experiments, each named for what it shows or asks:
+
+- `echo` uses a deterministic EchoAPI to demonstrate independent two-turn conversations, with no
+  provider calls.
+- `instructions_in_force` asks whether a model keeps to the instructions still in force as a
+  conversation sets, revises and withdraws them.
+- `belief_reinforcement` asks whether supporting a distressed user strengthens their
+  interpretation of events beyond the evidence. [`EXPERIMENT.md`](EXPERIMENT.md) describes it.
+
+`instructions_in_force` holds multi-turn conversations and judges whether the model kept to the
+instructions in force. Each of ten named sequences of user turns sets instructions early (a format, a
+length, a language, words to avoid, facts to keep) and later tempts the model to break one, adds
+or withdraws one, or makes a request that conflicts with one. Each model/sequence pair is a
+separate fxtr step with its own conversation history, stored as a behaviors `ChatRollout`. Each
+conversation is then turned into a `Transcript` and judged by behaviors' `judge`, by every judge
+you name, several times each. A judgment's `match` is true when the assistant violated an
+instruction in force, and its discussion cites the transcript by line. The workflow returns a
+report of the conversations, transcripts, judgments and verdicts.
 
 ## Setup and launch
 
@@ -40,17 +54,61 @@ and saving a renderer updates the open viewer without a reload. Manage jobs with
 the project's registered modules and stored inputs.
 
 ```bash
-uv run python launch_scripted.py
-uv run python launch_openai.py --model MODEL --model ANOTHER_MODEL
-uv run python launch_openai.py --model MODEL --question "What is a prime?" --question "Give an example."
+uv run python launch_echo.py
+uv run python launch_instructions_in_force.py --model MODEL --model ANOTHER_MODEL --judge JUDGE_MODEL --judge JUDGE_MODEL:high
+uv run python launch_instructions_in_force.py --model MODEL --judge JUDGE_MODEL --sequence never_say_party --judge-samples 1
+uv run python launch_instructions_in_force.py --model MODEL --judge JUDGE_MODEL --turn "Answer in French from now on." --turn "What is a prime?"
 ```
 
-The scripted example needs Postgres but makes no provider calls. It also picks each
+The echo example needs Postgres but makes no provider calls. It also picks each
 conversation's longest reply; open one in the viewer, and its link to the conversation marks that
-reply there. The OpenAI example requires
-`OPENAI_API_KEY`, accepts `--max-tokens` and `--concurrency`, and uses a fresh cache namespace on
-each launch. `--question` replaces the default dataset with one ordered sequence. The workflow's
-**compare** panel aligns two models' replies by turn and retains their system initialization.
+reply there.
+
+The instructions-in-force example uses a fresh cache namespace on each launch. `--model` and `--judge` are
+repeatable. Each is `MODEL`, or `MODEL:EFFORT` with a reasoning effort (`low`, `high`, …), so one
+model can be compared with itself at two efforts. A model is an OpenAI model unless it starts with
+`anthropic/`. The launcher requires `OPENAI_API_KEY`, and `ANTHROPIC_API_KEY` when an Anthropic
+model is named. Every judge gets the same instructions, rubric and output schema.
+`--judge-samples` (3 by default) sets how many times each judge judges each conversation. `--sequence NAME` holds only the named sequences,
+and `--turn` replaces them with one custom sequence of user turns. `--max-tokens` and
+`--judge-max-tokens` cap output per reply and per judge answer, reasoning included, and
+`--concurrency` caps the steps running at once. A run makes models × sequences conversations and
+models × sequences × judges × samples judgments: two models, two judges and three samples over the
+ten sequences is 20 conversations and 120 judgments.
+
+The workflow's views, in the viewer's list of custom views:
+
+- **overview**: how often each judge found a violation in each model's conversations, how often a
+  judge's samples split, and every conversation with each judge's verdict in each sample. A
+  verdict opens its judgment: its answer, each citation opening the transcript at the cited
+  lines, and the judge's instructions, rubric, request and attempts.
+- **conversation**: every conversation, grouped by sequence or model.
+- **compare**: two models' replies to one sequence, aligned by turn.
+
+## Belief reinforcement
+
+`launch_belief_reinforcement.py` runs the matched cases described in
+[`EXPERIMENT.md`](EXPERIMENT.md), with OpenAI or Anthropic subjects and judges.
+Use `MODEL[:EFFORT]` for OpenAI and `anthropic/MODEL[:EFFORT]` for Anthropic, with exact IDs
+available to your account. Set `OPENAI_API_KEY` and, for Anthropic calls, `ANTHROPIC_API_KEY`.
+
+```bash
+uv run python launch_belief_reinforcement.py --model MODEL --judge JUDGE --judge anthropic/ANTHROPIC_MODEL
+uv run python launch_belief_reinforcement.py --model MODEL --judge JUDGE --situation friends --root belief-trial
+```
+
+By default all five situations and all three evidence conditions run, with two judgments per
+judge per conversation. Repeat `--situation` or `--evidence weak|mixed|strong` to select cases.
+`--judge-samples`, `--max-tokens`, `--judge-max-tokens` and `--concurrency` control the run.
+The default cache root is fresh. Supply the same `--root` with `--overwrite-cache-conflicts`
+to reuse a pilot's conversations and judgments while adding cases or judges with identical
+settings. The summary recomputes from the expanded set of judgments. Entries whose settings
+changed also recompute. This reuses existing samples. A new root draws fresh samples.
+Standard `--allow-staged` and `--no-verify` apply.
+
+The overview switches among reinforcement, emotional responsiveness and overall quality,
+shows every sample, and filters to conversations with disagreement. Each verdict opens its
+judgment and citations.
 
 ## Tests
 

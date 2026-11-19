@@ -17,10 +17,16 @@ type Query {
   outputDimValues(source: OutputSource!, dim: String!, search: String! = "", offset: Int! = 0, first: Int! = 25): DimValuePage!
   "Type tags only, in a single bounded request; never loads entity bodies."
   entityMetas(cids: [String!]!): [EntityMeta!]!
-  "Bounded job summaries, with no step descriptions or logs."
-  jobSummaries(first: Int! = 25, after: String, search: String! = ""): JobPage!
+  "Bounded job summaries, with no step descriptions or logs: newest first, matching search (in the workflow's name or the id), and of one workflow when workflow is given."
+  jobSummaries(first: Int! = 25, after: String, search: String! = "", workflow: String): JobPage!
+  "The names of the workflows the project has jobs of, in order."
+  jobWorkflows: [String!]!
   "A lightweight lookup independent of job-picker pagination."
   jobSummary(id: ID!): JobSummary
+  "The summaries of the jobs named (at most 200), in the order named; a job the project lacks is left out."
+  jobSummariesByIds(ids: [ID!]!): [JobSummary!]!
+  "Per run node of the job's root workflow, the step results under it the job ran and reused."
+  jobReuse(jobId: ID!): [NodeReuse!]!
   "Workflow graph and aggregate status, without output data or spawn lists."
   levelOverview(jobId: ID!, pathname: String!): LevelOverview
   "A bounded page of matching invocations, selected by typed dimension keys."
@@ -141,7 +147,7 @@ type Spawn {
   childPathname: String
   "For a run_step node: the cache key (links into steps and the step cache)."
   stepCacheKey: String
-  "The array the spawned invocation/step produced, if it has one yet (an array Cid)."
+  "The array the spawned invocation/step produced, if it has one yet (an array Cid). For a step: the result its request is bound to, else the one an equal request left on offer that the job has not taken (a step that finished after the workflow attempt waiting on it ended). A step is completed with either."
   resultCid: Cid
   "The spawned target's derived state: the child invocation's state, or the step's StepState."
   state: String!
@@ -211,11 +217,25 @@ type StepPin {
   stepName: String!
   requestCid: Cid!
   state: StepState!
+  "The step's result (an array Cid): the one its request is bound to, else the one an equal request left on offer that the job has not taken (resultTaken is false); the state is completed with either. Null without one."
   resultCid: Cid
-  "The code that produced the bound step result (for a cache hit, another job's job attempt), as the ledger records it; null until bound."
+  "Whether the job has taken resultCid: its request is bound to it. False for a result on offer, which the job takes when a workflow attempt of it next judges the step: at once while one waits on the step, and at the next resume when the attempt that requested it has ended (a sibling step failed, or the job was cancelled). False without a result too."
+  resultTaken: Boolean!
+  "The code that produced the step result shown (for a cache hit, another job's job attempt), as the ledger records it; null without a result."
   provenance: Provenance
   attempt: Attempt
   logs: [LogLine!]!
+  "The latest preview the step's attempt published through ctx.preview, or null if it published none."
+  preview: Preview
+}
+
+"A step attempt's latest preview: a value showing its result as it is produced. Its DAG-CBOR bytes are at GET /api/previews/{attemptId}."
+type Preview {
+  attemptId: ID!
+  "How many previews the body had published when this one was written; it only grows, so a newer preview has a larger seq."
+  seq: Int!
+  "When it was written."
+  at: DateTime!
 }
 
 type CacheEntry {
@@ -268,7 +288,12 @@ type OutputPage { type: JSON, rows: [ArrayRow!]!, total: Int, offset: Int!, hasM
 "A run's invocation with what it produced: its result's row count (null without one) and, when every invocation produces one row, that row's value as base64 DRISL."
 type InvocationRow { spawn: Spawn!, rowCount: Int, value: Base64 }
 type InvocationPage { items: [InvocationRow!]!, total: Int!, offset: Int! }
-type JobSummary { id: ID!, workflowName: String!, root: String!, createdAt: DateTime!, state: JobState!, failed: Boolean! }
+"One argument of a job's root workflow: the array given, whether it is a single value (no dims), and that value as text when it is a short string, number, boolean, or null."
+type JobInput { name: String!, cid: Cid!, single: Boolean!, text: String }
+"failedSteps: for a failed job, the steps with a failed invocation (most failures first, at most three), or its failed workflows when no step failed. changedInputs: the names of the root inputs given a different array than in the job of the same workflow created just before this one (none when there is no such job). latest: whether no job of the same workflow was created after this one."
+type JobSummary { id: ID!, workflowName: String!, root: String!, createdAt: DateTime!, state: JobState!, failed: Boolean!, failedSteps: [String!]!, inputs: [JobInput!]!, changedInputs: [String!]!, latest: Boolean! }
+"Under one run node of a job's root workflow: how many step results the job ran itself and how many it took from the cache."
+type NodeReuse { identity: Cid!, ran: Int!, reused: Int! }
 type JobPage { items: [JobSummary!]!, next: String }
 type RunPage { items: [Spawn!]!, total: Int!, offset: Int, next: String }
 type StateCounts { queued: Int!, running: Int!, completed: Int!, failed: Int!, interrupted: Int!, conflict: Int!, stopped: Int! }

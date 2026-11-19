@@ -7,6 +7,7 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+.note { font-size: var(--text-xs); color: var(--fg-dim); max-width: 60ch; }
 .facts { margin: 0; }
 .fact { display: flex; gap: 8px; padding: 1px 0; }
 .fact dt { flex: 0 0 5.5em; color: var(--fg-dim); }

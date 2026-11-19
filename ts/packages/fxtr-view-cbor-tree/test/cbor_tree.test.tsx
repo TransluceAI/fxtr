@@ -1,8 +1,8 @@
 import { fireEvent, render, screen } from "@testing-library/react";
 import { atom } from "jotai";
 import { describe, expect, it } from "vitest";
-import { EntityID, EntityLink, EntityHoverPreview, EntityPanel, type EntityData, type JsonValue } from "fxtr-view";
-import { RenderEntity, dispatchRegistry } from "fxtr-view-shell-util";
+import { EntityID, EntityLink, EntityHoverPreview, EntityPanel, PartialEntityInline, PartialEntityPanel, type EntityData, type JsonValue } from "fxtr-view";
+import { RenderEntity, RenderValue, dispatchRegistry } from "fxtr-view-shell-util";
 import { TableShellProvider } from "fxtr-view-shell-util/testing";
 import { cborTreeRenderers, shortName } from "../src/index";
 
@@ -94,5 +94,52 @@ describe("links", () => {
     expect(shortName("Plain")).toBe("Plain");
     expect(shortName("org.example.Report.v2")).toBe("Report.v2");
     expect(shortName("v2")).toBe("v2");
+  });
+});
+
+describe("CborTreePartialPanel", () => {
+  it("shows a value still being produced as the same tree as the finished entity, marked partial", () => {
+    const value = { ...entities.get("note1")!, body: null } as EntityData;
+    const { container } = render(
+      <TableShellProvider registry={registry} entities={entities}>
+        <RenderValue slot={PartialEntityPanel} value={value} partial live storage={atom<JsonValue>(null)} />
+      </TableShellProvider>,
+    );
+    expect(document.querySelector(".type")?.textContent).toBe("org.example.Note");
+    expect(screen.getByText("partial")).toBeTruthy();
+    // Every field the finished entity's tree shows, the one not yet known as null.
+    expect(container.querySelector(".panel > ul.root")?.children.length).toBe(8);
+    expect(screen.getAllByText("null").length).toBe(2);
+    expect(document.querySelector(".fxtr-view-link .link")?.textContent).toBe("Config cfg1");
+  });
+
+  it("says a partial value will not be finished once its step has stopped", () => {
+    render(
+      <TableShellProvider registry={registry} entities={entities}>
+        <RenderValue slot={PartialEntityPanel} value={entities.get("cfg1")!} partial live={false} storage={atom<JsonValue>(null)} />
+      </TableShellProvider>,
+    );
+    expect(screen.getByText("partial: stopped before finishing")).toBeTruthy();
+  });
+
+  it("says nothing of partiality for a finished value", () => {
+    render(
+      <TableShellProvider registry={registry} entities={entities}>
+        <RenderValue slot={PartialEntityPanel} value={entities.get("cfg1")!} partial={false} live storage={atom<JsonValue>(null)} />
+      </TableShellProvider>,
+    );
+    expect(screen.queryByText("partial")).toBeNull();
+    expect(screen.getByText('"m"')).toBeTruthy();
+  });
+
+  it("says in one line what type a value being produced is, and whether its step still runs", () => {
+    const lineOf = (partial: boolean, live: boolean) => render(
+      <TableShellProvider registry={registry} entities={entities}>
+        <RenderValue slot={PartialEntityInline} value={entities.get("cfg1")!} partial={partial} live={live} />
+      </TableShellProvider>,
+    ).container.textContent;
+    expect(lineOf(true, true)).toBe("Config partial");
+    expect(lineOf(true, false)).toBe("Config partial: stopped");
+    expect(lineOf(false, true)).toBe("Config");
   });
 });

@@ -15,7 +15,8 @@ fxtr/
 │   │                       FxtrEntityStorage
 │   ├── codec.py            DAG-CBOR / DRISL encode/decode + CID computation (cbrrr-backed)
 │   ├── car.py              CAR v1 files of entity blocks (write_car, read_car; gzipped, each
-│   │                       block checked against its cid)
+│   │                       block checked against its cid; read as a stream under CarLimits, so
+│   │                       a file from someone else cannot fill memory)
 │   ├── json.py             recursive JSONValue / JSONObject aliases shared with JSON codecs, plus
 │   │                       hashable FrozenJSONValue / FrozenJSONObject counterparts
 │   └── loader_registry.py  annotation → loader resolution: the generic
@@ -162,7 +163,8 @@ reference to be known, and returns the value's cid and an `EncodedEntity`
 ## Tests
 
 - `tests/test_codec.py`: the DRISL codec: determinism, round trips, CID format, spec vectors.
-- `tests/test_core_car.py`: CAR files: the round trip, gzipped or plain, and the refusals.
+- `tests/test_core_car.py`: CAR files: the round trip, gzipped or plain, the refusals, and each
+  limit, including that a file which decompresses past its limit is refused before it is held.
 - `tests/test_storage.py`: the storage contract: store/load, the known set, `$type` enforcement,
   `UnknownEntity`.
 - `tests/test_loader_registry.py`: annotation walking, override rules, `EntityLoaderRegistry`.

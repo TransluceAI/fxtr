@@ -5,6 +5,7 @@ import { fetchOutputPage, useQuery } from '../api/browse'
 import { retryAndReset } from '../api/live'
 import { ErrorBoundary } from '../components/ErrorBoundary'
 import { InvocationProvenance, InvocationStatusLine } from '../components/InvocationInfo'
+import { StepPinPreview } from '../components/StepPreview'
 import { Loading, Problem } from '../components/Status'
 import { isLive, runStateOf } from '../lib/progress'
 import { structFields, typeLabel } from '../model/schema'
@@ -37,8 +38,9 @@ export interface InvocationValues {
  * - its inputs by argument name, each a row (its type and row count) that expands to the value;
  * - for a workflow, the runs its body made with how many of their spawns have produced something;
  * - its output, last since it is the longest: the value (through `values`, or its result's
- *   entity), a sketch of its shape from the output's schema while it is queued or running, or its
- *   error when it failed.
+ *   entity); while it is queued or running, a step's live preview, else a sketch of its shape from
+ *   the output's schema; its error when it failed; and under the error, or in the output's place
+ *   when it stopped without one, the last preview a step published.
  *
  * The pane's head names the invocation and its keys, so the body does not.
  */
@@ -94,7 +96,7 @@ function Body({ spawn, values }: { spawn: Spawn; values: InvocationValues | unde
           Output
           {values && <span className={styles.type} title={values.outputType.full}>{values.outputType.label}</span>}
         </h3>
-        <OutputBody record={record} values={values} />
+        <OutputBody spawn={spawn} record={record} values={values} />
       </section>
     </div>
   )
@@ -111,12 +113,29 @@ function OpenInTrace({ pathname }: { pathname: string }) {
   )
 }
 
-function OutputBody({ record, values }: { record: InvocationRecord; values: InvocationValues | undefined }) {
+function OutputBody({ spawn, record, values }: { spawn: Spawn; record: InvocationRecord; values: InvocationValues | undefined }) {
   const state = runStateOf(record.state)
+  const step = spawn.ref.kind === 'step' ? spawn.ref : null
   if (state === 'failed')
-    return <div className={styles.error}>{record.error ? `${record.error.typeName}: ${record.error.message}` : 'failed'}</div>
-  if (isLive(state)) return <Sketch schema={values?.outputSchema ?? null} />
-  if (record.output === null) return <span className="detail-none">no output recorded</span>
+    return (
+      <>
+        <div className={styles.error}>{record.error ? `${record.error.typeName}: ${record.error.message}` : 'failed'}</div>
+        {step && <StepPinPreview jobId={step.jobId} cacheKey={step.cacheKey} live={false} />}
+      </>
+    )
+  if (isLive(state)) {
+    const sketch = <Sketch schema={values?.outputSchema ?? null} />
+    // A running step's latest preview stands in for its output until it has one.
+    if (step) return <StepPinPreview jobId={step.jobId} cacheKey={step.cacheKey} live fallback={sketch} />
+    return sketch
+  }
+  if (record.output === null) {
+    const none = <span className="detail-none">no output: it stopped before it finished</span>
+    // A step stopped part-way (the job was cancelled, or its process died) keeps the last preview
+    // it published, which is all there is of its output.
+    if (step) return <StepPinPreview jobId={step.jobId} cacheKey={step.cacheKey} live={false} fallback={none} />
+    return none
+  }
   return <>{values ? values.output : <EntityPanel cid={record.output.cid} />}</>
 }
 

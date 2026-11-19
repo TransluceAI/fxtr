@@ -300,6 +300,22 @@ class FxtrConverter:
         assert isinstance(data, dict)
         return data
 
+    def unstructure_tagged(self, value: object) -> dict[str, FxtrDataValue]:
+        """Serialize any value whose wire form is a tagged mapping: a tagged dataclass, or a
+        protocol class serializing to one, such as
+        :class:`~fxtr.entity_defns.partial.Partial` or
+        :class:`~fxtr.entity_defns.dynamic_data.DynamicData`.
+
+        Raises:
+            ConversionError: If the value cannot be serialized, or its wire form is not a mapping
+                carrying a valid ``$type`` tag.
+        """
+        with _conversion_error_boundary():
+            data = self._cattrs.unstructure(value)
+            get_entity_type_tag(data)
+        assert isinstance(data, dict)
+        return data
+
     def structure(self, data: Any, annotation: Any) -> Any:
         """Deserialize ``data`` as ``annotation`` (strictly).
 

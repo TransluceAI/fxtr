@@ -58,6 +58,7 @@ from fxtr.core.entity_data import (
     StorableFxtrDataValue,
 )
 from fxtr.entity_defns.array import Array, ArrayType, CombineJoin, Join, KeyValue
+from fxtr.experiment.steps import PreviewSource
 from fxtr.runner import nodes
 from fxtr.runner.nodes import Node, NodeIdentity
 from fxtr.runner.session import (
@@ -203,6 +204,11 @@ class StepAttemptOps(Protocol):
         ...
 
     def add_log(self, message: str) -> None: ...
+
+    def set_preview(self, value: PreviewSource) -> None:
+        """Replace the attempt's preview (see
+        :meth:`~fxtr.runner.session.StepRunSession.preview_step`)."""
+        ...
 
     async def complete(self, result: Array[Any]) -> None:
         """Store the result, record it, and end the attempt as completed."""
@@ -486,6 +492,9 @@ class StepRun[A: StepAttemptOps]:
 
     def log_message(self, message: str) -> None:
         self._ops().add_log(message)
+
+    def preview_step(self, value: PreviewSource) -> None:
+        self._ops().set_preview(value)
 
     async def complete_step(self, result: Array[Any]) -> None:
         await self._ops().complete(result)

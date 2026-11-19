@@ -80,6 +80,7 @@ from fxtr.project.client import (
 from fxtr.project.code_version import CodeVersion, function_sources
 from fxtr.project.config import Project, load_env_file
 from fxtr.project.environment import Environment, LocalEnvironment, Problem
+from fxtr.project.job_record import IMPORT_LIMITS, RecordFileError, read_record
 from fxtr.project.viewer import find_viewer
 from fxtr.runner.cache_addresses import parse_pattern
 from fxtr.runner.driver import in_process_executor
@@ -607,9 +608,9 @@ class LocalProjectClient(AsyncContextManagerMixin, ProjectClient):
         (:func:`~fxtr.project.viewer.find_viewer`)."""
         return await anyio.to_thread.run_sync(find_viewer, self.project)
 
-    async def list_jobs(self) -> Sequence[JobSummary]:
+    async def list_jobs(self, *, limit: int | None = None) -> Sequence[JobSummary]:
         summaries: list[JobSummary] = []
-        for record in await self.jobs.list():
+        for record in await self.jobs.list(limit=limit):
             report = await self.jobs.status(record.id)
             summaries.append(
                 JobSummary(
@@ -626,20 +627,23 @@ class LocalProjectClient(AsyncContextManagerMixin, ProjectClient):
 
     async def export_job(self, job_id: JobID, path: Path) -> EntityID:
         async with self.database.transaction(snapshot=True) as tx:
-            if await execution.active_job_attempt(tx, job_id) is not None:
+            if await execution.active_job_attempt(
+                tx, job_id
+            ) is not None or await execution.job_has_running_attempt(tx, job_id):
                 raise JobRunningError(
-                    f"Job {job_id} is held by a process; export it once it has stopped (or"
-                    " cancel it first)"
+                    f"Job {job_id} is still running: wait for its work to stop, or stop it"
+                    " with fxtr jobs cancel"
                 )
             try:
                 return await job_records.export_job(tx, self.entities, job_id, path)
             except ledger.NotFoundError as exc:
                 raise JobNotFoundError(*exc.args) from exc
 
-    async def import_job(self, path: Path, *, update: bool = False) -> JobID:
+    async def import_job(self, path: Path, *, update: bool = False, replace: bool = False) -> JobID:
         try:
-            file = job_records.read_record(path)
-        except job_records.RecordFileError as exc:
+            # Bounded: the file may come from outside the project (a pull imports what it fetched).
+            file = read_record(path, limits=IMPORT_LIMITS)
+        except RecordFileError as exc:
             raise ImportRefusedError(f"{path}: {exc}") from exc
         missing = await self.environment.missing_commits(self.project, file.commits())
         if missing:
@@ -650,19 +654,30 @@ class LocalProjectClient(AsyncContextManagerMixin, ProjectClient):
         job_id = JobID(uuid.UUID(file.record.job.id))
         async with self.database.transaction() as tx:
             if await job_records.lock_job(tx, job_id):
-                if not update:
+                if not update and not replace:
                     raise ImportRefusedError(
                         f"Job {job_id} is already in this project; to bring it up to date from"
                         " this record, import it with update (--update)"
                     )
-                if await execution.active_job_attempt(tx, job_id) is not None:
+                if await execution.active_job_attempt(
+                    tx, job_id
+                ) is not None or await execution.job_has_running_attempt(tx, job_id):
                     raise ImportRefusedError(
-                        f"Job {job_id} is held by a process here; update it once it has stopped"
+                        f"Job {job_id} is held by a process here or has running work; "
+                        "update it once all work has stopped"
                     )
+                if replace:
+                    await job_records.forget_job(tx, job_id)
             try:
                 return await job_records.insert_record(tx, file)
-            except job_records.RecordFileError as exc:
-                raise ImportRefusedError(f"{path}: {exc}") from exc
+            except RecordFileError as exc:
+                if update:
+                    raise ImportRefusedError(
+                        f"{exc}. To take the record's version of the job, use replace (--replace),"
+                        " which removes this project's job attempts of the job that the record"
+                        " lacks; their step results stay in the step cache"
+                    ) from exc
+                raise ImportRefusedError(str(exc)) from exc
 
     def _task_group(self) -> anyio.abc.TaskGroup:
         """The task group jobs run in; refuses when the client is not entered or was interrupted."""

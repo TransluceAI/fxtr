@@ -9,7 +9,12 @@ job attempt a process takes.
 
 An import asks one more: *does this repository have the code a record's results were produced at*
 (:meth:`Environment.missing_commits`), so that every imported result names code that can be found
-here.
+here. A remote (:mod:`fxtr.project.remotes`) moves that code between repositories with git: a
+push sends the commits to a git remote under fxtr's pin refs (:meth:`Environment.push_commits`),
+and a pull fetches the commits that the repository does not have from those refs
+(:meth:`Environment.fetch_commits`). A pin ref keeps a commit that is on no branch, so the commits
+that fxtr made from staged changes travel too. An environment does not have to implement these two
+methods.
 
 A local client asks all three. A remote client (later) would ask the first two through the same
 object and then send the pin to a service, which builds its own environment from the pinned commit
@@ -231,6 +236,54 @@ class Environment(abc.ABC):
             ProjectError: If ``project.root`` is not inside a repository, or the tool cannot run.
         """
 
+    async def repository_binding(self, root: Path, git_remote: str) -> tuple[str, str]:
+        """Return the Git remote URL and project directory relative to the repository root.
+
+        Args:
+            root: The project root. A project that has no database configured has one too.
+            git_remote: The git remote, as the repository names it.
+        """
+        raise ProjectError(f"{type(self).__name__} cannot identify a Git repository")
+
+    async def push_commits(self, project: Project, git_remote: str, commits: Iterable[str]) -> None:
+        """Push commits to a git remote, each under fxtr's pin ref for it
+        (``refs/fxtr/pins/<commit>``, see :func:`pin_ref`). This function pushes the commits
+        themselves, so it works when this repository has no pin ref for a commit.
+
+        The default implementation raises
+        :class:`~fxtr.project.config.ProjectError`.
+
+        Args:
+            project: The project. Its repository has the commits.
+            git_remote: The git remote to push to, as the repository names it (for example,
+                ``"origin"``).
+            commits: The commits, as hex hashes.
+
+        Raises:
+            ProjectError: If the push fails, or this environment cannot push commits.
+        """
+        raise ProjectError(f"{type(self).__name__} cannot push commits to a git remote")
+
+    async def fetch_commits(
+        self, project: Project, git_remote: str, commits: Iterable[str]
+    ) -> None:
+        """Fetch commits from a git remote, from fxtr's pin refs for them, into the same pin
+        refs here.
+
+        The default implementation raises
+        :class:`~fxtr.project.config.ProjectError`.
+
+        Args:
+            project: The project. Its repository receives the commits.
+            git_remote: The git remote to fetch from, as the repository names it.
+            commits: The commits, as hex hashes. The remote must have a pin ref for each.
+
+        Raises:
+            ProjectError: If the fetch fails, for example because the remote has no pin ref for
+                a commit, or this environment cannot fetch commits.
+        """
+        raise ProjectError(f"{type(self).__name__} cannot fetch commits from a git remote")
+
     @abc.abstractmethod
     async def check_synced(self, project: Project) -> list[Problem]:
         """Report the ways this process's environment does not match the project's declaration.
@@ -301,6 +354,17 @@ _WHY_PIN = (
 )
 
 
+def _check_git_remote(git_remote: str) -> None:
+    """Refuse a git remote that git would read as an option. The name comes from a project's
+    committed configuration, and ``--upload-pack=...`` runs a command.
+
+    Raises:
+        ProjectError: If ``git_remote`` starts with ``-``.
+    """
+    if git_remote.startswith("-"):
+        raise ProjectError(f"{git_remote!r} cannot be a git remote: it starts with '-'")
+
+
 class LocalEnvironment(Environment):
     """The environment of the process this runs in, answered by running git and uv in the checkout
     (see the module docstring for what it requires of the project). Reads the process's working
@@ -327,8 +391,7 @@ class LocalEnvironment(Environment):
 
     async def missing_commits(self, project: Project, commits: Iterable[str]) -> list[str]:
         root = project.root.resolve()
-        jj_root = next((d for d in (root, *root.parents) if (d / ".jj").is_dir()), None)
-        git_args = () if jj_root is None else (f"--git-dir={_jj_git_dir(jj_root)}",)
+        git_args = self._git_dir_args(project.root)
         missing: list[str] = []
         for commit in commits:
             found = await self._run(
@@ -340,10 +403,65 @@ class LocalEnvironment(Environment):
 
     async def committed_file(self, project: Project, commit: str, path: str) -> bytes | None:
         root = project.root.resolve()
-        jj_root = next((d for d in (root, *root.parents) if (d / ".jj").is_dir()), None)
-        git_args = () if jj_root is None else (f"--git-dir={_jj_git_dir(jj_root)}",)
+        git_args = self._git_dir_args(project.root)
         found = await self._run(("git", *git_args, "cat-file", "blob", f"{commit}:{path}"), root)
         return found.stdout if found.returncode == 0 else None
+
+    async def repository_binding(self, root: Path, git_remote: str) -> tuple[str, str]:
+        root = root.resolve()
+        args = self._git_dir_args(root)
+        _check_git_remote(git_remote)
+        url = (await self._git(root, *args, "remote", "get-url", git_remote)).strip()
+        jj_root = next((d for d in (root, *root.parents) if (d / ".jj").is_dir()), None)
+        repo_root = (
+            jj_root
+            or Path((await self._git(root, "rev-parse", "--show-toplevel")).rstrip("\n")).resolve()
+        )
+        return url, root.relative_to(repo_root).as_posix()
+
+    async def push_commits(self, project: Project, git_remote: str, commits: Iterable[str]) -> None:
+        _check_git_remote(git_remote)
+        wanted = {pin_ref(commit): commit for commit in commits}
+        if not wanted:
+            return
+        root = project.root.resolve()
+        git_args = self._git_dir_args(project.root)
+        refspecs = [f"{commit}:{ref}" for ref, commit in wanted.items()]
+        try:
+            await self._git(root, *git_args, "push", git_remote, *refspecs)
+        except ProjectError as push_error:
+            # Two people who push jobs of the same commit at the same moment write the same pin
+            # ref. The remote can refuse one push because the other holds the ref's lock. The
+            # pin is in place all the same, and that is all this push needs.
+            try:
+                listed = await self._git(root, *git_args, "ls-remote", git_remote, *wanted)
+            except ProjectError:
+                raise push_error from None
+            found = dict(line.split("\t")[::-1] for line in listed.splitlines() if line)
+            if any(found.get(ref) != commit for ref, commit in wanted.items()):
+                raise
+
+    async def fetch_commits(
+        self, project: Project, git_remote: str, commits: Iterable[str]
+    ) -> None:
+        _check_git_remote(git_remote)
+        refspecs = [f"{pin_ref(commit)}:{pin_ref(commit)}" for commit in commits]
+        if refspecs:
+            await self._git(
+                project.root.resolve(),
+                *self._git_dir_args(project.root),
+                "fetch",
+                git_remote,
+                *refspecs,
+            )
+
+    @staticmethod
+    def _git_dir_args(root: Path) -> tuple[str, ...]:
+        """The git arguments that select the repository's git store: none for a git repository,
+        and ``--git-dir`` for a jj repository."""
+        root = root.resolve()
+        jj_root = next((d for d in (root, *root.parents) if (d / ".jj").is_dir()), None)
+        return () if jj_root is None else (f"--git-dir={_jj_git_dir(jj_root)}",)
 
     async def _pin_git(self, repo_root: Path, root: Path, allow_staged: bool) -> Pin:
         project_path = root.relative_to(repo_root).as_posix()
@@ -513,6 +631,27 @@ class LocalEnvironment(Environment):
                 )
             )
         return problems
+
+    async def refresh_environment(self, root: Path) -> None:
+        """Update the project's virtual environment after a change to ``pyproject.toml``.
+
+        uv treats a change to ``pyproject.toml`` as a change to the installed project, even when
+        the change is only to a tool's settings. Until uv installs the project again,
+        ``check_synced`` reports a problem to a process that does not start with ``uv run``.
+
+        This function changes only what ``uv.lock`` says to change. It keeps the lockfile as it
+        is, and it keeps packages that the lockfile does not list.
+
+        Args:
+            root: The project root.
+
+        Raises:
+            ProjectError: If uv cannot do the update, for example because the project has no
+                lockfile or the network is not available.
+        """
+        result = await self._uv(root, "sync", "--frozen", "--inexact")
+        if result.returncode != 0:
+            raise ProjectError(result.stderr.decode().strip())
 
     async def _uv_check(self, cwd: Path, *args: str) -> bool:
         """Run one of uv's ``--check`` commands: ``True`` if the check failed (exit 1), ``False``

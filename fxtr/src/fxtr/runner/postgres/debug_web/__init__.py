@@ -7,6 +7,8 @@ package imports it; deleting this folder (and the ``debug-web`` extra) removes t
 
 from __future__ import annotations
 
-from fxtr.runner.postgres.debug_web.app import build_schema, create_app
+from fxtr.runner.postgres.debug_web.app import build_schema, create_app, create_reader_app
+from fxtr.runner.postgres.debug_web.reader import ViewerReader
+from fxtr.runner.postgres.debug_web.scope import JobScope
 
-__all__ = ["build_schema", "create_app"]
+__all__ = ["JobScope", "ViewerReader", "build_schema", "create_app", "create_reader_app"]

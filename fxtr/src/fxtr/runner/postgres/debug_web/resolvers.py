@@ -1,10 +1,11 @@
-"""GraphQL resolvers for the debug viewer, reading through a :class:`LocalProjectClient`.
+"""GraphQL resolvers for the debug viewer, reading through a :class:`ViewerReader`.
 
 Every resolver builds plain dicts (and lists of them) keyed by the schema's field names, so
 Ariadne's default resolver reads them with no per-type binding; only the scalars and the ``Query``
-root are bound. Nothing here writes: it composes the client's readers
-(``jobs``, ``steps``, ``entities``) and, for the global step cache, the ledger/execution/logs
-readers directly in a read transaction.
+root are bound. Nothing here writes: it reads jobs and entities through ``ViewerReader`` and
+queries the global step cache through the ledger, execution, and log readers in a read transaction.
+Every root field applies the reader's :class:`~fxtr.runner.postgres.debug_web.scope.JobScope`
+as the table in :mod:`.scope` says.
 
 The job view is assembled eagerly from :meth:`Jobs.describe` and :meth:`Jobs.status` — one
 consistent picture per job; the jobs *list* is shallow (a
@@ -19,12 +20,12 @@ from typing import Any
 
 from ariadne import QueryType, ScalarType
 from graphql import GraphQLResolveInfo
+from sqlalchemy import select
 
 from fxtr.core import codec
-from fxtr.core.entity_data import EntityID, cid_from_str
+from fxtr.core.entity_data import EntityID, EntityNotFoundError, cid_from_str
 from fxtr.entity_defns.array import Array
 from fxtr.runner.postgres import execution, ledger
-from fxtr.runner.postgres.client import LocalProjectClient
 from fxtr.runner.postgres.debug_web import browse
 from fxtr.runner.postgres.debug_web.contracts import (
     ColumnFilter,
@@ -33,6 +34,8 @@ from fxtr.runner.postgres.debug_web.contracts import (
     Sort,
 )
 from fxtr.runner.postgres.debug_web.projections import error_view, node_view
+from fxtr.runner.postgres.debug_web.reader import ViewerReader
+from fxtr.runner.postgres.debug_web.scope import JobScope, reachable, require_job
 from fxtr.runner.postgres.debug_web.versions import invocation_version
 from fxtr.runner.postgres.execution import JobAttemptRecord
 from fxtr.runner.postgres.jobs import (
@@ -50,10 +53,11 @@ from fxtr.runner.postgres.ledger import (
     SpawnRecord,
 )
 from fxtr.runner.postgres.logs import LogRecord, list_logs
+from fxtr.runner.postgres.schema import job_step_bindings
 
 
-def _client(info: GraphQLResolveInfo) -> LocalProjectClient:
-    return info.context["client"]
+def _reader(info: GraphQLResolveInfo) -> ViewerReader:
+    return info.context["reader"]
 
 
 def _job_id(value: str) -> JobID:
@@ -194,33 +198,52 @@ def _invocation(detail: InvocationDetail, job_id: JobID) -> dict[str, Any]:
     }
 
 
-def _step_pin(detail: StepDetail, job_id: JobID) -> dict[str, Any]:
+def _step_pin(detail: StepDetail, job_id: JobID, scope: JobScope) -> dict[str, Any]:
     description = detail.description
-    attempt = (
-        None
-        if description.attempt is None or description.provenance is None
-        else _attempt(description.attempt, [], description.logs, description.provenance)
-    )
+    # The attempt behind the step ran under the job attempt its provenance names: another job's,
+    # for a result reused from the cache. Its history shows only when that job is in the scope;
+    # the result and its provenance are the step's own facts.
+    attempt = _shown_attempt(scope, description.attempt, description.logs, description.provenance)
     return {
         "id": f"{job_id}/{description.request.cache_key}",
         "cacheKey": description.request.cache_key,
         "stepName": description.spec.step_name,
         "requestCid": description.request.request.cid_str(),
         "state": detail.status.state,
-        "resultCid": _cid(description.binding.result) if description.binding is not None else None,
+        "resultCid": _cid(description.result),
+        "resultTaken": description.result_taken,
         "provenance": _provenance(description.result_provenance),
         "attempt": attempt,
-        "logs": [_log(log) for log in description.logs],
+        "logs": [] if attempt is None else [_log(log) for log in description.logs],
+        # A preview is part of the producing attempt's history: shown when that attempt is.
+        "preview": None
+        if attempt is None or description.attempt is None or description.preview is None
+        else {
+            "attemptId": description.attempt.id,
+            "seq": description.preview.seq,
+            "at": description.preview.at,
+        },
     }
+
+
+def _shown_attempt(
+    scope: JobScope, attempt: Any, logs: list[LogRecord], provenance: Provenance | None
+) -> dict[str, Any] | None:
+    """``attempt`` (which ran under the job attempt ``provenance`` names) with its logs as the
+    schema shows it, or ``None`` when there is none or its job is outside the scope."""
+    if attempt is None or provenance is None or not scope.allows(provenance.job_attempt.job_id):
+        return None
+    return _attempt(attempt, [], logs, provenance)
 
 
 # ---- assembling a whole job ----
 
 
-async def _job_overview(client: LocalProjectClient, job_id: JobID) -> dict[str, Any]:
+async def _job_overview(reader: ViewerReader, job_id: JobID) -> dict[str, Any]:
     """A job's overview + shallow invocation/step lists (no nodes). The full invocation / step is
     fetched separately via :func:`_invocation_view` / :func:`_step_view`."""
-    status = await client.jobs.status(job_id)
+    require_job(reader.scope, job_id)
+    status = await reader.jobs.status(job_id)
     return {
         "id": job_id,
         "workflowName": status.job.workflow_name,
@@ -228,7 +251,7 @@ async def _job_overview(client: LocalProjectClient, job_id: JobID) -> dict[str, 
         "createdAt": status.job.created_at,
         "state": status.state,
         "failed": status.failed,
-        "jobAttempts": [_job_attempt(ja, client.project.stale_after) for ja in status.job_attempts],
+        "jobAttempts": [_job_attempt(ja, reader.stale_after) for ja in status.job_attempts],
         "invocations": [_invocation_summary(s) for s in status.invocations.values()],
         "steps": [_step_summary(s) for s in status.steps.values()],
         "resultCid": _cid(status.result),
@@ -236,23 +259,27 @@ async def _job_overview(client: LocalProjectClient, job_id: JobID) -> dict[str, 
 
 
 async def _invocation_view(
-    client: LocalProjectClient, job_id: JobID, pathname: str
+    reader: ViewerReader, job_id: JobID, pathname: str
 ) -> dict[str, Any] | None:
-    detail = await client.jobs.describe_invocation(job_id, pathname)
+    if not reader.scope.allows(job_id):
+        return None
+    detail = await reader.jobs.describe_invocation(job_id, pathname)
     return None if detail is None else _invocation(detail, job_id)
 
 
-async def _step_view(
-    client: LocalProjectClient, job_id: JobID, cache_key: str
-) -> dict[str, Any] | None:
-    detail = await client.jobs.describe_step(job_id, cache_key)
-    return None if detail is None else _step_pin(detail, job_id)
+async def _step_view(reader: ViewerReader, job_id: JobID, cache_key: str) -> dict[str, Any] | None:
+    if not reader.scope.allows(job_id):
+        return None
+    detail = await reader.jobs.describe_step(job_id, cache_key)
+    return None if detail is None else _step_pin(detail, job_id, reader.scope)
 
 
-async def _jobs_shallow(client: LocalProjectClient) -> list[dict[str, Any]]:
+async def _jobs_shallow(reader: ViewerReader) -> list[dict[str, Any]]:
     jobs = []
-    for record in await client.jobs.list():
-        status = await client.jobs.status(record.id)
+    for record in await reader.jobs.list():
+        if not reader.scope.allows(record.id):
+            continue
+        status = await reader.jobs.status(record.id)
         jobs.append(
             {
                 "id": record.id,
@@ -266,32 +293,52 @@ async def _jobs_shallow(client: LocalProjectClient) -> list[dict[str, Any]]:
     return jobs
 
 
-async def _cache_entries(client: LocalProjectClient) -> list[dict[str, Any]]:
+async def _cache_entries(reader: ViewerReader) -> list[dict[str, Any]]:
+    """The step cache's entries. The cache is global and mutable: a key a job in the scope
+    requested may since have been cleared and taken by another job's request. So under a
+    restricted scope an entry shows only when what it holds belongs to the scope: the step
+    result it offers is bound by a job in the scope, or the attempt behind it ran under a job in
+    the scope; its attempt and logs show only in the second case."""
+    scope = reader.scope
     entries: list[dict[str, Any]] = []
-    async with client.database.transaction(snapshot=True) as tx:
+    async with reader.database.transaction(snapshot=True) as tx:
+        bound: set[Any] = set()
+        if not scope.unrestricted:
+            bound = set(
+                (
+                    await tx.execute(
+                        select(job_step_bindings.c.step_result_id).where(
+                            scope.restrict(job_step_bindings.c.job_id)
+                        )
+                    )
+                ).scalars()
+            )
         for entry in await execution.list_cache_entries(tx):
-            spec = await ledger.get_step_request(tx, entry.request)
             if entry.step_result_id is not None:
                 # The step result it offers, and its producing attempt if this database ran it.
                 attempt = await execution.find_attempt(
                     tx, ledger.producing_attempt(entry.step_result_id)
                 )
                 step_result = await ledger.get_step_result(tx, entry.step_result_id)
-                produced = await provenance(tx, client.entities, step_result.job_attempt_id)
+                produced = await provenance(tx, reader.entities, step_result.job_attempt_id)
                 state = "completed"
             else:
                 assert entry.attempt_id is not None
                 attempt = await execution.get_attempt(tx, entry.attempt_id)
-                produced = await provenance(tx, client.entities, attempt.owner_job_attempt_id)
+                produced = await provenance(tx, reader.entities, attempt.owner_job_attempt_id)
                 state = attempt.state
-            logs = [] if attempt is None else await list_logs(tx, attempt.id)
+            own = scope.allows(produced.job_attempt.job_id)
+            if not own and entry.step_result_id not in bound:
+                continue
+            logs = await list_logs(tx, attempt.id) if own and attempt is not None else []
+            spec = await ledger.get_step_request(tx, entry.request)
             entries.append(
                 {
                     "id": entry.cache_key,
                     "cacheKey": entry.cache_key,
                     "requestCid": entry.request.cid_str(),
                     "stepName": spec.step_name,
-                    "attempt": None if attempt is None else _attempt(attempt, [], logs, produced),
+                    "attempt": _shown_attempt(scope, attempt, logs, produced),
                     "state": state,
                     "provenance": _provenance(produced),
                 }
@@ -299,11 +346,12 @@ async def _cache_entries(client: LocalProjectClient) -> list[dict[str, Any]]:
     return entries
 
 
-async def _array_view(
-    client: LocalProjectClient, cid: str, limit: int | None = None
-) -> dict[str, Any]:
+async def _array_view(reader: ViewerReader, cid: str, limit: int | None = None) -> dict[str, Any]:
     entity_id = EntityID(cid=cid_from_str(cid))
-    array = await client.load(entity_id.bind_type(Array[Any]))
+    if not await reader.reachable([entity_id]):
+        # The same answer as for an array the database does not have.
+        raise EntityNotFoundError(f"Entity not found in storage: {entity_id!r}")
+    array = await reader.entities.load(entity_id.bind_type(Array[Any]))
     items = list(array.items())
     shown = items if limit is None else items[:limit]
     return {
@@ -317,8 +365,10 @@ async def _array_view(
     }
 
 
-async def _entity_meta(client: LocalProjectClient, cid: str) -> EntityMeta | None:
-    return await browse.entity_meta(client, cid)
+async def _entity_meta(reader: ViewerReader, cid: str) -> EntityMeta | None:
+    if not await reader.reachable([EntityID(cid=cid_from_str(cid))]):
+        return None
+    return await browse.entity_meta(reader.database, cid)
 
 
 # ---- bindings ----
@@ -403,19 +453,17 @@ async def resolve_output_dim_values(
 
 @query.field("entityMetas")
 async def resolve_entity_metas(_: Any, info: GraphQLResolveInfo, cids: list[str]):
-    from sqlalchemy import select
-
     from fxtr.core.entity_data import cid_to_str
     from fxtr.runner.postgres.schema import entities
 
     if len(cids) > 200:
         raise ValueError("at most 200 entity metadata entries per request")
-    async with _client(info).database.transaction() as tx:
+    reader = _reader(info)
+    async with reader.database.transaction() as tx:
+        asked = await reachable(tx, reader.scope, [cid_from_str(cid) for cid in cids])
         rows = (
             await tx.execute(
-                select(entities.c.cid, entities.c.type_tag).where(
-                    entities.c.cid.in_([cid_from_str(cid) for cid in cids])
-                )
+                select(entities.c.cid, entities.c.type_tag).where(entities.c.cid.in_(list(asked)))
             )
         ).all()
     return [{"cid": cid_to_str(row.cid), "typeTag": row.type_tag} for row in rows]
@@ -423,21 +471,41 @@ async def resolve_entity_metas(_: Any, info: GraphQLResolveInfo, cids: list[str]
 
 @query.field("jobSummaries")
 async def resolve_job_summaries(
-    _: Any, info: GraphQLResolveInfo, first: int = 25, after: str | None = None, search: str = ""
+    _: Any,
+    info: GraphQLResolveInfo,
+    first: int = 25,
+    after: str | None = None,
+    search: str = "",
+    workflow: str | None = None,
 ):
-    return await browse.job_page(_client(info), first, after, search)
+    return await browse.job_page(_reader(info), first, after, search, workflow)
+
+
+@query.field("jobWorkflows")
+async def resolve_job_workflows(_: Any, info: GraphQLResolveInfo):
+    return await browse.job_workflows(_reader(info))
 
 
 @query.field("jobSummary")
 async def resolve_job_summary(_: Any, info: GraphQLResolveInfo, id: str):
-    async with _client(info).database.transaction(snapshot=True) as tx:
-        job_id = _job_id(id)
-        return (await browse.job_summaries(tx, [job_id])).get(job_id)
+    found = await browse.job_summaries_by_ids(_reader(info), [_job_id(id)])
+    return found[0] if found else None
+
+
+@query.field("jobSummariesByIds")
+async def resolve_job_summaries_by_ids(_: Any, info: GraphQLResolveInfo, ids: list[str]):
+    return await browse.job_summaries_by_ids(_reader(info), [_job_id(id) for id in ids])
+
+
+@query.field("jobReuse")
+async def resolve_job_reuse(_: Any, info: GraphQLResolveInfo, jobId: str):
+    return await browse.job_reuse(_reader(info), _job_id(jobId))
 
 
 @query.field("levelOverview")
 async def resolve_level_overview(_: Any, info: GraphQLResolveInfo, jobId: str, pathname: str):
-    return await browse.level_overview(_client(info), _job_id(jobId), pathname)
+    reader = _reader(info)
+    return await browse.level_overview(reader.database, _job_id(jobId), pathname, reader.scope)
 
 
 @query.field("runPage")
@@ -454,8 +522,9 @@ async def resolve_run_page(
     unfinished: bool = False,
     offset: int | None = None,
 ):
+    reader = _reader(info)
     return await browse.run_page(
-        _client(info),
+        reader.database,
         _job_id(jobId),
         pathname,
         nodeId,
@@ -465,6 +534,7 @@ async def resolve_run_page(
         state,
         unfinished,
         offset,
+        reader.scope,
     )
 
 
@@ -482,8 +552,9 @@ async def resolve_key_page(
     after: str | None = None,
     offset: int | None = None,
 ):
+    reader = _reader(info)
     return await browse.key_page(
-        _client(info),
+        reader.database,
         _job_id(jobId),
         pathname,
         nodeId,
@@ -493,55 +564,60 @@ async def resolve_key_page(
         first,
         after,
         offset,
+        reader.scope,
     )
 
 
 @query.field("jobs")
 async def resolve_jobs(_: Any, info: GraphQLResolveInfo) -> list[dict[str, Any]]:
-    return await _jobs_shallow(_client(info))
+    return await _jobs_shallow(_reader(info))
 
 
 @query.field("job")
 async def resolve_job(_: Any, info: GraphQLResolveInfo, id: str) -> dict[str, Any]:
-    return await _job_overview(_client(info), _job_id(id))
+    return await _job_overview(_reader(info), _job_id(id))
 
 
 @query.field("invocation")
 async def resolve_invocation(
     _: Any, info: GraphQLResolveInfo, jobId: str, pathname: str
 ) -> dict[str, Any] | None:
-    return await _invocation_view(_client(info), _job_id(jobId), pathname)
+    return await _invocation_view(_reader(info), _job_id(jobId), pathname)
 
 
 @query.field("invocationVersion")
 async def resolve_invocation_version(
     _: Any, info: GraphQLResolveInfo, jobId: str, pathname: str
 ) -> str | None:
-    return await invocation_version(_client(info).database, _job_id(jobId), pathname)
+    reader = _reader(info)
+    job_id = _job_id(jobId)
+    if not reader.scope.allows(job_id):
+        return None
+    return await invocation_version(reader.database, job_id, pathname)
 
 
 @query.field("step")
 async def resolve_step(
     _: Any, info: GraphQLResolveInfo, jobId: str, cacheKey: str
 ) -> dict[str, Any] | None:
-    return await _step_view(_client(info), _job_id(jobId), cacheKey)
+    return await _step_view(_reader(info), _job_id(jobId), cacheKey)
 
 
 @query.field("stepCache")
 async def resolve_step_cache(_: Any, info: GraphQLResolveInfo) -> list[dict[str, Any]]:
-    return await _cache_entries(_client(info))
+    return await _cache_entries(_reader(info))
 
 
 @query.field("array")
 async def resolve_array(
     _: Any, info: GraphQLResolveInfo, cid: str, limit: int | None = None
 ) -> dict[str, Any]:
-    return await _array_view(_client(info), cid, limit)
+    return await _array_view(_reader(info), cid, limit)
 
 
 @query.field("entity")
 async def resolve_entity(_: Any, info: GraphQLResolveInfo, cid: str) -> EntityMeta | None:
-    return await _entity_meta(_client(info), cid)
+    return await _entity_meta(_reader(info), cid)
 
 
 # ---- scalars ----

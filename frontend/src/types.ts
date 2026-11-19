@@ -67,6 +67,9 @@ export interface TableRow {
   failure?: { jobId: string; invocation: StepInvocation }
   /** The invocation the row stands for, in a table listing a run's invocations. */
   invocation?: StepInvocation
+  /** A running step invocation, in a table listing a run's invocations: its value cells show its
+   *  latest preview in one line (`StepPreviewLine`). */
+  running?: { jobId: string; cacheKey: string }
 }
 
 /** A stored array or a run's current output, and the keys picked out of it: a run's invocation
@@ -210,7 +213,7 @@ export interface FileInfo {
   text: string
 }
 
-/** The project's EXPERIMENT.md the backend serves (see `EXPERIMENT_README_URL`): the file it read and its markdown,
+/** The project's EXPERIMENT.md the backend serves (see `ViewerConfig.experimentReadmeUrl`): the file it read and its markdown,
  *  unrendered. */
 export interface ExperimentReadmeInfo {
   path: string
@@ -272,6 +275,15 @@ export interface LevelRef {
   label: string
 }
 
+/** One argument of a job's root workflow: the array given, whether it is a single value, and that
+ *  value as text when it is a short string, number, boolean, or null. */
+export interface JobInput {
+  name: string
+  cid: string
+  single: boolean
+  text: string | null
+}
+
 export interface JobSummary {
   id: string
   workflowName: string
@@ -279,4 +291,12 @@ export interface JobSummary {
   createdAt: string
   state: string
   failed: boolean
+  /** For a failed job, the steps with a failed invocation, most failures first (at most three). */
+  failedSteps: string[]
+  inputs: JobInput[]
+  /** The inputs given a different array than in the job of the same workflow created just before
+   *  this one; empty when there is no such job. */
+  changedInputs: string[]
+  /** Whether no job of the same workflow was created after this one. */
+  latest: boolean
 }

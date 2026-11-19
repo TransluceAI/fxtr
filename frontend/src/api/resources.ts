@@ -11,7 +11,7 @@
  * suspends again, for as long as the load keeps failing.
  */
 
-import { EXPERIMENT_README_URL, FILE_URL, SOURCE_BASE } from '../config'
+import { viewerConfig } from '../config'
 import type { ExperimentReadmeInfo, FileInfo, SourceInfo } from '../types'
 
 const cache = new Map<string, Promise<unknown>>()
@@ -81,8 +81,10 @@ export function retryFailedResources(): void {
  */
 export const loadSource = (name: string, codeVersion: string | null): Promise<SourceInfo | null> =>
   resource(`source:${codeVersion ?? ''}:${name}`, async () => {
+    const { sourceBase, headers } = viewerConfig()
+    if (sourceBase === null) return null
     const query = codeVersion === null ? '' : `?codeVersion=${encodeURIComponent(codeVersion)}`
-    const response = await fetch(`${SOURCE_BASE}/${encodeURIComponent(name)}${query}`)
+    const response = await fetch(`${sourceBase}/${encodeURIComponent(name)}${query}`, { headers })
     if (response.status === 404) return null
     if (!response.ok) throw new Error(`source: ${response.status} ${response.statusText}`)
     return (await response.json()) as SourceInfo
@@ -90,11 +92,19 @@ export const loadSource = (name: string, codeVersion: string | null): Promise<So
 export const useSource = (name: string, codeVersion: string | null): SourceInfo | null =>
   read(loadSource(name, codeVersion))
 
+/** What to show in place of a source `useSource` found nothing for: the backend serves no source
+ *  at all (a hub's viewer), or it has none under that name. */
+export function missingSourceLabel(): string {
+  return viewerConfig().sourceBase === null ? 'source unavailable in this viewer' : 'source not indexed'
+}
+
 /** A file of the project's repository, at `commit` or (null) in the working tree. */
 export const loadFile = (path: string, commit: string | null): Promise<FileInfo> =>
   resource(`file:${commit ?? ''}:${path}`, async () => {
+    const { fileUrl, headers } = viewerConfig()
+    if (fileUrl === null) throw new Error(`${path}: source files are unavailable in this viewer`)
     const query = new URLSearchParams({ path, ...(commit === null ? {} : { commit }) })
-    const response = await fetch(`${FILE_URL}?${query}`)
+    const response = await fetch(`${fileUrl}?${query}`, { headers })
     if (!response.ok) throw new Error(`${path}: ${(await response.text()) || response.statusText}`)
     return (await response.json()) as FileInfo
   })
@@ -104,7 +114,9 @@ export const useFile = (path: string, commit: string | null): FileInfo => read(l
  *  does not appear). */
 export const loadExperimentReadme = (): Promise<ExperimentReadmeInfo | null> =>
   resource('experiment_readme', async () => {
-    const response = await fetch(EXPERIMENT_README_URL)
+    const { experimentReadmeUrl, headers } = viewerConfig()
+    if (experimentReadmeUrl === null) return null
+    const response = await fetch(experimentReadmeUrl, { headers })
     if (response.status === 404) return null
     if (!response.ok) throw new Error(`experiment readme: ${response.status} ${response.statusText}`)
     return (await response.json()) as ExperimentReadmeInfo

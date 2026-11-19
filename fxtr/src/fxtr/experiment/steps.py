@@ -21,13 +21,15 @@ from __future__ import annotations
 import abc
 import dataclasses
 import typing
-from collections.abc import Awaitable, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Literal, Protocol, cast, overload
 
 from frozendict import frozendict
 
 from fxtr.core.entities import BoundID, Entity, FxtrEntityStorage
 from fxtr.entity_defns.array import Array, ArrayError, ArrayTypeSpec, is_assignable_array
+from fxtr.entity_defns.dataclass_bases import TaggedDataclass
+from fxtr.entity_defns.partial import Partial
 from fxtr.entity_defns.schema import IdSchema, NullableSchema, Schema
 from fxtr.experiment.annotations import (
     AnnotatedType,
@@ -44,13 +46,47 @@ from fxtr.experiment.signatures import (
     resolve_signature,
 )
 
+type PreviewValue = TaggedDataclass | Partial[Any]
+"""A step's preview: a :class:`~fxtr.entity_defns.partial.Partial` of the value the step will
+return, or any tagged dataclass (see :meth:`StepContext.preview`)."""
+
+type PreviewSource = PreviewValue | Callable[[], PreviewValue]
+"""What :meth:`StepContext.preview` takes: a preview, or a function building one when the host
+writes it."""
+
+
+def is_preview_source(value: object) -> bool:
+    """Whether ``value`` is a :data:`PreviewSource`: a preview, or a callable (whose result is
+    checked only when it is called, by :func:`build_preview`)."""
+    return isinstance(value, (TaggedDataclass, Partial)) or callable(value)
+
+
+def build_preview(source: PreviewSource) -> PreviewValue:
+    """The preview a :data:`PreviewSource` stands for now: the value itself, or what its function
+    returns.
+
+    Raises:
+        TypeError: If the function returns something other than a tagged dataclass or a
+            ``Partial``.
+        Exception: Whatever the function raises.
+    """
+    if isinstance(source, (TaggedDataclass, Partial)):
+        return source
+    value = source()
+    if not isinstance(value, (TaggedDataclass, Partial)):
+        raise TypeError(
+            f"A preview is a tagged dataclass or a Partial of one; got {type(value).__name__}"
+        )
+    return value
+
 
 class StepContext(FxtrEntityStorage):
     """Context for a step.
 
     StepContext extends FxtrEntityStorage and thus supports storing and loading entities.
 
-    Beyond entity storage, a step context exposes the step's :attr:`cache_address` and :meth:`log`.
+    Beyond entity storage, a step context exposes the step's :attr:`cache_address`, :meth:`log`,
+    and :meth:`preview`.
     This is where further step-specific context can be attached, e.g. retrieving secrets, or
     getting access to runtime environment state outside of a sandbox.
     """
@@ -67,6 +103,36 @@ class StepContext(FxtrEntityStorage):
         Logs are stored per attempt and never deduplicated across a replay: a later attempt of the
         same work re-runs the body and writes its own lines. Fire-and-forget: the call does not
         wait for the line to be persisted.
+        """
+
+    @abc.abstractmethod
+    def preview(self, value: PreviewSource) -> None:
+        """Publish a preview of the result this attempt is producing, for watching it live.
+
+        Each call replaces the attempt's previous preview; only the latest is kept, and a host may
+        persist it less often than it is called (coalescing a burst of calls into the last), so
+        calling it on every streamed token is fine. A preview is usually a
+        :class:`~fxtr.entity_defns.partial.Partial` of the value the step will return, or a
+        finished value; it is pure observability, separate from the result, and nothing reads it
+        but the viewer. It lasts until the attempt completes, when the result takes its place; an
+        attempt that fails or is stopped keeps its last one. Fire-and-forget: the call does not
+        wait for the preview to be persisted, and a preview that cannot be serialized is dropped
+        (with a warning) rather than failing the step.
+
+        **Building it when it is written.** ``value`` may instead be a function of no arguments
+        returning the preview. The call then only says the preview has changed, and the host calls
+        the function when it writes the preview: at most as often as it writes (a few times a
+        second), and once more when the attempt fails or is stopped, even after the body has
+        raised. A step
+        whose preview costs more to build than an event costs to handle (a long transcript,
+        assembled again on every streamed token) should pass a function, so a burst of calls
+        builds one preview rather than one per call. The function runs on the step's event loop,
+        between the body's awaits, so it reads the body's state whole; it should return quickly,
+        and if it raises, or returns something that is not a preview, that preview is dropped
+        with a warning.
+
+        Raises:
+            TypeError: If ``value`` is neither a tagged dataclass, a ``Partial``, nor callable.
         """
 
 

@@ -3,7 +3,8 @@ name = "behavior-rollouts"
 version = "0.1.0"
 description = "Behavior rollouts experiments using behaviors and fxtr"
 requires-python = ">=3.12.4"
-dependencies = ["fxtr[runner,debug-web]", "behaviors[models]"]
+# behaviors.judging needs jsonschema, which behaviors otherwise installs only with its docent extra.
+dependencies = ["fxtr[runner,debug-web]", "behaviors[models]", "jsonschema>=4.0"]
 
 [dependency-groups]
 dev = ["pyright>=1.1.411", "pytest>=9.1.1", "pytest-xdist>=3.8.0"]
@@ -23,7 +24,12 @@ build-backend = "hatchling.build"
 packages = ["src/behavior_rollouts"]
 
 [tool.fxtr]
-modules = ["behavior_rollouts.scripted_rollout", "behavior_rollouts.openai_rollout"]
+modules = [
+    "behavior_rollouts.echo",
+    "behavior_rollouts.instructions_in_force",
+    "behavior_rollouts.belief_reinforcement",
+    "behavior_rollouts.transcript_judging",
+]
 
 [tool.fxtr.views]
 package = "views"

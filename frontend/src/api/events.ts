@@ -13,7 +13,6 @@
  * for the pages' requests once six were open.
  */
 
-import { EVENTS_URL } from '../config'
 import type { ViewsEvent } from '../views/liveViews'
 
 /** A job its launcher just announced: `resumed` when it ran before (it has an earlier attempt). */
@@ -49,15 +48,16 @@ export interface EventSocket {
 const FIRST_RETRY_MS = 500
 const LAST_RETRY_MS = 10_000
 
-/** The events socket's URL: `EVENTS_URL` against the page's address, as `ws:` or `wss:`. */
-export function eventsSocketUrl(page: string = window.location.href): string {
-  const url = new URL(EVENTS_URL, page)
+/** Resolve the configured events endpoint against the page, using the WebSocket protocol. */
+export function eventsSocketUrl(endpoint: string, page: string = window.location.href): string {
+  const url = new URL(endpoint, page)
   url.protocol = url.protocol === 'https:' ? 'wss:' : 'ws:'
   return url.toString()
 }
 
 /** Open the events socket and keep it open; returns the function that closes it for good. */
 export function connectViewerEvents(
+  endpoint: string,
   open: (url: string) => EventSocket = (url) => new WebSocket(url),
 ): () => void {
   let socket: EventSocket | null = null
@@ -68,7 +68,7 @@ export function connectViewerEvents(
   const connect = () => {
     window.clearTimeout(retry)
     retry = undefined
-    const opened = open(eventsSocketUrl())
+    const opened = open(eventsSocketUrl(endpoint))
     socket = opened
     opened.onopen = () => {
       retryMs = FIRST_RETRY_MS

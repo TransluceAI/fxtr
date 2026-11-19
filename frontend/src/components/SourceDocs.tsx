@@ -1,6 +1,6 @@
 import { Suspense } from 'react'
 import { FileCode2 } from 'lucide-react'
-import { useSource } from '../api/resources'
+import { missingSourceLabel, useSource } from '../api/resources'
 import { codeLocation, shortCommit } from '../lib/code'
 import { codeTarget } from '../lib/linkBase'
 import { dragLink, useEntityOpener } from '../lib/openEntity'
@@ -39,7 +39,7 @@ export function SourceDocs({
 
 function SourceBody({ method, codeVersion, codeAt }: { method: string; codeVersion: string | null; codeAt: readonly string[] | undefined }) {
   const source = useSource(method, codeVersion)
-  if (!source) return <span className="detail-none">source not indexed</span>
+  if (!source) return <span className="detail-none">{missingSourceLabel()}</span>
   return (
     <>
       <Markdown source={source.docstring} empty="no docs" />

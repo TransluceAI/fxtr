@@ -11,29 +11,36 @@ from behaviors.implementations.context_policies.scripted import ScriptedUserSimu
 from behaviors.implementations.context_policies.user_and_tools import (
     serializable_context_policy_from_user_and_tools,
 )
+from behaviors.implementations.dialects.anthropic_messages import (
+    AnthropicRedactedThinking,
+    AnthropicSignature,
+)
 from behaviors.implementations.models.from_api import chat_session_model_from_api
 from behaviors.types import (
     AssistantMessage,
     CacheableContentText,
+    CacheableContentToolUse,
+    CacheableToolMessage,
     CacheableToolParam,
     CacheControl,
     ContentReasoning,
-    ContentRedactedReasoning,
-    ContentSummarizedReasoning,
     ContentText,
     ContentToolUse,
     ContextTurn,
+    DialectExtras,
     DynamicData,
     JSONObject,
     JSONValue,
     ModelRequest,
     ModelResponse,
     ModelTurn,
+    ReasoningParams,
     RetryConfig,
     SamplingParams,
     SessionInitialization,
     SetSystemMessage,
     StopEndTurn,
+    StopRefusal,
     SystemMessage,
     ToolMessage,
     ToolParam,
@@ -181,9 +188,17 @@ def _all_messages() -> tuple[SystemMessage, UserMessage, AssistantMessage, ToolM
         AssistantMessage(
             texts
             + (
-                ContentReasoning("thinking"),
-                ContentSummarizedReasoning("summary", "signature"),
-                ContentRedactedReasoning("encrypted"),
+                ContentReasoning("thinking", "full"),
+                ContentReasoning(
+                    text="summary",
+                    form="summary",
+                    reasoning_state=DynamicData.from_tagged(AnthropicSignature("signature")),
+                ),
+                ContentReasoning(
+                    text="",
+                    form="redacted",
+                    reasoning_state=DynamicData.from_tagged(AnthropicRedactedThinking("encrypted")),
+                ),
                 ContentToolUse("call", "measure", {"scores": [1, 1.0, True, None]}, None),
             )
         ),
@@ -207,10 +222,15 @@ def test_json_roundtrip_preserves_tool_variants_and_json() -> None:
     original = ModelRequest(
         context=_all_messages(),
         tools=(
-            ToolParam("plain", None, {}, None, None),
-            CacheableToolParam("without_hint", None, {}, None, None),
+            ToolParam("plain", None, {}, False, None),
+            CacheableToolParam("without_hint", None, {}, False, None),
             CacheableToolParam(
-                "cached", None, {"nested": [1, 1.0, True, {}]}, None, ({},), CacheControl()
+                "cached",
+                None,
+                {"nested": [1, 1.0, True, {}]},
+                False,
+                ({},),
+                cache_control=CacheControl(),
             ),
         ),
         tool_choice=None,
@@ -229,6 +249,128 @@ def test_json_roundtrip_preserves_tool_variants_and_json() -> None:
     scores = nested["scores"]
     assert isinstance(scores, list)
     assert [type(score) for score in scores] == [int, float, bool, type(None)]
+
+
+@pytest.mark.anyio
+async def test_cacheable_tool_results_keep_their_identity_in_storage_and_json() -> None:
+    texts = (
+        ContentText("plain"),
+        CacheableContentText("cached", cache_control=CacheControl(ttl="5m")),
+    )
+    original = Transcript(
+        "tool results",
+        None,
+        (
+            ToolMessage(texts, "plain", None),
+            CacheableToolMessage(texts, "without_hint", False),
+            CacheableToolMessage(texts, "hinted", True, cache_control=CacheControl(ttl="1h")),
+        ),
+    )
+    store = MemoryStorage()
+    ref = await store.store(original)
+    restored = await store.load(ref)
+    assert restored == original
+    assert [type(message) for message in restored.messages] == [
+        ToolMessage,
+        CacheableToolMessage,
+        CacheableToolMessage,
+    ]
+    assert (await store.store(restored)).entity_id == ref.entity_id
+    assert _json_roundtrip(DynamicData.from_tagged(original)).as_type(Transcript) == original
+
+
+@dataclasses.dataclass(frozen=True)
+class _StoredRequest(DataclassEntity, fxtr_type="test.behaviors.StoredRequest.v1"):
+    request: ModelRequest
+
+
+@dataclasses.dataclass(frozen=True)
+class _StoredExchange(DataclassEntity, fxtr_type="test.behaviors.StoredExchange.v1"):
+    request: ModelRequest
+    response: ModelResponse
+
+
+@pytest.mark.anyio
+async def test_tool_groups_speed_and_summary_fields_roundtrip() -> None:
+    """The fields for grouped and freeform tools, speed tiers, summary choices, provider cost
+    and content-filter detail survive storage and plain JSON, and a cacheable tool call keeps
+    its type."""
+    calls = (
+        ContentToolUse("c1", "search", {"q": "x"}, None, namespace="docs"),
+        CacheableContentToolUse("c2", "apply_patch", {"input": "*** Begin"}, None),
+        CacheableContentToolUse(
+            "c3", "lookup", {}, None, namespace="docs", cache_control=CacheControl(ttl="1h")
+        ),
+    )
+    request = ModelRequest(
+        context=(UserMessage((ContentText("hi"),)), AssistantMessage(calls)),
+        tools=(
+            ToolParam("search", None, {}, False, None, namespace="docs", namespace_description="d"),
+            CacheableToolParam(
+                "apply_patch",
+                None,
+                {"type": "object", "properties": {"input": {"type": "string"}}},
+                False,
+                None,
+                freeform_format={"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+                cache_control=CacheControl(),
+            ),
+        ),
+        tool_choice=None,
+        parallel_tool_calls=None,
+        sampling=SamplingParams(speed="fast", reasoning=ReasoningParams(summary=False)),
+    )
+    response = ModelResponse(
+        "r",
+        (AssistantMessage((ContentText("no"),)),),
+        StopRefusal("refusal", complete=None, detail={"category": "cyber", "scores": [1, 0.5]}),
+        Usage(3, None, 1, 2, None, speed="standard", billed_cost_usd=0.25),
+    )
+    original = _StoredExchange(request, response)
+    store = MemoryStorage()
+    ref = await store.store(original)
+    restored = await store.load(ref)
+    assert restored == original
+    assert (await store.store(restored)).entity_id == ref.entity_id
+    restored_calls = restored.request.context[1].content
+    assert [type(call) for call in restored_calls] == [
+        ContentToolUse,
+        CacheableContentToolUse,
+        CacheableContentToolUse,
+    ]
+    assert _json_roundtrip(DynamicData.from_tagged(request)).as_type(ModelRequest) == request
+    assert _json_roundtrip(DynamicData.from_tagged(response)).as_type(ModelResponse) == response
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "extras",
+    [
+        None,
+        DialectExtras(dialect="openai_responses"),
+        DialectExtras(
+            dialect="anthropic_messages",
+            headers=(("anthropic-beta", "a, b"), ("anthropic-beta", "c")),
+            query=(("beta", "true"),),
+            body={"thinking": {"display": "omitted"}, "context_management": {"edits": [1, 1.0]}},
+        ),
+    ],
+)
+async def test_model_request_extras_roundtrip(extras: DialectExtras | None) -> None:
+    original = ModelRequest(
+        context=(UserMessage((ContentText("hi"),)),),
+        tools=(),
+        tool_choice=None,
+        parallel_tool_calls=None,
+        sampling=SamplingParams(),
+        extras=extras,
+    )
+    store = MemoryStorage()
+    ref = await store.store(_StoredRequest(original))
+    restored = await store.load(ref)
+    assert restored.request == original
+    assert (await store.store(restored)).entity_id == ref.entity_id
+    assert _json_roundtrip(DynamicData.from_tagged(original)).as_type(ModelRequest) == original
 
 
 class _CapturingAPI:

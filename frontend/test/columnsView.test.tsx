@@ -7,13 +7,13 @@ import {buildLevel} from '../src/model/level'
 import {parseRel} from '../src/panes/address'
 import {TRACE} from '../src/panes/columns'
 import {ColumnsView} from '../src/panes/ColumnsView'
-import {useColumns, type Centre, type ColumnsState} from '../src/panes/useColumns'
+import {useColumns, type Center, type ColumnsState} from '../src/panes/useColumns'
 import type {Catalog} from '../src/panes/resolve'
 import {inProgress, overviewOf} from './fixtures'
 
 const level = buildLevel('job', overviewOf(inProgress()))
 const catalog: Catalog = {root: 'root', registry: dispatchRegistry([]), level: () => ({status: 'ready', level})}
-const centre: Centre = {address: {view: 'trace', location: {root: 'step', steps: [], path: []}}, keys: {}}
+const center: Center = {address: {view: 'trace', location: {root: 'step', steps: [], path: []}}, keys: {}}
 
 let host: HTMLDivElement
 let root: ReturnType<typeof createRoot>
@@ -48,7 +48,7 @@ it('slides the columns on a sideways scroll, once a frame, without rendering any
     slides.push(slide)
   }
   function Harness() {
-    state = useColumns({}, catalog, centre)
+    state = useColumns({}, catalog, center)
     return <ColumnsView state={state} onSlide={onSlide} renderPanel={(panel) => <Panel id={panel.id} />} />
   }
   await act(async () => root.render(<Harness />))

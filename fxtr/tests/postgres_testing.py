@@ -544,6 +544,9 @@ class FakeEnvironment(Environment):
         ephemeral: Whether the pin is ephemeral.
         known_commits: The commits the repository contains, for ``missing_commits``; ``None``
             for every commit.
+        pushed: Each ``push_commits`` call's git remote and commits, in order. Nothing is pushed.
+        fetched: Each ``fetch_commits`` call's git remote and commits, in order. Nothing is
+            fetched, so ``known_commits`` does not change.
         problems: What ``check_synced`` reports.
         committed_files: What ``committed_file`` reads, by commit and path; any other file is
             missing.
@@ -555,6 +558,8 @@ class FakeEnvironment(Environment):
     tree: str = TEST_CODE_VERSION.tree
     ephemeral: bool = False
     known_commits: frozenset[str] | None = None
+    pushed: list[tuple[str, tuple[str, ...]]] = dataclasses.field(default_factory=list)
+    fetched: list[tuple[str, tuple[str, ...]]] = dataclasses.field(default_factory=list)
     problems: Sequence[Problem] = ()
     committed_files: Mapping[tuple[str, str], bytes] = dataclasses.field(default_factory=dict)
     pins: list[bool] = dataclasses.field(default_factory=list)
@@ -577,6 +582,14 @@ class FakeEnvironment(Environment):
             repo_root=project.root,
             project_path=".",
         )
+
+    async def push_commits(self, project: Project, git_remote: str, commits: Iterable[str]) -> None:
+        self.pushed.append((git_remote, tuple(commits)))
+
+    async def fetch_commits(
+        self, project: Project, git_remote: str, commits: Iterable[str]
+    ) -> None:
+        self.fetched.append((git_remote, tuple(commits)))
 
     async def missing_commits(self, project: Project, commits: Iterable[str]) -> list[str]:
         known = self.known_commits
@@ -616,13 +629,16 @@ def a_client(
     verify_determinism: bool = False,
     verify_environment: bool = True,
     limits: RunLimits = RunLimits(),
+    project: Project | None = None,
 ) -> LocalProjectClient:
     """A local client over ``database`` whose registry holds exactly ``functions``, with a fake
     environment, fast clocks, no determinism verification (as for :func:`a_runner`), and no
-    Ctrl-C handling. The client does not own the database's schema: the fixture does."""
+    Ctrl-C handling. The client does not own the database's schema: the fixture does. ``project``
+    replaces the test project (:func:`a_project`), for a test that configures it, its remotes for
+    example."""
     return LocalProjectClient(
         database,
-        project=a_project(database),
+        project=a_project(database) if project is None else project,
         environment=FakeEnvironment() if environment is None else environment,
         registry=FunctionRegistry(functions),
         limits=limits,

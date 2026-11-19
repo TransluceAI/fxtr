@@ -1,0 +1,75 @@
+{
+  "model": "claude-sonnet-4-5",
+  "max_tokens": 8192,
+  "temperature": 1,
+  "stream": true,
+  "metadata": {"user_id": "acct_test"},
+  "tool_choice": {"type": "auto"},
+  "system": [
+    {"type": "text", "text": "You are Claude Code, Anthropic's official CLI for Claude."},
+    {
+      "type": "text",
+      "text": "Environment: cwd=/repo, platform=darwin. Follow the user's instructions.",
+      "cache_control": {"type": "ephemeral"}
+    }
+  ],
+  "tools": [
+    {
+      "name": "Bash",
+      "description": "Run a shell command in the workspace.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"command": {"type": "string"}},
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "Read",
+      "description": "Read a file from the workspace.",
+      "input_schema": {
+        "type": "object",
+        "properties": {"file_path": {"type": "string"}},
+        "required": ["file_path"]
+      },
+      "cache_control": {"type": "ephemeral"}
+    }
+  ],
+  "messages": [
+    {"role": "user", "content": "List the files, then read the README and summarize it."},
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "text", "text": "I'll list the files first."},
+        {"type": "tool_use", "id": "toolu_01", "name": "Bash", "input": {"command": "ls"}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_01",
+          "content": [{"type": "text", "text": "README.md\nsrc\n"}]
+        }
+      ]
+    },
+    {
+      "role": "assistant",
+      "content": [
+        {"type": "tool_use", "id": "toolu_02", "name": "Read", "input": {"file_path": "README.md"}}
+      ]
+    },
+    {
+      "role": "user",
+      "content": [
+        {
+          "type": "tool_result",
+          "tool_use_id": "toolu_02",
+          "content": "# Project\nA sample project.",
+          "is_error": false
+        },
+        {"type": "text", "text": "Now summarize it in one sentence."}
+      ]
+    }
+  ]
+}

@@ -20,11 +20,18 @@ beside each other configure it.
                                       # which a job's lease is presumed abandoned. Every process
                                       # of a project must agree on it, since one process's
                                       # heartbeat is judged by another's threshold
+    default_remote = "team"           # str, optional: the remote that a push or a pull uses when
+                                      # it names no remote
 
     [tool.fxtr.views]                 # optional: the project's renderers, as a view bundle
     package = "views"                 # str, required in the table: the renderer package's
                                       # directory, relative to the project root. The package
                                       # itself says where its bundle is (fxtr.project.views)
+
+    [tool.fxtr.remotes.team]          # optional, any number: a place to push jobs to and pull
+    kind = "hub"                      # jobs from, for every checkout. kind (str) is required;
+    url = "https://hub.transluce.org" # the kind declares the other settings and checks them
+    project = "6f1c…"                 # when it builds the remote (see fxtr.project.remotes)
 
 **``fxtr.local.toml``**, gitignored, how *this machine* reaches the project's state::
 
@@ -34,6 +41,11 @@ beside each other configure it.
                                       # default "fxtr_<name>" with the name lowercased and other
                                       # characters replaced by "_": the Postgres schema the
                                       # project's tables live in
+    default_remote = "mine"           # str, optional: overrides the committed default_remote
+
+    [remotes.mine]                    # optional, any number: remotes of this machine only. A
+    kind = "oci"                      # name may not be configured in both files
+    repository = "ghcr.io/me/jobs"
 
 ``fxtr init`` writes the local file. The :data:`DATABASE_URL_ENV_VAR` environment variable
 (``FXTR_DATABASE_URL``) overrides its ``database_url`` when set, and stands in for the file when
@@ -50,6 +62,12 @@ project's keys are the ones used; an empty value is skipped, so a placeholder li
 (:data:`FXTR_SETTINGS`, :data:`LOCAL_SETTINGS`): a key that is not declared, or a value of the
 wrong type, is a :class:`ConfigError`, so a misspelled setting cannot be silently ignored.
 
+**Remotes.** The project's remotes are those of both files: committed ones, which every
+checkout has, and this machine's own. A name configured in both files is an error, since a push
+that names it could mean either. The default remote is the local file's ``default_remote`` if
+it sets one, else the committed one. ``fxtr remote`` edits both files
+(:mod:`fxtr.project.remotes.files`).
+
 **Finding a project.** :func:`find_project_root` walks up from an *anchor*, a file or directory,
 to the nearest directory holding a ``pyproject.toml``, which must have the ``[tool.fxtr]`` table:
 the nearest pyproject is the Python project the anchor belongs to, and if it is not a fxtr
@@ -62,7 +80,6 @@ executing), the CLI on the working directory. :func:`load_project` reads a root 
 from __future__ import annotations
 
 import dataclasses
-import json
 import os
 import re
 import tomllib
@@ -126,7 +143,8 @@ class Setting:
 
 
 REQUIRED = object()
-"""A :class:`Setting` default meaning the key must be present."""
+"""A :class:`Setting` default meaning the key must be present, and a string value not empty: a
+required string names something (a URL, an id, a path), which an empty string cannot."""
 
 
 def _positive_number(value: float) -> str | None:
@@ -154,6 +172,8 @@ def _relative_path(value: str) -> str | None:
 FXTR_SETTINGS = (
     Setting("modules", list, [], "a list of module names", _module_names),
     Setting("views", dict, None, "a table ([tool.fxtr.views])"),
+    Setting("default_remote", str, None, "the name of a configured remote"),
+    Setting("remotes", dict, {}, "a table of remotes ([tool.fxtr.remotes.<name>])"),
     Setting(
         "stale_after",
         (int, float),
@@ -172,10 +192,18 @@ VIEWS_SETTINGS = (
 LOCAL_SETTINGS = (
     Setting("database_url", str, REQUIRED, "a database URL"),
     Setting("schema", str, None, "a Postgres schema name", _schema_name),
+    Setting("default_remote", str, None, "the name of a configured remote"),
+    Setting("remotes", dict, {}, "a table of remotes ([remotes.<name>])"),
 )
 """The ``fxtr.local.toml`` table. ``database_url`` is required of the file only when
 :data:`DATABASE_URL_ENV_VAR` does not supply it; ``schema`` defaults to
 :func:`default_schema_name` of the project's name."""
+
+COMMITTED_REMOTES_TABLE = f"tool.{TOOL_TABLE}.remotes"
+"""The dotted name of the table of remotes in ``pyproject.toml``."""
+
+LOCAL_REMOTES_TABLE = "remotes"
+"""The dotted name of the table of remotes in ``fxtr.local.toml``."""
 
 
 # ---- the project ----
@@ -194,6 +222,56 @@ class ViewsConfig:
 
 
 @dataclasses.dataclass(frozen=True)
+class RemoteConfig:
+    """One remote's table: ``[tool.fxtr.remotes.<name>]`` of ``pyproject.toml`` or
+    ``[remotes.<name>]`` of ``fxtr.local.toml``. A remote is a place that a project pushes jobs
+    to and pulls jobs from (see :mod:`fxtr.project.remotes`).
+
+    Attributes:
+        name: The name of the remote. It is the key of the table.
+        kind: The kind of the remote. The kind is the implementation of the remote interface
+            that reaches the remote.
+        settings: The other keys of the table, as the file writes them. The kind declares and
+            checks them when it builds the remote. Thus, an error in them shows when you use the
+            remote, not when the project loads.
+        file: The file whose table configures the remote, or ``None`` for a remote that code
+            builds without a file.
+    """
+
+    name: str
+    kind: str
+    settings: Mapping[str, Any]
+    file: Path | None = None
+
+    @property
+    def local(self) -> bool:
+        """True if ``fxtr.local.toml`` configures the remote, for this machine only."""
+        return self.file is not None and self.file.name == LOCAL_CONFIG_FILENAME
+
+    @property
+    def where(self) -> str:
+        """The remote's table and its file, for messages."""
+        if self.file is None:
+            return f"remote {self.name!r}"
+        table = LOCAL_REMOTES_TABLE if self.local else COMMITTED_REMOTES_TABLE
+        return f"[{table}.{self.name}] in {self.file}"
+
+
+@dataclasses.dataclass(frozen=True)
+class RemotesConfig:
+    """The remotes of both files (see the module docstring).
+
+    Attributes:
+        by_name: The remotes that both files configure, by name.
+        default: The name of the remote that a push or a pull uses when it names no remote, or
+            ``None``.
+    """
+
+    by_name: Mapping[str, RemoteConfig] = dataclasses.field(default_factory=dict)
+    default: str | None = None
+
+
+@dataclasses.dataclass(frozen=True)
 class Project:
     """A located project and its configuration (see the module docstring).
 
@@ -205,6 +283,7 @@ class Project:
         database_url: How this machine reaches the project's database.
         schema: The database schema (namespace) the project's tables live in.
         views: ``[tool.fxtr.views]``, or ``None`` for a project without renderers of its own.
+        remotes: The remotes of both files.
     """
 
     root: Path
@@ -214,6 +293,7 @@ class Project:
     database_url: str
     schema: str
     views: ViewsConfig | None = None
+    remotes: RemotesConfig = dataclasses.field(default_factory=RemotesConfig)
 
     @property
     def pyproject_path(self) -> Path:
@@ -261,15 +341,13 @@ def load_project(root: Path, *, env: Mapping[str, str] = os.environ) -> Project:
     root = root.resolve()
     pyproject_path = root / PYPROJECT_FILENAME
     pyproject = _read_toml(pyproject_path)
-    name = _table(pyproject, "project").get("name")
-    if not isinstance(name, str) or not name:
-        raise ConfigError(f"{pyproject_path} has no [project] name")
+    name = _project_name(pyproject, pyproject_path)
     fxtr = _read_fxtr_table(pyproject, pyproject_path)
 
     local_path = root / LOCAL_CONFIG_FILENAME
     local_table = _read_toml(local_path) if local_path.is_file() else {}
     url_override = env.get(DATABASE_URL_ENV_VAR)
-    local = _read_settings(
+    local = read_settings(
         local_table,
         LOCAL_SETTINGS,
         str(local_path),
@@ -290,7 +368,104 @@ def load_project(root: Path, *, env: Mapping[str, str] = os.environ) -> Project:
         database_url=url_override or local["database_url"],
         schema=local["schema"] if local["schema"] is not None else default_schema_name(name),
         views=_views(root, fxtr["views"], pyproject_path),
+        remotes=_remotes_config(fxtr, pyproject_path, local, local_path),
     )
+
+
+def _project_name(pyproject: Mapping[str, Any], pyproject_path: Path) -> str:
+    name = _table(pyproject, "project").get("name")
+    if not isinstance(name, str) or not name:
+        raise ConfigError(f"{pyproject_path} has no [project] name")
+    return name
+
+
+def load_project_name(root: Path) -> str:
+    """Read only the name of the project at ``root``, with no database configured.
+
+    Raises:
+        ConfigError: If ``pyproject.toml`` is malformed, or the project has no name.
+    """
+    pyproject_path = root.resolve() / PYPROJECT_FILENAME
+    return _project_name(_read_toml(pyproject_path), pyproject_path)
+
+
+def load_remotes(root: Path) -> RemotesConfig:
+    """Read only the remotes of the project at ``root``, from both files: what the remote
+    commands need, with no database configured.
+
+    Raises:
+        ConfigError: If a file is malformed, or a setting is unknown or not valid (see
+            :func:`load_project`).
+    """
+    root = root.resolve()
+    pyproject_path = root / PYPROJECT_FILENAME
+    fxtr = _read_fxtr_table(_read_toml(pyproject_path), pyproject_path)
+    local_path = root / LOCAL_CONFIG_FILENAME
+    local_table = _read_toml(local_path) if local_path.is_file() else {}
+    local = read_settings(local_table, LOCAL_SETTINGS, str(local_path), optional=("database_url",))
+    return _remotes_config(fxtr, pyproject_path, local, local_path)
+
+
+def _remotes_config(
+    committed: Mapping[str, Any],
+    pyproject_path: Path,
+    local: Mapping[str, Any],
+    local_path: Path,
+) -> RemotesConfig:
+    """Read and merge the remotes of both files (see the module docstring).
+
+    Args:
+        committed: ``[tool.fxtr]`` of ``pyproject.toml``, read against :data:`FXTR_SETTINGS`.
+        pyproject_path: That file, for error messages.
+        local: ``fxtr.local.toml``, read against :data:`LOCAL_SETTINGS`.
+        local_path: That file, for error messages.
+
+    Raises:
+        ConfigError: If a remote is not a table or has no ``kind``, or a remote is configured in
+            both files.
+    """
+    tables = (
+        (committed, pyproject_path, COMMITTED_REMOTES_TABLE),
+        (local, local_path, LOCAL_REMOTES_TABLE),
+    )
+    remotes: dict[str, RemoteConfig] = {}
+    default_remote: str | None = None
+    for settings, path, name in tables:
+        for remote in _remotes(settings["remotes"], path, f"[{name}] in {path}"):
+            if remote.name in remotes:
+                raise ConfigError(
+                    f"The remote {remote.name!r} is configured in both {pyproject_path} and"
+                    f" {local_path}: rename or remove one of them"
+                )
+            remotes[remote.name] = remote
+        if settings["default_remote"] is not None:
+            default_remote = settings["default_remote"]
+    return RemotesConfig(by_name=remotes, default=default_remote)
+
+
+def _remotes(table: Mapping[str, Any], path: Path, where: str) -> list[RemoteConfig]:
+    """Read the remotes of one file's ``remotes`` table. Each remote must be a table with a
+    ``kind`` (a string). This function does not read the settings of the kind: the kind reads
+    them when it builds the remote.
+
+    Args:
+        table: The ``remotes`` table.
+        path: The file.
+        where: The table of remotes and its file, for error messages.
+
+    Raises:
+        ConfigError: If a remote is not a table, or has no ``kind``.
+    """
+    remotes: list[RemoteConfig] = []
+    for name, remote in table.items():
+        if not isinstance(remote, dict):
+            raise ConfigError(f"{where}: {name} must be a table")
+        kind = remote.get("kind")
+        if not isinstance(kind, str) or not kind:
+            raise ConfigError(f"{where}: {name} needs a kind (a string)")
+        settings = {key: value for key, value in remote.items() if key != "kind"}
+        remotes.append(RemoteConfig(name=name, kind=kind, settings=settings, file=path))
+    return remotes
 
 
 def load_views(root: Path) -> ViewsConfig | None:
@@ -310,13 +485,13 @@ def _read_fxtr_table(pyproject: Mapping[str, Any], pyproject_path: Path) -> dict
     tool = _table(pyproject, "tool").get(TOOL_TABLE)
     if not isinstance(tool, dict):
         raise ConfigError(f"{pyproject_path} has no [tool.{TOOL_TABLE}] table")
-    return _read_settings(tool, FXTR_SETTINGS, f"[tool.{TOOL_TABLE}] in {pyproject_path}")
+    return read_settings(tool, FXTR_SETTINGS, f"[tool.{TOOL_TABLE}] in {pyproject_path}")
 
 
 def _views(root: Path, table: Mapping[str, Any] | None, pyproject_path: Path) -> ViewsConfig | None:
     if table is None:
         return None
-    views = _read_settings(table, VIEWS_SETTINGS, f"[tool.{TOOL_TABLE}.views] in {pyproject_path}")
+    views = read_settings(table, VIEWS_SETTINGS, f"[tool.{TOOL_TABLE}.views] in {pyproject_path}")
     return ViewsConfig(package=root / views["package"])
 
 
@@ -346,17 +521,31 @@ def default_schema_name(project_name: str) -> str:
 
 
 def write_local_config(root: Path, *, database_url: str, schema: str | None = None) -> Path:
-    """Write the project's ``fxtr.local.toml`` (what ``fxtr init`` does), replacing any existing
-    one, and return its path. ``schema`` is written only when given; otherwise the default
-    applies when the file is read."""
-    lines = [
-        "# How this machine reaches the project's fxtr state. Local; not committed.",
-        f"database_url = {json.dumps(database_url)}",
-    ]
-    if schema is not None:
-        lines.append(f"schema = {json.dumps(schema)}")
+    """Write the project's database settings to its ``fxtr.local.toml`` (what ``fxtr init``
+    does), and return the file's path. If the file exists, this function replaces its
+    ``database_url`` and ``schema`` and keeps the rest, such as this machine's remotes.
+    ``schema`` is written only when given; otherwise the default applies when the file is read.
+    """
+    import tomlkit
+    from tomlkit.exceptions import TOMLKitError
+
     path = root / LOCAL_CONFIG_FILENAME
-    path.write_text("\n".join(lines) + "\n")
+    try:
+        document = tomlkit.parse(path.read_text())
+    except (OSError, TOMLKitError):
+        # None yet, or one that cannot be read: nothing in it can be kept.
+        document = tomlkit.document()
+        document.add(
+            tomlkit.comment(
+                "How this machine reaches the project's fxtr state. Local; not committed."
+            )
+        )
+    document["database_url"] = database_url
+    if schema is not None:
+        document["schema"] = schema
+    elif "schema" in document:
+        del document["schema"]
+    path.write_text(tomlkit.dumps(document))
     return path
 
 
@@ -378,7 +567,7 @@ def _table(data: Mapping[str, Any], key: str) -> Mapping[str, Any]:
     return table if isinstance(table, dict) else {}
 
 
-def _read_settings(
+def read_settings(
     table: Mapping[str, Any],
     settings: tuple[Setting, ...],
     where: str,
@@ -387,9 +576,14 @@ def _read_settings(
     missing_hint: str | None = None,
 ) -> dict[str, Any]:
     """Read ``table`` strictly against ``settings``: every declared key with its type and check,
-    defaults for absent ones, and an error for anything undeclared.
+    defaults for absent ones, and an error for anything undeclared. This function reads the
+    tables of the configuration files. It also reads the table of each remote,
+    against the settings of its kind (:mod:`fxtr.project.remotes`).
 
     Args:
+        table: The table to read.
+        settings: The settings that the table can hold.
+        where: Where the table is, for error messages.
         optional: Required settings that may be absent this time (something else supplies them).
         missing_hint: What to say instead of the generic message when a required setting is
             absent.
@@ -409,6 +603,8 @@ def _read_settings(
             isinstance(value, bool) and bool not in _types(setting.type)
         )
         problem = None if wrong_type else setting.check(value)
+        if problem is None and setting.default is REQUIRED and value == "":
+            problem = "must not be empty"
         if wrong_type or problem is not None:
             detail = "" if problem is None else f" ({problem})"
             raise ConfigError(
@@ -424,10 +620,12 @@ def _types(type_: type | tuple[type, ...]) -> tuple[type, ...]:
 
 __all__ = [
     "DATABASE_URL_ENV_VAR",
+    "COMMITTED_REMOTES_TABLE",
     "DEFAULT_STALE_AFTER",
     "ENV_FILENAME",
     "FXTR_SETTINGS",
     "LOCAL_CONFIG_FILENAME",
+    "LOCAL_REMOTES_TABLE",
     "LOCAL_SETTINGS",
     "PYPROJECT_FILENAME",
     "REQUIRED",
@@ -435,6 +633,8 @@ __all__ = [
     "Project",
     "ProjectError",
     "ProjectNotFoundError",
+    "RemoteConfig",
+    "RemotesConfig",
     "Setting",
     "VIEWS_SETTINGS",
     "ViewsConfig",
@@ -442,7 +642,9 @@ __all__ = [
     "find_project_root",
     "load_env_file",
     "load_project",
+    "load_remotes",
     "load_views",
     "locate_project",
+    "read_settings",
     "write_local_config",
 ]

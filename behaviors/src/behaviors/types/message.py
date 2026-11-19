@@ -10,6 +10,7 @@ which providers require the client to echo back verbatim.
 from dataclasses import dataclass
 from typing import Literal
 
+from behaviors.types.cache_control import CacheControl
 from behaviors.types.content import Content, TextContent
 from behaviors.types.namespace import behaviors_type
 from fxtr.entity_defns.dataclass_bases import TaggedDataclass
@@ -133,4 +134,19 @@ class ToolMessage(TaggedDataclass, fxtr_type=behaviors_type("ToolMessage.v1")):
     role: Literal["tool"] = "tool"
 
 
-ChatMessage = SystemMessage | UserMessage | AssistantMessage | ToolMessage
+@dataclass(frozen=True)
+class CacheableToolMessage(ToolMessage, fxtr_type=behaviors_type("CacheableToolMessage.v1")):
+    """A tool result that may carry a prompt-cache breakpoint.
+
+    In the Anthropic Messages API the breakpoint sits on the `tool_result` block itself, which
+    is where agentic callers (Claude Code, for one) place their incremental conversation-prefix
+    breakpoint.
+
+    Attributes:
+        cache_control: The breakpoint, or None for a plain tool result.
+    """
+
+    cache_control: CacheControl | None = None
+
+
+ChatMessage = SystemMessage | UserMessage | AssistantMessage | ToolMessage | CacheableToolMessage

@@ -20,8 +20,9 @@ interface Props {
  * The last card of a level: what the workflow returned, as the expression over its steps. A chip
  * names each step read, and selects it. When the returned node is derived, no other card holds its
  * value, so the head has a button opening its panel, its rows are the card's table
- * (`CardTable`). Until the level has a result the card says why: the body is still running, or it
- * has returned and the level waits on nodes still being computed.
+ * (`CardTable`). Until the level has a result the card says why: the body is still running, it
+ * has returned and the level waits on nodes still being computed, or the invocation ended without
+ * one.
  */
 export function ReturnCard({ level, steps, valueShown, onSelectStep }: Props) {
   const { result } = level
@@ -65,10 +66,12 @@ function ValueButton({ shown }: { table: StepDoc; shown: boolean }) {
   )
 }
 
-/** Why the level has no result yet, or null once it has one. */
-function pendingReason(level: Level): string | null {
+/** Why the level has no result yet, or null once it has one. A level nothing more is happening
+ *  in (its invocation failed, was interrupted, or stopped, and no node is still being computed)
+ *  says its invocation's state, whether or not the body got as far as returning. */
+export function pendingReason(level: Level): string | null {
   if (level.resultCid !== null) return null
-  if (level.result) {
+  if (level.result && level.live) {
     const unsettled = level.steps.filter((step) => isLive(step.progress.glyph.shape)).length
     return unsettled > 0 ? `waiting on ${unsettled} ${unsettled === 1 ? 'node' : 'nodes'}` : 'finishing'
   }

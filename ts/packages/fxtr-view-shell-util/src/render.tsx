@@ -1,6 +1,8 @@
 // Dispatch over the registry a `RegistryProvider` puts in context, one component per kind of
 // subject. `RenderEntity` renders an entity slot from an id alone: it loads the entity through the
 // view shell, reads its type name off the data, and dispatches on it with the id threaded in.
+// `RenderValue` renders a value slot from a value the host already holds (a step's live preview,
+// which is not a stored entity), dispatching on the value's type name the same way.
 // `RenderInvocation` renders an invocation slot for a step / workflow name the host already has
 // from its own data; the renderer loads records and arrays as it needs them. Both go through
 // `RenderSlot`, this module's one dispatch (not exported: a caller always knows which kind it is
@@ -25,6 +27,7 @@ import {
   type EntityViewProps,
   type InvocationViewProps,
   type Renderer,
+  type ValueViewProps,
   type ViewParams,
   type ViewSlot,
 } from "fxtr-view";
@@ -224,6 +227,39 @@ export function RenderInvocation<Props extends InvocationViewProps>(props: Rende
       key={JSON.stringify(componentProps.invocations.map((spawn) => invocationRefKey(spawn.ref)))}
       slot={slot}
       subjectType={name}
+      {...(renderer === undefined ? {} : { renderer })}
+      {...(fallbacks === undefined ? {} : { fallbacks })}
+      {...componentProps}
+    />
+  );
+}
+
+/** Props of `RenderValue`: the value slot, optionally the renderer id and the host's fallbacks,
+ *  and the slot's props (which include the value). */
+export type RenderValueProps<Props extends ValueViewProps> = {
+  readonly slot: ViewSlot<Props>;
+  readonly renderer?: string;
+  readonly fallbacks?: DispatchFallbacks;
+} & Props;
+
+/** Value dispatch: dispatch on the value's type name with the value (and the other props) threaded
+ *  in, as `RenderEntity` does once an entity has loaded; nothing loads, so nothing waits. A new
+ *  value of the same type re-renders the renderer rather than remounting it, so a value that keeps
+ *  changing (a streaming preview) keeps the renderer's state. Data without a type tag shows the
+ *  error fallback. Only slots whose props carry the value are accepted. */
+export function RenderValue<Props extends ValueViewProps>(props: RenderValueProps<Props>) {
+  const { slot, renderer, fallbacks, ...rest } = props;
+  const componentProps = rest as unknown as Props;
+  let typeName: string;
+  try {
+    typeName = typeNameOf(componentProps.value);
+  } catch (error) {
+    return withDefaults(fallbacks).error(error);
+  }
+  return (
+    <RenderSlot
+      slot={slot}
+      subjectType={typeName}
       {...(renderer === undefined ? {} : { renderer })}
       {...(fallbacks === undefined ? {} : { fallbacks })}
       {...componentProps}

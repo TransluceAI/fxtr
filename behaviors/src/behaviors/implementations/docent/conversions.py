@@ -22,12 +22,12 @@ from docent.data_models.chat import UserMessage as DocentUserMessage
 from docent.data_models.chat.content import ContentReasoning as DocentContentReasoning
 from docent.data_models.chat.content import ContentText as DocentContentText
 
+from behaviors.implementations.dialects.anthropic_messages import AnthropicSignature
+from behaviors.implementations.dialects.codec_utils import own_reasoning_state
 from behaviors.types.agent_run import AgentRun, Transcript, TranscriptGroup
 from behaviors.types.content import (
     Content,
     ContentReasoning,
-    ContentRedactedReasoning,
-    ContentSummarizedReasoning,
     ContentText,
     ContentToolUse,
 )
@@ -44,6 +44,21 @@ def _text_of(content: tuple[Content, ...]) -> str:
     return "\n\n".join(block.text for block in content if isinstance(block, ContentText))
 
 
+def to_docent_reasoning(block: ContentReasoning) -> DocentContentReasoning:
+    """A reasoning block as Docent shows it: the model's own reasoning, a summary of it, or a
+    redacted block. Of the provider state, only an Anthropic signature has a Docent field."""
+    if block.form == "summary":
+        signed = own_reasoning_state(block.reasoning_state, AnthropicSignature)
+        return DocentContentReasoning(
+            reasoning="",
+            summary=block.text,
+            signature=signed.signature if signed is not None else None,
+        )
+    if block.form == "redacted":
+        return DocentContentReasoning(reasoning="", redacted=True)
+    return DocentContentReasoning(reasoning=block.text)
+
+
 def to_docent_message(message: ChatMessage) -> DocentChatMessage:
     """Convert a behaviors ChatMessage to a Docent chat message."""
     if isinstance(message, SystemMessage):
@@ -57,15 +72,7 @@ def to_docent_message(message: ChatMessage) -> DocentChatMessage:
             if isinstance(block, ContentText):
                 content.append(DocentContentText(text=block.text))
             elif isinstance(block, ContentReasoning):
-                content.append(DocentContentReasoning(reasoning=block.text))
-            elif isinstance(block, ContentSummarizedReasoning):
-                content.append(
-                    DocentContentReasoning(
-                        reasoning="", summary=block.text, signature=block.signature
-                    )
-                )
-            elif isinstance(block, ContentRedactedReasoning):
-                content.append(DocentContentReasoning(reasoning="", redacted=True))
+                content.append(to_docent_reasoning(block))
             elif isinstance(block, ContentToolUse):  # pyright: ignore[reportUnnecessaryIsInstance]
                 tool_calls.append(
                     DocentToolCall(

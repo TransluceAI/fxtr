@@ -1,4 +1,4 @@
-/* The theme row at the foot of the rail, lettered like the rail's section headings. */
+/* The theme row within viewer settings. */
 .row {
   display: flex;
   flex: none;

@@ -27,7 +27,8 @@
 // `useEntityLinks` is `EntityLink`'s behavior for an element that stands for an entity but cannot be
 // a link view of its own (a chart's point, a heatmap's cell): the renderer draws the element and
 // calls `open` when it is clicked, and the shell decides what opening does, as it does for a link.
-// It opens the entity alone; one hook serves every mark, so it fits marks drawn in a loop.
+// It opens the entity alone, at params when given some; one hook serves every mark, so it fits
+// marks drawn in a loop.
 
 import { createContext, useContext, type DragEvent, type MouseEvent, type ReactNode } from "react";
 import type { EntityID, JsonValue } from "./ids";
@@ -226,11 +227,13 @@ function specOf(view: AnyViewDecl | null, to: string | null): ViewLinkSpec {
 const NO_PARAMS: ViewParams = Object.freeze({});
 /** Following links from elements a renderer draws itself. */
 export interface EntityLinks {
-  /** Follow a link to the entity: what clicking its `EntityLink` does in this shell. */
-  readonly open: (id: EntityID) => void;
-  /** Whether the shell is showing the entity now, the state its `EntityLink` is highlighted in.
-   *  A renderer draws the element standing for it the same way. */
-  readonly isOpen: (id: EntityID) => boolean;
+  /** Follow a link to the entity: what clicking its `EntityLink` does in this shell. With
+   *  `params`, the entity's views are handed them, as an `EntityLink` with `params` opens it (a
+   *  selector into a transcript). */
+  readonly open: (id: EntityID, params?: ViewParams) => void;
+  /** Whether the shell is showing the entity now (at `params`, when given), the state its
+   *  `EntityLink` is highlighted in. A renderer draws the element standing for it the same way. */
+  readonly isOpen: (id: EntityID, params?: ViewParams) => boolean;
 }
 
 /** What `useEntityLinks` returns under a shell that does not follow links: nothing opens. */

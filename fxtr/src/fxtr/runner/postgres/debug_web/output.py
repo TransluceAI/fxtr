@@ -30,7 +30,7 @@ from sqlalchemy.dialects.postgresql import JSONB
 from fxtr.core import codec
 from fxtr.core.entity_data import EntityID, cid_from_str, cid_to_str
 from fxtr.entity_defns.array import ARRAY_TYPE
-from fxtr.runner.postgres.client import LocalProjectClient
+from fxtr.runner.postgres.database import Database
 from fxtr.runner.postgres.ledger import JobID
 from fxtr.runner.postgres.schema import entities
 
@@ -43,6 +43,7 @@ from .contracts import (
     OutputSource,
     Sort,
 )
+from .scope import JobScope, reachable
 from .table_values import compare_cells, search_text
 
 MAX_ARRAYS = 128
@@ -302,10 +303,16 @@ class ArrayLoad:
 
 
 class OutputStore:
-    """Caches only immutable decoded arrays. Eviction is invisible to page clients."""
+    """Caches only immutable decoded arrays. Eviction is invisible to page clients.
 
-    def __init__(self, client: LocalProjectClient):
-        self.client = client
+    ``scope`` is the reader's (:mod:`.scope`): a run source of a job outside it answers as a
+    missing invocation, and an array source names a cid the scope must reach. The cache itself
+    is keyed by cid alone, so one store serves one scope.
+    """
+
+    def __init__(self, database: Database, scope: JobScope):
+        self.database = database
+        self.scope = scope
         self.arrays: OrderedDict[str, tuple[dict[str, Any], int]] = OrderedDict()
         self.bytes = 0
         self.limiter = anyio.CapacityLimiter(2)
@@ -357,7 +364,7 @@ class OutputStore:
                     pending[cid] = self.inflight[cid]
             if owned:
                 try:
-                    async with self.client.database.transaction() as tx:
+                    async with self.database.transaction() as tx:
                         records = (
                             await tx.execute(
                                 select(entities.c.cid, entities.c.data).where(
@@ -407,14 +414,20 @@ class OutputStore:
         if cid is not None:
             if not cid or any(value is not None for value in (job_id, pathname, node_id)):
                 raise ValueError("an array source requires a nonempty cid and no run")
+            if not self.scope.unrestricted:
+                async with self.database.transaction() as tx:
+                    allowed = await reachable(tx, self.scope, [cid_from_str(cid)])
+                if not allowed:
+                    # The same answer as for an array the database does not have.
+                    raise ValueError("an output array is missing")
             data = (await self.load([cid]))[cid]
             return Scan(cid, None, [], {"dims": data["dims"], "schema": data["schema"]}), selection
         if not all(isinstance(value, str) and value for value in (job_id, pathname, node_id)):
             raise ValueError("a run source requires jobId, pathname, and nodeId")
         assert job_id is not None and pathname is not None and node_id is not None
-        async with self.client.database.transaction() as tx:
+        async with self.database.transaction() as tx:
             targets, mapped_dims, output_type = await run_context(
-                tx, JobID(uuid.UUID(job_id)), pathname, node_id
+                tx, JobID(uuid.UUID(job_id)), pathname, node_id, self.scope
             )
         return Scan(None, targets, mapped_dims, output_type), selection
 
@@ -445,7 +458,7 @@ class OutputStore:
             batch = (
                 refs if after is None else refs.where(targets.c.key > literal(after, type_=JSONB))
             )
-            async with self.client.database.transaction() as tx:
+            async with self.database.transaction() as tx:
                 records = (await tx.execute(batch.limit(batch_size + 1))).all()
             complete = len(records) <= batch_size
             records = records[:batch_size]
@@ -544,8 +557,10 @@ class OutputStore:
             key: text.strip().lower() for key, text in (filters or {}).items() if text.strip()
         }
         async with self.limiter:
-            async with self.client.database.transaction(snapshot=True) as tx:
-                targets, dims, output_type = await run_context(tx, job_id, pathname, node_id)
+            async with self.database.transaction(snapshot=True) as tx:
+                targets, dims, output_type = await run_context(
+                    tx, job_id, pathname, node_id, self.scope
+                )
                 query = selected(select(targets), targets.c.key, dims, selection)
                 if state:
                     query = query.where(targets.c.state == state)

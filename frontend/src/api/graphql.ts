@@ -5,7 +5,7 @@
  * Response shapes are hand-written to match the backend's `debug_web/schema.graphql`.
  */
 
-import { GRAPHQL_HTTP } from '../config'
+import { viewerConfig } from '../config'
 import type { ArrayTypeJson, InvocationStatus, JobSummary, KeyValue } from '../types'
 
 /** A request in flight, shared by every caller that asked for the same document and variables
@@ -97,16 +97,24 @@ export function gql<T>(query: string, variables: Record<string, unknown> = {}, s
 const send: Send = (query, variables, signal) => request(JSON.stringify({ query, variables }), signal)
 
 async function request(body: string, signal: AbortSignal): Promise<unknown> {
-  const response = await fetch(GRAPHQL_HTTP, {
+  const response = await fetch(viewerConfig().graphqlUrl, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...viewerConfig().headers },
     body,
     signal,
   })
   // Ariadne can send resolver errors with HTTP 400; keep their actionable message (e.g. expiry).
-  const data = (await response.json().catch(() => ({}))) as { data?: unknown; errors?: { message: string }[] }
+  const data = ((await response.json().catch(() => null)) ?? {}) as {
+    data?: unknown
+    errors?: { message: string }[]
+    error?: { message?: unknown }
+  }
   if (data.errors?.length) throw new Error(data.errors.map((e) => e.message).join('; '))
-  if (!response.ok) throw new Error(`GraphQL request failed: ${response.status} ${response.statusText}`)
+  if (!response.ok) {
+    throw new Error(typeof data.error?.message === 'string'
+      ? data.error.message
+      : `GraphQL request failed: ${response.status} ${response.statusText}`)
+  }
   if (data.data === undefined) throw new Error('GraphQL response carried no data')
   return data.data
 }
@@ -237,8 +245,13 @@ export interface GqlStepPin {
   stepName: string
   requestCid: string
   state: string
+  /** The step's result: the one the job took, else one an equal request left on offer. The step
+   *  is `completed` with either. */
   resultCid: string | null
-  /** The code that produced the bound result (for a cache hit, another job's); null until bound. */
+  /** Whether the job has taken `resultCid`. False for a result on offer (`resultNotTaken`), and
+   *  without a result. */
+  resultTaken: boolean
+  /** The code that produced the result (for a cache hit, another job's); null without one. */
   provenance: GqlProvenance | null
   attempt: {
     state: string
@@ -249,6 +262,16 @@ export interface GqlStepPin {
   } | null
   /** The `ctx.log` lines of the attempt behind the pin, in order. */
   logs: GqlLogLine[]
+  /** The latest `ctx.preview` of the attempt behind the pin, without its bytes; null if none. */
+  preview: GqlPreview | null
+}
+
+/** A step attempt's latest preview: its bytes are at the viewer's `previewsBase` + `/{attemptId}`, and a newer
+ *  preview has a larger `seq`. */
+export interface GqlPreview {
+  attemptId: string
+  seq: number
+  at: string
 }
 
 export interface GqlLogLine {
@@ -305,9 +328,11 @@ const STEP = `
       requestCid
       state
       resultCid
+      resultTaken
       provenance { ${PROVENANCE_FIELDS} }
       attempt { state startedAt finishedAt error { typeName message } provenance { ${PROVENANCE_FIELDS} } }
       logs { seq message at }
+      preview { attemptId seq at }
     }
   }
 `
@@ -317,16 +342,38 @@ export interface CountedPage<T> extends Page<T> { total: number }
 
 export const SPAWN_FIELDS = `nodeIdentity key childPathname stepCacheKey resultCid state`
 export const COUNT_FIELDS = `queued running completed failed interrupted conflict stopped`
-const JOB_FIELDS = `id workflowName root createdAt state failed`
+const JOB_FIELDS = `id workflowName root createdAt state failed failedSteps inputs { name cid single text } changedInputs latest`
 
-export const fetchJobPage = (search = '', after: string | null = null, first = 25, signal?: AbortSignal) =>
-  gql<{ jobSummaries: Page<JobSummary> }>(`query($search: String!, $after: String, $first: Int!) {
-    jobSummaries(search: $search, after: $after, first: $first) { items { ${JOB_FIELDS} } next }
-  }`, { search, after, first }, signal).then((data) => data.jobSummaries)
+/** A summary as the app reads it: the lists are present even when the answer left them out. */
+const jobSummary = (job: JobSummary): JobSummary => ({ ...job, failedSteps: job.failedSteps ?? [], inputs: job.inputs ?? [], changedInputs: job.changedInputs ?? [], latest: job.latest ?? true })
+
+/** The jobs matching `search`, of `workflow` alone when it is given, newest first. */
+export const fetchJobPage = (search = '', after: string | null = null, first = 25, signal?: AbortSignal, workflow: string | null = null) =>
+  gql<{ jobSummaries: Page<JobSummary> }>(`query($search: String!, $after: String, $first: Int!, $workflow: String) {
+    jobSummaries(search: $search, after: $after, first: $first, workflow: $workflow) { items { ${JOB_FIELDS} } next }
+  }`, { search, after, first, workflow }, signal).then(({ jobSummaries: page }) => ({ ...page, items: page.items.map(jobSummary) }))
+
+/** The names of the workflows the project has jobs of, in order. */
+export const fetchJobWorkflows = (signal?: AbortSignal) =>
+  gql<{ jobWorkflows: string[] }>('{ jobWorkflows }', {}, signal).then((data) => data.jobWorkflows)
 
 export const fetchJobSummary = (id: string, signal?: AbortSignal) =>
   gql<{ jobSummary: JobSummary | null }>(`query($id: ID!) { jobSummary(id: $id) { ${JOB_FIELDS} } }`, { id }, signal)
-    .then((data) => data.jobSummary)
+    .then((data) => data.jobSummary && jobSummary(data.jobSummary))
+
+/** The summaries of the jobs named (at most 200 a request), in the order named; a job the project
+ *  does not have is left out. */
+export const fetchJobSummariesByIds = (ids: readonly string[], signal?: AbortSignal) =>
+  gql<{ jobSummariesByIds: JobSummary[] }>(`query($ids: [ID!]!) { jobSummariesByIds(ids: $ids) { ${JOB_FIELDS} } }`, { ids }, signal)
+    .then((data) => data.jobSummariesByIds.map(jobSummary))
+
+/** Under one run node of a job's root workflow: how many step results the job ran itself and how
+ *  many it took from the cache. */
+export interface NodeReuse { identity: string; ran: number; reused: number }
+
+export const fetchJobReuse = (jobId: string, signal?: AbortSignal) =>
+  gql<{ jobReuse: NodeReuse[] }>(`query($jobId: ID!) { jobReuse(jobId: $jobId) { identity ran reused } }`, { jobId }, signal)
+    .then((data) => data.jobReuse)
 
 export const LEVEL_OVERVIEW = `query($jobId: ID!, $pathname: String!) {
   levelOverview(jobId: $jobId, pathname: $pathname) {
@@ -448,6 +495,17 @@ export async function fetchStep(jobId: string, cacheKey: string): Promise<GqlSte
   const data = await gql<{ step: GqlStepPin | null }>(STEP, { jobId, cacheKey })
   if (!data.step) throw new Error(`no step ${cacheKey} in job ${jobId}`)
   return data.step
+}
+
+/**
+ * Whether a step has a result its job has not taken: the step ran to the end (it is `completed`)
+ * and no workflow invocation of the job has used its output yet. Usually that lasts a moment, until
+ * the invocation waiting on the step takes it. It lasts until the job is resumed when that
+ * invocation ended first: another step of it failed, or the job was cancelled, while this one was
+ * still running.
+ */
+export function resultNotTaken(pin: GqlStepPin): boolean {
+  return pin.resultCid !== null && !pin.resultTaken
 }
 
 /** A step's status, from its pin's attempt. */

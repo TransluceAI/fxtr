@@ -25,11 +25,12 @@ the system's state without reading code. The tables fall into three groups:
   name, the job attempts those and its results name) and the entities all of those reach are a
   self-contained record of the job.
 * **The execution state** (``job_attempts``, ``attempts``, ``attempt_events``, ``attempt_logs``,
-  ``step_cache``): how the runner is trying to make those facts. Mutable, owned by the execution
-  policy (:mod:`fxtr.runner.postgres.execution`): which job attempts are directing a job's work
-  and who owns them (the lease); every
+  ``attempt_previews``, ``step_cache``): how the runner is trying to make those facts. Mutable,
+  owned by the execution policy (:mod:`fxtr.runner.postgres.execution`): which job attempts are
+  directing a job's work and who owns them (the lease); every
   call of a workflow body or a step and how it ended; what each attempt did (as pointers into the
-  ledger); the free-form lines each attempt logged; and the step cache's addresses.
+  ledger); the free-form lines each attempt logged and each step attempt's latest preview; and the
+  step cache's addresses.
 
 Facts spanning several tables:
 
@@ -39,7 +40,8 @@ Facts spanning several tables:
   step attempt that produced it (``attempts``), whose row says how that run went. A database has
   the execution rows only for what it ran itself, so it may hold the facts without them, and job
   attempt facts without their job: the provenance of a result its jobs took, produced by a job it
-  does not have.
+  does not have. Such a fact is marked ``from_other_job`` and is not one of that job's own attempts
+  until the job's own record brings it.
 * **Leases.** A job attempt is one process's episode of running a job. Its ``owner`` names the
   process and its ``heartbeat_at`` is refreshed by that process while it runs; a job attempt is
   *fresh* while it is not evicted and its heartbeat is recent, and *stale* otherwise. Staleness
@@ -494,10 +496,23 @@ job_attempt_provenance = Table(
         " its transaction, so a job's job attempts are in creation order by it (ties broken by"
         " id). Their positions among the job's (1, 2, ...) are counted from it when read.",
     ),
+    Column(
+        "from_other_job",
+        Boolean,
+        nullable=False,
+        server_default=false(),
+        comment="Whether this database has the fact only because another job's record named it,"
+        " as the producer of a step result that job reused. Such a fact describes that result but"
+        " is not one of its job's own attempts: that job's record, its import's check for attempts"
+        " the record lacks, and its attempts' positions leave it out. The import of the job it"
+        " names sets it false and gives the fact its record's values, which are the authority on"
+        " the job's attempts.",
+    ),
     UniqueConstraint("id", "job_id", name="job_attempt_provenance_id_job"),
     Index("job_attempt_provenance_job_created", "job_id", "created_at", "id"),
-    comment="That a job attempt existed and which code its process ran: the immutable fact about"
-    " a job attempt, written with it and never changed. Results point here for their provenance."
+    comment="That a job attempt existed and which code its process ran: the fact about a job"
+    " attempt, written with it and changed only when its job's own import replaces one another"
+    " job's record brought (from_other_job). Results point here for their provenance."
     " How the job attempt went (its lease, its state) is execution state, in job_attempts, which"
     " exists only for job attempts this database ran.",
 )
@@ -685,6 +700,33 @@ attempt_logs = Table(
     " mechanism.)",
 )
 """Each attempt's free-form log lines. See the column comments."""
+
+attempt_previews = Table(
+    "attempt_previews",
+    metadata,
+    Column("attempt_id", Uuid, ForeignKey("attempts.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "seq",
+        Integer,
+        nullable=False,
+        comment="How many previews the body had published when this one was written, from 1;"
+        " it only grows, so a reader can tell a newer preview by it.",
+    ),
+    Column(
+        "data",
+        LargeBinary,
+        nullable=False,
+        comment="The preview's canonical DAG-CBOR bytes: a tagged mapping, often the wire form of"
+        " a Partial (fxtr.entity_defns.partial). It may name entities that are not stored.",
+    ),
+    Column("at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    comment="The latest preview a step attempt's body published through ctx.preview, overwritten"
+    " as newer ones are written, kept after the attempt fails or is abandoned, and deleted when"
+    " it completes (its result takes the preview's place). Pure observability state that"
+    " participates in no rule, like attempt_logs: nothing here is read by the ledger or the"
+    " policy.",
+)
+"""Each step attempt's latest preview. See the column comments."""
 
 
 step_requests = Table(
@@ -941,3 +983,17 @@ job_attempts = Table(
     " means it stops deciding; evicting it (evicted_at) abandons what it owns.",
 )
 """One episode of trying to finish a job. See the column comments."""
+
+
+job_entities = Table(
+    "job_entities",
+    metadata,
+    Column("job_id", Uuid, ForeignKey("jobs.id", ondelete="CASCADE"), primary_key=True),
+    Column("cid", LargeBinary, ForeignKey("entities.cid"), primary_key=True),
+    Index("job_entities_cid", "cid"),
+    comment="Which entities a job's record reaches: its inputs, results, and everything they"
+    " refer to. Filled when a job record is imported, so a viewer that may show only some jobs"
+    " can tell which entities belong to them; a job run in this database has no rows here.",
+)
+"""The entities a job's imported record reaches, for a viewer scoped to some jobs. See the
+table comment."""

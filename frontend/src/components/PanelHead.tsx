@@ -10,6 +10,7 @@ import { SLICE, type ColumnsState, type PanelState } from '../panes/useColumns'
 import { isPage, type Target } from '../panes/resolve'
 import type { NodeKind } from '../types'
 import { isReference } from '../model/schema'
+import { EntityID } from 'fxtr-view'
 import { EntityLabel } from '../views/EntityLabel'
 import { CUSTOM_VIEW_ICON, ENTITY_ICON, INVOCATION_ICON, KIND_ICONS, KIND_ICON_STROKE } from '../lib/kindIcons'
 import { isProjectRendererId } from '../views/registry'
@@ -141,7 +142,7 @@ function PanelPath({ address, target, parentAddress, isPage }: {
         <icon.Icon size={PART_ICON_SIZE} strokeWidth={KIND_ICON_STROKE} className={styles.partIcon} aria-label={icon.label} role="img" />
       )}
       <span className={cx(index === facet ? styles.facet : styles.name, shared !== null && index < shared && styles.isShared)}>
-        {part.kind === 'entity' ? <EntityLabel cid={part.name} /> : part.name}
+        {part.kind === 'entity' ? <EntityLabel id={new EntityID(part.name)} /> : part.name}
       </span>
     </span>
   )

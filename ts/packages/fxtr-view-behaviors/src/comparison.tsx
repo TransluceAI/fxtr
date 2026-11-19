@@ -1,7 +1,7 @@
 import styles from "./behaviors.module.css";
 import { EntityDataError, EntityLink, unwrap, useEntity, type EntityID } from "fxtr-view";
 import { Initialization, statusLabel } from "./entities";
-import { Messages, MetadataList, usageOf } from "./messages";
+import { Messages, MetadataList, rolloutUsageLine } from "./messages";
 import { CHAT_ROLLOUT, type ChatRolloutData, type TurnData } from "./types";
 
 function useRollout(id: EntityID): ChatRolloutData {
@@ -76,7 +76,7 @@ export function ComparedRollouts({ left, right }: {
       })}
       <div className={`${styles["compare-columns"]} ${styles["reference"]}`}>
         {columns.map(({ data, id }, index) => <div key={index}>
-          <p className={styles["muted"]}>{usageOf(data.model_turns)}</p>
+          <p className={styles["muted"]}>{rolloutUsageLine(data.model_turns)}</p>
           <EntityLink id={id} />
         </div>)}
       </div>
